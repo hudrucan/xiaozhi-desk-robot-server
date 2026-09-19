@@ -1,19 +1,21 @@
 import os, json, uuid
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List
 
 import requests
-from google import generativeai as genai
-from google.generativeai import types, GenerationConfig
+from google import genai
+from google.genai import types
 
 from core.providers.llm.base import LLMProviderBase
 from core.utils.util import check_model_key
 from config.logger import setup_logging
-from google.generativeai.types import GenerateContentResponse
 from requests import RequestException
 
 log = setup_logging()
 TAG = __name__
+
+_MISSING_THOUGHT_SIGNATURE = b"skip_thought_signature_validator"
+_MAX_CACHED_THOUGHT_SIGNATURES = 256
 
 
 def test_proxy(proxy_url: str, test_url: str) -> bool:
@@ -85,21 +87,19 @@ class LLMProvider(LLMProviderBase):
             log.bind(tag=TAG).info(
                 f"Gemini 代理设置成功 - HTTP: {http_proxy}, HTTPS: {https_proxy}"
             )
-        # 配置API密钥
-        genai.configure(api_key=self.api_key)
-
         # 设置请求超时（秒）
         self.timeout = cfg.get("timeout", 120)  # 默认120秒
 
-        # 创建模型实例
-        self.model = genai.GenerativeModel(self.model_name)
+        # 创建客户端
+        self.client = genai.Client(api_key=self.api_key)
 
-        self.gen_cfg = GenerationConfig(
-            temperature=0.7,
-            top_p=0.9,
-            top_k=40,
-            max_output_tokens=2048,
-        )
+        self.gen_cfg = {
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "top_k": 40,
+            "max_output_tokens": 2048,
+        }
+        self._thought_signatures: Dict[str, bytes] = {}
 
     @staticmethod
     def _build_tools(funcs: List[Dict[str, Any]] | None):
@@ -111,7 +111,7 @@ class LLMProvider(LLMProviderBase):
                     types.FunctionDeclaration(
                         name=f["function"]["name"],
                         description=f["function"]["description"],
-                        parameters=f["function"]["parameters"],
+                        parameters_json_schema=f["function"]["parameters"],
                     )
                     for f in funcs
                 ]
@@ -134,6 +134,9 @@ class LLMProvider(LLMProviderBase):
 
             if r == "assistant" and "tool_calls" in m:
                 tc = m["tool_calls"][0]
+                thought_signature = self._thought_signatures.get(
+                    tc.get("id"), _MISSING_THOUGHT_SIGNATURE
+                )
                 contents.append(
                     {
                         "role": "model",
@@ -142,7 +145,8 @@ class LLMProvider(LLMProviderBase):
                                 "function_call": {
                                     "name": tc["function"]["name"],
                                     "args": json.loads(tc["function"]["arguments"]),
-                                }
+                                },
+                                "thought_signature": thought_signature,
                             }
                         ],
                     }
@@ -165,12 +169,18 @@ class LLMProvider(LLMProviderBase):
                 }
             )
 
-        stream: GenerateContentResponse = self.model.generate_content(
-            contents=contents,
-            generation_config=self.gen_cfg,
+        config = types.GenerateContentConfig(
+            **self.gen_cfg,
             tools=tools,
-            stream=True,
-            timeout=self.timeout,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
+            http_options=types.HttpOptions(timeout=int(self.timeout * 1000)),
+        )
+        stream = self.client.models.generate_content_stream(
+            model=self.model_name,
+            contents=contents,
+            config=config,
         )
 
         try:
@@ -180,9 +190,20 @@ class LLMProvider(LLMProviderBase):
                     # a) 函数调用-通常是最后一段话才是函数调用
                     if getattr(part, "function_call", None):
                         fc = part.function_call
+                        tool_call_id = uuid.uuid4().hex
+                        if part.thought_signature:
+                            self._thought_signatures[tool_call_id] = (
+                                part.thought_signature
+                            )
+                            if (
+                                len(self._thought_signatures)
+                                > _MAX_CACHED_THOUGHT_SIGNATURES
+                            ):
+                                oldest_id = next(iter(self._thought_signatures))
+                                self._thought_signatures.pop(oldest_id, None)
                         yield None, [
                             SimpleNamespace(
-                                id=uuid.uuid4().hex,
+                                id=tool_call_id,
                                 type="function",
                                 function=SimpleNamespace(
                                     name=fc.name,
@@ -203,11 +224,9 @@ class LLMProvider(LLMProviderBase):
 
     # 关闭stream，预留后续打断对话功能的功能方法，官方文档推荐打断对话要关闭上一个流，可以有效减少配额计费和资源占用
     @staticmethod
-    def _safe_finish_stream(stream: GenerateContentResponse):
-        if hasattr(stream, "resolve"):
-            stream.resolve()  # Gemini SDK version ≥ 0.5.0
-        elif hasattr(stream, "close"):
-            stream.close()  # Gemini SDK version < 0.5.0
+    def _safe_finish_stream(stream: Iterator[types.GenerateContentResponse]):
+        if hasattr(stream, "close"):
+            stream.close()
         else:
             for _ in stream:  # 兜底耗尽
                 pass
