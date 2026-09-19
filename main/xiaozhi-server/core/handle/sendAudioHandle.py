@@ -272,12 +272,35 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
         timestamp = int(start_time * 1000) % (2**32)
         await _send_to_mqtt_gateway(conn, opus_packet, timestamp, sequence)
     else:
-        # 直接发送opus数据包
-        await conn.websocket.send(opus_packet)
+        await conn.websocket.send(_wrap_websocket_audio_packet(conn, opus_packet))
 
     # 更新流控状态
     flow_control["packet_count"] = packet_index + 1
     flow_control["sequence"] = sequence + 1
+
+
+def _wrap_websocket_audio_packet(conn: "ConnectionHandler", opus_packet) -> bytes:
+    """Wrap one Opus packet using the client's negotiated binary protocol."""
+    payload = bytes(opus_packet)
+    protocol_version = getattr(conn, "protocol_version", 1)
+
+    if protocol_version == 3:
+        if len(payload) > 0xFFFF:
+            raise ValueError("Opus packet is too large for protocol v3")
+        return bytes((0, 0)) + len(payload).to_bytes(2, "big") + payload
+
+    if protocol_version == 2:
+        timestamp = int(time.time() * 1000) % (2**32)
+        return (
+            (2).to_bytes(2, "big")
+            + (0).to_bytes(2, "big")
+            + (0).to_bytes(4, "big")
+            + timestamp.to_bytes(4, "big")
+            + len(payload).to_bytes(4, "big")
+            + payload
+        )
+
+    return payload
 
 
 async def send_tts_message(conn: "ConnectionHandler", state, text=None):

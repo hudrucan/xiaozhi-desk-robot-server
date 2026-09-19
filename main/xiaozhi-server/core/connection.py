@@ -85,6 +85,7 @@ class ConnectionHandler:
         self.client_ip = None
         self.prompt = None
         self.welcome_msg = None
+        self.protocol_version = 1
         self.audio_format = "opus"
         self.sample_rate = 24000  # 默认采样率，从客户端 hello 消息中动态更新
 
@@ -171,6 +172,17 @@ class ConnectionHandler:
 
             # 获取并验证headers
             self.headers = dict(ws.request.headers)
+            try:
+                self.protocol_version = int(
+                    self.headers.get("protocol-version", "1")
+                )
+            except (TypeError, ValueError):
+                self.protocol_version = 1
+            if self.protocol_version not in (1, 2, 3):
+                self.logger.bind(tag=TAG).warning(
+                    f"Unsupported protocol version {self.protocol_version}; falling back to version 1"
+                )
+                self.protocol_version = 1
             real_ip = self.headers.get("x-real-ip") or self.headers.get(
                 "x-forwarded-for"
             )
@@ -289,10 +301,47 @@ class ConnectionHandler:
                 if handled:
                     return
 
+            if not self.conn_from_mqtt_gateway:
+                message = self._unwrap_websocket_audio_message(message)
+                if message is None:
+                    return
+
             # 入口处直接解码PCM，避免VAD和ASR重复解码
             pcm_frame = self._decode_opus_packet(message)
             if pcm_frame:
                 self.asr_audio_queue.put(pcm_frame)
+
+    def _unwrap_websocket_audio_message(self, message: bytes):
+        """Extract one Opus packet from the negotiated WebSocket protocol."""
+        if self.protocol_version == 3:
+            header_size = 4
+            if len(message) < header_size:
+                self.logger.bind(tag=TAG).warning("Protocol v3 audio packet is too short")
+                return None
+            message_type = message[0]
+            payload_size = int.from_bytes(message[2:4], "big")
+        elif self.protocol_version == 2:
+            header_size = 16
+            if len(message) < header_size:
+                self.logger.bind(tag=TAG).warning("Protocol v2 audio packet is too short")
+                return None
+            message_type = int.from_bytes(message[2:4], "big")
+            payload_size = int.from_bytes(message[12:16], "big")
+        else:
+            return message
+
+        if message_type != 0:
+            self.logger.bind(tag=TAG).warning(
+                f"Unsupported binary message type: {message_type}"
+            )
+            return None
+        if payload_size != len(message) - header_size:
+            self.logger.bind(tag=TAG).warning(
+                f"Invalid protocol v{self.protocol_version} payload size: "
+                f"header={payload_size}, actual={len(message) - header_size}"
+            )
+            return None
+        return message[header_size:]
 
     async def _process_mqtt_audio_message(self, message):
         """
