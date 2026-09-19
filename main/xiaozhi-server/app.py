@@ -47,18 +47,13 @@ async def main():
     check_ffmpeg_installed()
     config = await load_config()
 
-    # auth_key优先级：配置文件server.auth_key > manager-api.secret > 自动生成
-    # auth_key用于jwt认证，比如视觉分析接口的jwt认证、ota接口的token生成与websocket认证
-    # 获取配置文件中的auth_key
+    # server.auth_key takes precedence; generate an ephemeral key when unset.
+    # The key signs vision JWTs, OTA tokens, and WebSocket authentication tokens.
     auth_key = config["server"].get("auth_key", "")
-    
-    # 验证auth_key，无效则尝试使用manager-api.secret
+
     if not auth_key or len(auth_key) == 0 or "你" in auth_key:
-        auth_key = config.get("manager-api", {}).get("secret", "")
-        # 验证secret，无效则生成随机密钥
-        if not auth_key or len(auth_key) == 0 or "你" in auth_key:
-            auth_key = str(uuid.uuid4().hex)
-    
+        auth_key = str(uuid.uuid4().hex)
+
     config["server"]["auth_key"] = auth_key
 
     # 添加 stdin 监控任务
@@ -75,14 +70,12 @@ async def main():
     ota_server = SimpleHttpServer(config)
     ota_task = asyncio.create_task(ota_server.start())
 
-    read_config_from_api = config.get("read_config_from_api", False)
     port = int(config["server"].get("http_port", 8003))
-    if not read_config_from_api:
-        logger.bind(tag=TAG).info(
-            "OTA接口是\t\thttp://{}:{}/xiaozhi/ota/",
-            get_local_ip(),
-            port,
-        )
+    logger.bind(tag=TAG).info(
+        "OTA接口是\t\thttp://{}:{}/xiaozhi/ota/",
+        get_local_ip(),
+        port,
+    )
     logger.bind(tag=TAG).info(
         "视觉分析接口是\thttp://{}:{}/mcp/vision/explain",
         get_local_ip(),
@@ -115,9 +108,7 @@ async def main():
     logger.bind(tag=TAG).info(
         "=======上面的地址是websocket协议地址，请勿用浏览器访问======="
     )
-    logger.bind(tag=TAG).info(
-        "如想测试websocket请启动digital-human模块，打开浏览器交互测试"
-    )
+    logger.bind(tag=TAG).info("请使用 Xiaozhi 设备或兼容客户端测试 WebSocket 连接")
     logger.bind(tag=TAG).info(
         "=============================================================\n"
     )

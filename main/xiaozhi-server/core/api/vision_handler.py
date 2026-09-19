@@ -1,11 +1,9 @@
 import json
-import copy
 from aiohttp import web
 from config.logger import setup_logging
 from core.api.base_handler import BaseHandler
 from core.utils.util import get_vision_url, is_valid_image_file
 from core.utils.vllm import create_instance
-from config.config_loader import get_private_config_from_api
 from core.utils.auth import AuthToken
 import base64
 from typing import Tuple, Optional
@@ -62,7 +60,6 @@ class VisionHandler(BaseHandler):
 
             # 获取请求头信息
             device_id = request.headers.get("Device-Id", "")
-            client_id = request.headers.get("Client-Id", "")
             if device_id != token_device_id:
                 raise ValueError("设备ID与token不匹配")
             # 解析multipart/form-data请求
@@ -100,15 +97,7 @@ class VisionHandler(BaseHandler):
             # 将图片转换为base64编码
             image_base64 = base64.b64encode(image_data).decode("utf-8")
 
-            # 如果开启了智控台，则从智控台获取模型配置
-            current_config = copy.deepcopy(self.config)
-            read_config_from_api = current_config.get("read_config_from_api", False)
-            if read_config_from_api:
-                current_config = await get_private_config_from_api(
-                    current_config,
-                    device_id,
-                    client_id,
-                )
+            current_config = self.config
 
             select_vllm_module = current_config["selected_module"].get("VLLM")
             if not select_vllm_module:

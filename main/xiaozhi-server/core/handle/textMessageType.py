@@ -8,5 +8,4 @@ class TextMessageType(Enum):
     LISTEN = "listen"
     IOT = "iot"
     MCP = "mcp"
-    SERVER = "server"
     PING = "ping"

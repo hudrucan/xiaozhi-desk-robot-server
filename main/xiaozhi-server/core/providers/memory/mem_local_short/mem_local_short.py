@@ -4,8 +4,6 @@ import json
 import os
 import yaml
 from config.config_loader import get_project_dir
-from config.manage_api_client import generate_and_save_chat_summary
-import asyncio
 from core.utils.util import check_model_key
 
 
@@ -99,20 +97,17 @@ class MemoryProvider(MemoryProviderBase):
     def __init__(self, config, summary_memory):
         super().__init__(config)
         self.short_memory = ""
-        self.save_to_file = True
         self.memory_path = get_project_dir() + "data/.memory.yaml"
         self.load_memory(summary_memory)
 
     def init_memory(
-        self, role_id, llm, summary_memory=None, save_to_file=True, **kwargs
+        self, role_id, llm, summary_memory=None, **kwargs
     ):
         super().init_memory(role_id, llm, **kwargs)
-        self.save_to_file = save_to_file
         self.load_memory(summary_memory)
 
     def load_memory(self, summary_memory):
-        # api获取到总结记忆后直接返回
-        if summary_memory or not self.save_to_file:
+        if summary_memory:
             self.short_memory = summary_memory
             return
 
@@ -173,24 +168,19 @@ class MemoryProvider(MemoryProviderBase):
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         msgStr += f"当前时间：{time_str}"
 
-        if self.save_to_file:
-            try:
-                result = self.llm.response_no_stream(
-                    short_term_memory_prompt,
-                    msgStr,
-                    max_tokens=2000,
-                    temperature=0.2,
-                )
-                json_str = extract_json_data(result)
-                json.loads(json_str)  # 检查json格式是否正确
-                self.short_memory = json_str
-                self.save_memory_to_file()
-            except Exception as e:
-                logger.bind(tag=TAG).error(f"Error in saving memory: {e}")
-        else:
-            # 当save_to_file为False时，调用Java端的聊天记录总结接口
-            summary_id = session_id if session_id else self.role_id
-            await generate_and_save_chat_summary(summary_id)
+        try:
+            result = self.llm.response_no_stream(
+                short_term_memory_prompt,
+                msgStr,
+                max_tokens=2000,
+                temperature=0.2,
+            )
+            json_str = extract_json_data(result)
+            json.loads(json_str)  # Check that the model returned valid JSON.
+            self.short_memory = json_str
+            self.save_memory_to_file()
+        except Exception as e:
+            logger.bind(tag=TAG).error(f"Error in saving memory: {e}")
         logger.bind(tag=TAG).info(
             f"Save memory successful - Role: {self.role_id}, Session: {session_id}"
         )

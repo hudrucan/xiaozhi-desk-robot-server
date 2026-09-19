@@ -1,5 +1,11 @@
-"""Tests for the recursive config merge in config/config_loader.py."""
-from config.config_loader import merge_configs
+"""Tests for local YAML loading and recursive config merging."""
+from config.config_loader import merge_configs, read_config
+
+
+def test_read_empty_config_returns_dict(tmp_path):
+    config_path = tmp_path / ".config.yaml"
+    config_path.write_text("", encoding="utf-8")
+    assert read_config(config_path) == {}
 
 
 def test_merge_simple_override():

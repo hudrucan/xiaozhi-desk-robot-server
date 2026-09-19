@@ -18,8 +18,6 @@ real providers.
 Configuration loading
 ---------------------
 Always uses the file-merge path (``config.yaml`` + ``data/.config.yaml``).
-``manager-api`` is intentionally NOT contacted — pytest must work in a
-single-module deployment.
 """
 from __future__ import annotations
 
@@ -87,66 +85,19 @@ def _load_via_file_merge() -> dict:
     return config
 
 
-# 全模块部署检测（在任何模式下都 fail-fast，避免触发远程 API）。
-# 全模块部署会让 ``load_config`` 走 manager-api 远程拉取，pytest 不应该触发。
-if _CUSTOM_CONFIG.exists():
-    _raw_custom = yaml.safe_load(_CUSTOM_CONFIG.read_text(encoding="utf-8")) or {}
-    _api_cfg = _raw_custom.get("manager-api", {})
-    _has_url = bool(_api_cfg.get("url"))
-    _has_secret = bool(_api_cfg.get("secret")) and "你" not in str(
-        _api_cfg.get("secret", "")
-    )
-    if _has_url and _has_secret:
-        print(
-            "\n[conftest] ============================================================\n"
-            "[conftest] FAIL: 检测到全模块部署（manager-api.url + secret 已配置），\n"
-            "[conftest]       pytest 不支持全模块部署。\n"
-            "[conftest] 原因：manager-api 的 server.secret 是匿名 token，\n"
-            "[conftest]       没有 sys:role:superAdmin 权限，\n"
-            "[conftest]       拿不到 LLM/TTS/Memory 的 configJson（含 api_key）。\n"
-            "[conftest] 切换到单模块的方法：\n"
-            "[conftest]   1) manager-web → 参数管理 → 模型配置，\n"
-            "[conftest]      把 LLM/TTS/Memory 的 configJson 抄出来\n"
-            "[conftest]   2) 写到 data/.config.yaml（结构跟 config.yaml 一致）\n"
-            "[conftest]   3) 清空 data/.config.yaml 里的 manager-api 整块\n"
-            "[conftest]   4) 重跑 pytest\n"
-            "[conftest] ============================================================",
-            flush=True,
-        )
-        sys.exit(2)
-
-
-# 永远走文件合并：单模块直接用
+# Always use the local file merge.
 CONFIG: dict = _load_via_file_merge()
 
 
 # ---------------------------------------------------------------------------
-# 关键：把 ``load_config`` / ``get_server_config`` 等运行时配置入口替换成
-# 直接返回我们已构建的 CONFIG，避免 ``config.config_loader.load_config`` 在
-# 测试运行期间再次读取 ``data/.config.yaml``（默认是全模块部署配置）并触发
-# manager-api 远程调用。
+# Return the already-built local config during tests.
 # ---------------------------------------------------------------------------
 async def _load_config_patched(*_args, **_kwargs):
     return CONFIG
 
 
-async def _get_server_config_patched(*_args, **_kwargs):
-    return None
-
-
-def _init_service_noop(_config):
-    """阻止 ``init_service`` 实例化 ``ManageApiClient``。"""
-    return None
-
-
 import config.config_loader as _cl  # noqa: E402
-import config.manage_api_client as _mac  # noqa: E402
 _cl.load_config = _load_config_patched
-_mac.init_service = _init_service_noop
-_mac.get_server_config = _get_server_config_patched
-# 清空 ManageApiClient 单例，避免前面已经被其它代码触发过实例化。
-_mac.ManageApiClient._instance = None
-_mac.ManageApiClient._closed = True
 
 
 # ---------------------------------------------------------------------------

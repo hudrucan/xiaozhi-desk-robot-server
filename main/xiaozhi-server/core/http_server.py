@@ -35,34 +35,29 @@ class SimpleHttpServer:
     async def start(self):
         try:
             server_config = self.config["server"]
-            read_config_from_api = self.config.get("read_config_from_api", False)
             host = server_config.get("ip", "0.0.0.0")
             port = int(server_config.get("http_port", 8003))
 
             if port:
                 app = web.Application()
 
-                if not read_config_from_api:
-                    # 如果没有开启智控台，只是单模块运行，就需要再添加简单OTA接口，用于下发websocket接口
-                    app.add_routes(
-                        [
-                            web.get("/xiaozhi/ota/", self.ota_handler.handle_get),
-                            web.post("/xiaozhi/ota/", self.ota_handler.handle_post),
-                            web.options(
-                                "/xiaozhi/ota/", self.ota_handler.handle_options
-                            ),
-                            # 下载接口，仅提供 data/bin/*.bin 下载
-                            web.get(
-                                "/xiaozhi/ota/download/{filename}",
-                                self.ota_handler.handle_download,
-                            ),
-                            web.options(
-                                "/xiaozhi/ota/download/{filename}",
-                                self.ota_handler.handle_options,
-                            ),
-                        ]
-                    )
-                # 添加路由
+                app.add_routes(
+                    [
+                        web.get("/xiaozhi/ota/", self.ota_handler.handle_get),
+                        web.post("/xiaozhi/ota/", self.ota_handler.handle_post),
+                        web.options("/xiaozhi/ota/", self.ota_handler.handle_options),
+                        # Downloads are restricted to data/bin/*.bin.
+                        web.get(
+                            "/xiaozhi/ota/download/{filename}",
+                            self.ota_handler.handle_download,
+                        ),
+                        web.options(
+                            "/xiaozhi/ota/download/{filename}",
+                            self.ota_handler.handle_options,
+                        ),
+                    ]
+                )
+                # Vision routes.
                 app.add_routes(
                     [
                         web.get("/mcp/vision/explain", self.vision_handler.handle_get),
