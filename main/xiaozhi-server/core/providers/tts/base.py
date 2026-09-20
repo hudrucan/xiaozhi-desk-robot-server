@@ -39,6 +39,7 @@ class TTSProviderBase(ABC):
         self.tts_timeout = float(config.get("tts_timeout", 15))
         if not math.isfinite(self.tts_timeout) or self.tts_timeout <= 0:
             raise ValueError("tts_timeout must be a positive finite number")
+        self.max_retries = max(0, int(config.get("max_retries", 4)))
         self.tts_text_queue = queue.Queue()
         self.tts_audio_queue = queue.Queue()
         self.tts_audio_first_sentence = True
@@ -81,6 +82,7 @@ class TTSProviderBase(ABC):
         self.tts_text_buff = []
         self.punctuations = (
             "。",
+            ".",
             "？",
             "?",
             "！",
@@ -89,20 +91,7 @@ class TTSProviderBase(ABC):
             ";",
             "：",
         )
-        self.first_sentence_punctuations = (
-            "，",
-            "~",
-            "、",
-            ",",
-            "。",
-            "？",
-            "?",
-            "！",
-            "!",
-            "；",
-            ";",
-            "：",
-        )
+        self.first_sentence_punctuations = self.punctuations
         self.tts_stop_request = False
         self.processed_chars = 0
         self.is_first_sentence = True
@@ -127,7 +116,8 @@ class TTSProviderBase(ABC):
         # 使用正则一次性替换，避免重复遍历和部分匹配问题
         if self._correct_words_pattern:
             text = self._correct_words_pattern.sub(lambda m: self.correct_words[m.group(0)], text)
-        max_repeat_time = 5
+        max_attempts = self.max_retries + 1
+        max_repeat_time = max_attempts
         if self.delete_audio_file:
             # 需要删除文件的直接转为音频数据
             while max_repeat_time > 0:
@@ -149,12 +139,12 @@ class TTSProviderBase(ABC):
                         max_repeat_time -= 1
                 except Exception as e:
                     logger.bind(tag=TAG).warning(
-                        f"Speech generation attempt {5 - max_repeat_time + 1} failed for {original_text}, error: {e}"
+                        f"Speech generation attempt {max_attempts - max_repeat_time + 1} failed for {original_text}, error: {e}"
                     )
                     max_repeat_time -= 1
             if max_repeat_time > 0:
                 logger.bind(tag=TAG).info(
-                    f"Speech generated for {original_text} after {5 - max_repeat_time} retry attempt(s)"
+                    f"Speech generated for {original_text} after {max_attempts - max_repeat_time} retry attempt(s)"
                 )
             else:
                 logger.bind(tag=TAG).error(
@@ -169,7 +159,7 @@ class TTSProviderBase(ABC):
                         asyncio.run(self.text_to_speak(text, tmp_file))
                     except Exception as e:
                         logger.bind(tag=TAG).warning(
-                            f"Speech generation attempt {5 - max_repeat_time + 1} failed for {original_text}, error: {e}"
+                            f"Speech generation attempt {max_attempts - max_repeat_time + 1} failed for {original_text}, error: {e}"
                         )
                         # 未执行成功，删除文件
                         if os.path.exists(tmp_file):
@@ -178,7 +168,7 @@ class TTSProviderBase(ABC):
 
                 if max_repeat_time > 0:
                     logger.bind(tag=TAG).info(
-                        f"Speech generated for {original_text}: {tmp_file} after {5 - max_repeat_time} retry attempt(s)"
+                        f"Speech generated for {original_text}: {tmp_file} after {max_attempts - max_repeat_time} retry attempt(s)"
                     )
                 else:
                     logger.bind(tag=TAG).error(
@@ -196,7 +186,8 @@ class TTSProviderBase(ABC):
         text = MarkdownCleaner.clean_markdown(text)
         if self._correct_words_pattern:
             text = self._correct_words_pattern.sub(lambda m: self.correct_words[m.group(0)], text)
-        max_repeat_time = 5
+        max_attempts = self.max_retries + 1
+        max_repeat_time = max_attempts
         if self.delete_audio_file:
             # 需要删除文件的直接转为音频数据
             while max_repeat_time > 0:
@@ -216,12 +207,12 @@ class TTSProviderBase(ABC):
                         max_repeat_time -= 1
                 except Exception as e:
                     logger.bind(tag=TAG).warning(
-                        f"Speech generation attempt {5 - max_repeat_time + 1} failed for {original_text}, error: {e}"
+                        f"Speech generation attempt {max_attempts - max_repeat_time + 1} failed for {original_text}, error: {e}"
                     )
                     max_repeat_time -= 1
             if max_repeat_time > 0:
                 logger.bind(tag=TAG).info(
-                    f"Speech generated for {original_text} after {5 - max_repeat_time} retry attempt(s)"
+                    f"Speech generated for {original_text} after {max_attempts - max_repeat_time} retry attempt(s)"
                 )
             else:
                 logger.bind(tag=TAG).error(
@@ -236,7 +227,7 @@ class TTSProviderBase(ABC):
                         asyncio.run(self.text_to_speak(text, tmp_file))
                     except Exception as e:
                         logger.bind(tag=TAG).warning(
-                            f"Speech generation attempt {5 - max_repeat_time + 1} failed for {original_text}, error: {e}"
+                            f"Speech generation attempt {max_attempts - max_repeat_time + 1} failed for {original_text}, error: {e}"
                         )
                         # 未执行成功，删除文件
                         if os.path.exists(tmp_file):
@@ -245,7 +236,7 @@ class TTSProviderBase(ABC):
 
                 if max_repeat_time > 0:
                     logger.bind(tag=TAG).info(
-                        f"Speech generated for {original_text}: {tmp_file} after {5 - max_repeat_time} retry attempt(s)"
+                        f"Speech generated for {original_text}: {tmp_file} after {max_attempts - max_repeat_time} retry attempt(s)"
                     )
                 else:
                     logger.bind(tag=TAG).error(
@@ -477,7 +468,7 @@ class TTSProviderBase(ABC):
             )
             self.processed_chars += len(segment_text_raw)  # 更新已处理字符位置
 
-            # 如果是第一句话，在找到第一个逗号后，将标志设置为False
+            # The first segment now waits for a complete sentence boundary.
             if self.is_first_sentence:
                 self.is_first_sentence = False
 

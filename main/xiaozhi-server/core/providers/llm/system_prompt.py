@@ -35,12 +35,7 @@ if you got tool as follow
         "description": "Call when the user wants to end the conversation or exit.",
         "parameters": {{
             "type": "object",
-            "properties": {{
-                "say_goodbye": {{
-                    "type": "string",
-                    "description": "Optional farewell in the configured language.",
-                }}
-            }},
+            "properties": {{}},
             "required": [],
         }},
     }},
@@ -51,9 +46,7 @@ you should respond with the following format:
 <tool_call>
 {{
     "name": "handle_exit_intent",
-    "arguments": {{
-        "say_goodbye": "Goodbye, see you next time!"
-    }}
+    "arguments": {{}}
 }}
 </tool_call>
 

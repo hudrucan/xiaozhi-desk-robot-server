@@ -152,6 +152,11 @@ When adding configuration:
 3. preserve backward compatibility when practical,
 4. keep provider-specific settings inside the provider's config section.
 
+Do not implement locale selection with hard-coded language branches in Python.
+User-facing text that varies by deployment or language belongs in configuration,
+with an English value as the committed default. Put local-language overrides in
+`main/xiaozhi-server/data/.config.yaml`.
+
 ## Transport
 
 The core Python runtime directly runs WebSocket and HTTP services.
@@ -224,6 +229,12 @@ Avoid orphan tasks and callbacks from an old turn/session mutating current state
 Abort/disconnect paths must be idempotent where possible.
 
 ## Refactoring rules
+
+Fix the proven root cause with the smallest targeted change. Minimize changes to
+the core runtime; prefer a provider-local or configuration change when it can
+solve the issue without altering shared protocol or session behavior. Do not add
+new modes, abstractions, fallbacks, or adjacent cleanup unless the task requires
+them.
 
 Do not perform broad rewrites before establishing a working baseline.
 

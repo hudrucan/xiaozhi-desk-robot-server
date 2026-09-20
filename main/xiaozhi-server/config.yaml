@@ -78,6 +78,9 @@ exit_commands:
   - "exit"
   - "quit"
 
+# Fixed spoken response returned by the exit tool.
+exit_farewell: "Goodbye, see you next time!"
+
 xiaozhi:
   type: hello
   version: 1
@@ -261,6 +264,8 @@ TTS:
     type: edge
     voice: your_edge_voice
     language: your_language
+    # Retry once after the initial request fails.
+    max_retries: 1
     output_dir: tmp/
   OpenAITTS:
     type: openai
