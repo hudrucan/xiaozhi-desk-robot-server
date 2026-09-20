@@ -62,7 +62,23 @@ class ListenTextMessageHandler(TextMessageHandler):
                         )
                         return
                     conn.just_woken_up = False
-                    await startToChat(conn, original_text)
+
+                    mcp_client = getattr(conn, "mcp_client", None)
+                    if mcp_client and not await mcp_client.is_ready():
+                        if getattr(conn, "pending_typed_input", None) is None:
+                            conn.pending_typed_input = original_text
+                            conn.logger.bind(tag=TAG).info(
+                                "Deferring typed input until device MCP tools are ready"
+                            )
+                        else:
+                            conn.logger.bind(tag=TAG).warning(
+                                "Ignoring typed input while another typed input is waiting for MCP"
+                            )
+                        return
+
+                    await startToChat(
+                        conn, original_text, check_wakeup_word=False
+                    )
                     return
 
                 filtered_len, filtered_text = remove_punctuation_and_length(

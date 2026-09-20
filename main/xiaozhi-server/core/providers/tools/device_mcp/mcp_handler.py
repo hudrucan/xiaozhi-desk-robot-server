@@ -216,6 +216,22 @@ async def handle_mcp_message(
                     if hasattr(conn, "func_handler") and conn.func_handler:
                         conn.func_handler.tool_manager.refresh_tools()
                         conn.func_handler.current_support_functions()
+
+                    pending_typed_input = getattr(
+                        conn, "pending_typed_input", None
+                    )
+                    if pending_typed_input is not None:
+                        conn.pending_typed_input = None
+                        logger.bind(tag=TAG).info(
+                            "Processing typed input after device MCP tools became ready"
+                        )
+                        from core.handle.receiveAudioHandle import startToChat
+
+                        await startToChat(
+                            conn,
+                            pending_typed_input,
+                            check_wakeup_word=False,
+                        )
             return
 
     # Handle method calls (requests from the client)

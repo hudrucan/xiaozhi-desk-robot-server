@@ -142,6 +142,7 @@ class ConnectionHandler:
         # iot相关变量
         self.iot_descriptors = {}
         self.func_handler = None
+        self.pending_typed_input = None
 
         self.cmd_exit = self.config["exit_commands"]
 

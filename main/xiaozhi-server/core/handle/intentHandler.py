@@ -16,7 +16,7 @@ from core.providers.tts.dto.dto import TTSMessageDTO, SentenceType
 TAG = __name__
 
 
-async def handle_user_intent(conn: "ConnectionHandler", text):
+async def handle_user_intent(conn: "ConnectionHandler", text, check_wakeup_word=True):
     # 预处理输入文本，处理可能的JSON格式
     try:
         if text.strip().startswith("{") and text.strip().endswith("}"):
@@ -33,7 +33,7 @@ async def handle_user_intent(conn: "ConnectionHandler", text):
         return True
 
     # 检查是否是唤醒词
-    if await checkWakeupWords(conn, filtered_text):
+    if check_wakeup_word and await checkWakeupWords(conn, filtered_text):
         return True
 
     if conn.intent_type == "function_call":
