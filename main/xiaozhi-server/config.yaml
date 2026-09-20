@@ -202,6 +202,17 @@ ASR:
     mode: verbatim
     timeout: 120
     output_dir: tmp/
+  GeminiLiveASR:
+    type: gemini_live
+    model_name: gemini-3.5-transcribe-live
+    api_key: your_api_key
+    language: auto
+    mode: VERBATIM
+    # Refresh before the Live API's 10-minute session limit.
+    session_refresh_seconds: 540
+    # Buffer up to roughly 12 seconds of 120 ms audio chunks.
+    audio_queue_size: 100
+    chunk_ms: 120
   OpenAIASR:
     type: openai
     api_key: your_api_key

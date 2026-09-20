@@ -239,6 +239,7 @@ python performance_tester.py
 
 # Or run one active provider directly.
 python performance_tester.py performance_tester_asr
+python performance_tester.py performance_tester_asr_live
 python performance_tester.py performance_tester_llm
 python performance_tester.py performance_tester_tts
 ```

@@ -84,6 +84,10 @@ async def main():
     provider_config = config.get("ASR", {}).get(provider_name)
     if not provider_name or provider_config is None:
         raise ValueError("The selected ASR provider is not configured")
+    if provider_config.get("type") == "gemini_live":
+        raise ValueError(
+            "Use performance_tester_asr_live for the selected streaming provider"
+        )
 
     audio_path = find_audio_file()
     pcm_data = load_pcm(audio_path)
