@@ -1,7 +1,7 @@
 """Memory 链路测试。
 
 Mock 模式（默认）：从 data/.config.yaml 拿配置构造真实 provider；外部
-SDK 调用（mem0ai / powermem 客户端）走 shim，不会真发请求。
+SDK calls for optional mem0ai use a shim and do not send real requests.
 Live 模式（``RUN_LIVE_API_TESTS=1``）：调真实 Memory provider。
 
 接口约定（core/providers/memory/base.py）：

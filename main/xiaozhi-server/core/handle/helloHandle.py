@@ -87,7 +87,13 @@ async def checkWakeupWords(conn: "ConnectionHandler", text):
         return False
 
     _, filtered_text = remove_punctuation_and_length(text)
-    if filtered_text not in conn.config.get("wakeup_words"):
+    configured_wake_words = conn.config.get("wakeup_words", [])
+    normalized_wake_words = {
+        remove_punctuation_and_length(wake_word)[1].casefold()
+        for wake_word in configured_wake_words
+        if isinstance(wake_word, str)
+    }
+    if filtered_text.casefold() not in normalized_wake_words:
         return False
 
     conn.just_woken_up = True

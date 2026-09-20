@@ -126,7 +126,7 @@ class ASRProviderBase(ABC):
 
             # 判断 ASR 结果类型
             if isinstance(raw_text, dict):
-                # FunASR 返回的 dict 格式
+                # Preserve structured metadata returned by compatible ASR providers.
                 if speaker_name:
                     raw_text["speaker"] = speaker_name
 

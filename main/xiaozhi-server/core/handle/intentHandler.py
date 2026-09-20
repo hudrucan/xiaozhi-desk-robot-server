@@ -50,12 +50,15 @@ async def handle_user_intent(conn: "ConnectionHandler", text):
 
 
 async def check_direct_exit(conn: "ConnectionHandler", text):
-    """检查是否有明确的退出命令"""
+    """Check whether the user explicitly requested to end the session."""
     _, text = remove_punctuation_and_length(text)
     cmd_exit = conn.cmd_exit
     for cmd in cmd_exit:
-        if text == cmd:
-            conn.logger.bind(tag=TAG).info(f"识别到明确的退出命令: {text}")
+        _, normalized_cmd = remove_punctuation_and_length(cmd)
+        if text.casefold() == normalized_cmd.casefold():
+            conn.logger.bind(tag=TAG).info(
+                f"Detected an explicit exit command: {text}"
+            )
             await send_stt_message(conn, text)
             await conn.close()
             return True
@@ -197,8 +200,8 @@ async def process_intent_result(
                         text = result.response if result.response else result.result
                         if text is not None:
                             speak_txt(conn, text)
-                    elif function_name != "play_music":
-                        # For backward compatibility with original code
+                    else:
+                        # Preserve fallback handling for custom action responses.
                         # 获取当前最新的文本索引
                         text = result.response
                         if text is None:

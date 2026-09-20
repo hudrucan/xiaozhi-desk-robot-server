@@ -29,7 +29,7 @@ class TTSProvider(TTSProviderBase):
         pitch_rate = config.get("pitch", "0")
         self.pitch_rate = int(pitch_rate) if pitch_rate else 0
 
-        # 应用百分比调整
+        # Apply the configured percentage adjustment.
         self._apply_percentage_params(config)
 
         self.edge_rate = f"{self.speech_rate:+}%"
@@ -52,23 +52,23 @@ class TTSProvider(TTSProviderBase):
                 pitch=self.edge_pitch,
             )
             if output_file:
-                # 确保目录存在并创建空文件
+                # Create the output directory and initialize the file.
                 os.makedirs(os.path.dirname(output_file), exist_ok=True)
                 with open(output_file, "wb") as f:
                     pass
 
-                # 流式写入音频数据
-                with open(output_file, "ab") as f:  # 改为追加模式避免覆盖
+                # Append streamed audio chunks.
+                with open(output_file, "ab") as f:
                     async for chunk in communicate.stream():
-                        if chunk["type"] == "audio":  # 只处理音频数据块
+                        if chunk["type"] == "audio":
                             f.write(chunk["data"])
             else:
-                # 返回音频二进制数据
+                # Return audio bytes when no output file was requested.
                 audio_bytes = b""
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
                         audio_bytes += chunk["data"]
                 return audio_bytes
         except Exception as e:
-            error_msg = f"Edge TTS请求失败: {e}"
-            raise Exception(error_msg)  # 抛出异常，让调用方捕获
+            error_msg = f"Edge TTS request failed: {e}"
+            raise Exception(error_msg)

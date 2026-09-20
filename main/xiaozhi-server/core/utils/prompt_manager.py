@@ -166,6 +166,18 @@ class PromptManager:
     def _get_weather_info(self, conn: "ConnectionHandler", location: str) -> str:
         """获取天气信息"""
         try:
+            weather_config = conn.config.get("plugins", {}).get("get_weather", {})
+            api_host = str(weather_config.get("api_host", "")).strip()
+            api_key = str(weather_config.get("api_key", "")).strip()
+            invalid_markers = ("your_", "your ", "placeholder", "xxx", "你的")
+            if (
+                not api_host
+                or not api_key
+                or any(marker in api_host.lower() for marker in invalid_markers)
+                or any(marker in api_key.lower() for marker in invalid_markers)
+            ):
+                return ""
+
             # 先从缓存获取
             cached_weather = self.cache_manager.get(self.CacheType.WEATHER, location)
             if cached_weather is not None:
@@ -194,7 +206,7 @@ class PromptManager:
             event = threading.Event()
             conn.loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_call()))
             if not event.wait(timeout=10):
-                raise TimeoutError("获取天气信息超时")
+                raise TimeoutError("Weather lookup timed out")
             if exception_holder:
                 raise exception_holder[0]
             result = result_holder[0]
@@ -202,11 +214,11 @@ class PromptManager:
                 weather_report = result.result
                 self.cache_manager.set(self.CacheType.WEATHER, location, weather_report)
                 return weather_report
-            return "天气信息获取失败"
+            return "Weather information is unavailable"
 
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"获取天气信息失败: {e}")
-            return "天气信息获取失败"
+            self.logger.bind(tag=TAG).error(f"Failed to fetch weather information: {e}")
+            return "Weather information is unavailable"
 
     def update_context_info(self, conn, client_ip: str):
         """同步更新上下文信息"""

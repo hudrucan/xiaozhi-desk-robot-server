@@ -22,8 +22,8 @@ class ASRProvider(ASRProviderBase):
         if not self.api_key or self.api_key in {"your_api_key", "你的api_key"}:
             raise ValueError("Gemini ASR requires a valid API key")
 
-        self.model_name = config.get("model_name", "gemini-3.5-transcribe")
-        self.language = config.get("language", "vi-VN")
+        self.model_name = config.get("model_name", "gemini-3.5-flash-lite")
+        self.language = config.get("language", "auto")
         self.mode = config.get("mode", "verbatim")
         self.timeout = int(config.get("timeout", 120))
         self.output_dir = config.get("output_dir", "tmp/")
@@ -49,22 +49,43 @@ class ASRProvider(ASRProviderBase):
                 timeout=aiohttp.ClientTimeout(total=self.timeout)
             )
 
-        payload = {
-            "model": self.model_name,
-            "input": [
-                {
-                    "type": "audio",
-                    "data": base64.b64encode(wav_data).decode("ascii"),
-                    "mime_type": "audio/wav",
-                }
-            ],
-            "generation_config": {
-                "transcription_config": {
-                    "language_codes": [self.language],
-                    "mode": self.mode,
-                }
-            },
+        audio_input = {
+            "type": "audio",
+            "data": base64.b64encode(wav_data).decode("ascii"),
+            "mime_type": "audio/wav",
         }
+        if "transcribe" in self.model_name:
+            payload = {
+                "model": self.model_name,
+                "input": [audio_input],
+                "generation_config": {
+                    "transcription_config": {
+                        "language_codes": (
+                            [] if self.language == "auto" else [self.language]
+                        ),
+                        "mode": self.mode,
+                    }
+                },
+            }
+        else:
+            language_instruction = (
+                "Detect the spoken language automatically"
+                if self.language == "auto"
+                else f"Transcribe the speech in {self.language}"
+            )
+            prompt = (
+                f"{language_instruction}. Return only the transcript, without "
+                "labels, formatting, or explanation."
+            )
+            if self.mode.lower() == "verbatim":
+                prompt += " Preserve the spoken wording and disfluencies verbatim."
+            payload = {
+                "model": self.model_name,
+                "input": [
+                    {"type": "text", "text": prompt},
+                    audio_input,
+                ],
+            }
         async with self._session.post(
             "https://generativelanguage.googleapis.com/v1beta/interactions",
             headers={"x-goog-api-key": self.api_key},

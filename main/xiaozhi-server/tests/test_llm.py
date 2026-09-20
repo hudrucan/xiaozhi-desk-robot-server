@@ -9,11 +9,8 @@ Live 模式（``RUN_LIVE_API_TESTS=1``）：调真实 LLM provider，参考
     response(session_id, dialogue) -> Iterator[str]，同步流式生成器
     response_no_stream(system_prompt, user_content) -> str
 
-特殊处理：
-- CozeLLM 看 bot_id / user_id 而非 api_key
-- Ollama 要 model_name + 本地服务可用
-- placeholder 检测（"你的" / "placeholder" / "xxx" / "sk-xxx"）
-- 因为 LLM 是同步 generator，不能直接 asyncio.wait_for → 线程池
+The selected provider must have a non-placeholder API key. The streaming LLM
+interface is synchronous, so timeout handling uses a worker thread.
 """
 from __future__ import annotations
 
@@ -45,15 +42,7 @@ def _build_provider():
 
     # 任何模式下：key 是占位符 → skip。真请求需要真 key；mock 模式下
     # 没有真 key 跑下去也会撞真 SDK 的网络栈（openai/edge_tts）报错。
-    if name == "CozeLLM":
-        if any(x in cfg.get("bot_id", "") for x in ["你的"]) or any(
-            x in cfg.get("user_id", "") for x in ["你的"]
-        ):
-            pytest.skip("LLM 'CozeLLM' 的 bot_id/user_id 未配置")
-    elif name == "Ollama":
-        if not cfg.get("model_name"):
-            pytest.skip("LLM 'Ollama' 的 model_name 未配置")
-    elif not has_real_key(cfg, "api_key"):
+    if not has_real_key(cfg, "api_key"):
         if LIVE_API_TESTS:
             pytest.skip(f"LLM '{name}' 的 api_key 未配置")
         else:
@@ -81,8 +70,8 @@ def test_llm_response_streams_non_empty() -> None:
     """response(session_id, dialogue) 应产生非空 token 流。"""
     provider = _build_provider()
     dialogue = [
-        {"role": "system", "content": "你是助手"},
-        {"role": "user", "content": "用一句话说 hi"},
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Say hello in one sentence."},
     ]
     chunks = _collect_with_timeout(provider, "test-session", dialogue, timeout=10.0)
 
@@ -94,7 +83,9 @@ def test_llm_response_streams_non_empty() -> None:
 def test_llm_response_no_stream_returns_string() -> None:
     """response_no_stream 应返回非空字符串。"""
     provider = _build_provider()
-    text = provider.response_no_stream("你是助手", "介绍一下北京").strip()
+    text = provider.response_no_stream(
+        "You are a helpful assistant.", "Briefly introduce Hanoi."
+    ).strip()
 
     assert isinstance(text, str), f"response_no_stream 应返回 str，得到 {type(text).__name__}"
     assert text, "response_no_stream 返回空字符串"

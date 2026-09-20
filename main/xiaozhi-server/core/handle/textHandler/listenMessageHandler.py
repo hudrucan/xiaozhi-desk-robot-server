@@ -69,8 +69,13 @@ class ListenTextMessageHandler(TextMessageHandler):
                     original_text
                 )
 
-                # 识别是否是唤醒词
-                is_wakeup_words = filtered_text in conn.config.get("wakeup_words")
+                configured_wake_words = conn.config.get("wakeup_words", [])
+                normalized_wake_words = {
+                    remove_punctuation_and_length(wake_word)[1].casefold()
+                    for wake_word in configured_wake_words
+                    if isinstance(wake_word, str)
+                }
+                is_wakeup_words = filtered_text.casefold() in normalized_wake_words
                 # 是否开启唤醒词回复
                 enable_greeting = conn.config.get("enable_greeting", True)
 
@@ -81,7 +86,9 @@ class ListenTextMessageHandler(TextMessageHandler):
                     conn.client_is_speaking = False
                 elif is_wakeup_words:
                     conn.just_woken_up = True
-                    await startToChat(conn, "嘿，你好呀")
+                    await startToChat(
+                        conn, conn.config.get("wakeup_greeting", "Hello")
+                    )
                 else:
                     conn.just_woken_up = True
                     # 否则需要LLM对文字内容进行答复

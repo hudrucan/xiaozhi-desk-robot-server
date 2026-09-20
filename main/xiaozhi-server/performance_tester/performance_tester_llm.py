@@ -6,7 +6,6 @@ import time
 import concurrent.futures
 from typing import Dict, Optional
 import yaml
-import aiohttp
 from tabulate import tabulate
 from core.utils.llm import create_instance as create_llm_instance
 from config.settings import load_config
@@ -118,31 +117,6 @@ class LLMPerformanceTester:
 
         return chunks, first_token_time
 
-    async def _check_ollama_service(self, base_url: str, model_name: str) -> bool:
-        """异步检查 Ollama 服务状态"""
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.get(f"{base_url}/api/version") as response:
-                    if response.status != 200:
-                        print(f"Ollama 服务未启动或无法访问: {base_url}")
-                        return False
-                async with session.get(f"{base_url}/api/tags") as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        models = data.get("models", [])
-                        if not any(model["name"] == model_name for model in models):
-                            print(
-                                f"Ollama 模型 {model_name} 未找到，请先使用 `ollama pull {model_name}` 下载"
-                            )
-                            return False
-                    else:
-                        print("无法获取 Ollama 模型列表")
-                        return False
-                return True
-            except Exception as e:
-                print(f"无法连接到 Ollama 服务: {str(e)}")
-                return False
-
     async def _test_single_sentence(
         self, llm_name: str, llm, sentence: str
     ) -> Optional[Dict]:
@@ -229,37 +203,16 @@ class LLMPerformanceTester:
     async def _test_llm(self, llm_name: str, config: Dict) -> Dict:
         """异步测试单个 LLM 性能"""
         try:
-            # 对于 Ollama，跳过 api_key 检查并进行特殊处理
-            if llm_name == "Ollama":
-                base_url = config.get("base_url", "http://localhost:11434")
-                model_name = config.get("model_name")
-                if not model_name:
-                    print("Ollama 未配置 model_name")
-                    return {
-                        "name": llm_name,
-                        "type": "llm",
-                        "errors": 1,
-                        "error_type": "网络错误",
-                    }
-
-                if not await self._check_ollama_service(base_url, model_name):
-                    return {
-                        "name": llm_name,
-                        "type": "llm",
-                        "errors": 1,
-                        "error_type": "网络错误",
-                    }
-            else:
-                if "api_key" in config and any(
-                    x in config["api_key"] for x in ["你的", "placeholder", "sk-xxx"]
-                ):
-                    print(f"跳过未配置的 LLM: {llm_name}")
-                    return {
-                        "name": llm_name,
-                        "type": "llm",
-                        "errors": 1,
-                        "error_type": "配置错误",
-                    }
+            if "api_key" in config and any(
+                x in config["api_key"] for x in ["你的", "placeholder", "sk-xxx"]
+            ):
+                print(f"Skipping unconfigured LLM: {llm_name}")
+                return {
+                    "name": llm_name,
+                    "type": "llm",
+                    "errors": 1,
+                    "error_type": "configuration error",
+                }
 
             # 获取实际类型（兼容旧配置）
             module_type = config.get("type", llm_name)
@@ -461,28 +414,11 @@ class LLMPerformanceTester:
         if self.config.get("LLM") is not None:
             for llm_name, config in self.config.get("LLM", {}).items():
                 # 检查配置有效性
-                if llm_name == "CozeLLM":
-                    if any(x in config.get("bot_id", "") for x in ["你的"]) or any(
-                        x in config.get("user_id", "") for x in ["你的"]
-                    ):
-                        print(f"LLM {llm_name} 未配置 bot_id/user_id，已跳过")
-                        continue
-                elif "api_key" in config and any(
+                if "api_key" in config and any(
                     x in config["api_key"] for x in ["你的", "placeholder", "sk-xxx"]
                 ):
-                    print(f"LLM {llm_name} 未配置 api_key，已跳过")
+                    print(f"LLM {llm_name} has no configured API key; skipping")
                     continue
-
-                # 对于 Ollama，先检查服务状态
-                if llm_name == "Ollama":
-                    base_url = config.get("base_url", "http://localhost:11434")
-                    model_name = config.get("model_name")
-                    if not model_name:
-                        print("Ollama 未配置 model_name")
-                        continue
-
-                    if not await self._check_ollama_service(base_url, model_name):
-                        continue
 
                 print(f"添加 LLM 测试任务: {llm_name}")
                 all_tasks.append(self._test_llm(llm_name, config))

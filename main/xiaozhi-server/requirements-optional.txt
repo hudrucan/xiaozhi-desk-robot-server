@@ -1,0 +1,2 @@
+# Optional remote memory provider.
+mem0ai==1.0.0

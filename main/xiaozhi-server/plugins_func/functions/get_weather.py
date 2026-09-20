@@ -16,20 +16,19 @@ GET_WEATHER_FUNCTION_DESC = {
     "function": {
         "name": "get_weather",
         "description": (
-            "获取某个地点的天气，用户应提供一个位置，比如用户说杭州天气，参数为：杭州。"
-            "如果用户说的是省份，默认用省会城市。如果用户说的不是省份或城市而是一个地名，默认用该地所在省份的省会城市。"
-            "重要：本地未来7天天气已在上下文中提供，用户未指明其他城市时绝对不要调用此工具。"
+            "Get weather for a specified location. Local weather is already present "
+            "in context, so only call this tool when the user asks about another place."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "location": {
                     "type": "string",
-                    "description": "地点名，例如杭州。可选参数，如果不提供则不传",
+                    "description": "Optional city or location name.",
                 },
                 "lang": {
                     "type": "string",
-                    "description": "返回用户使用的语言code，例如zh_CN/zh_HK/en_US/ja_JP等，默认zh_CN",
+                    "description": "Language code for the result, such as vi_VN or en_US.",
                 },
             },
             "required": ["lang"],
@@ -118,7 +117,7 @@ async def fetch_city_info(location, api_key, api_host):
     data = response.json()
     if data.get("error") is not None:
         logger.bind(tag=TAG).error(
-            f"获取天气失败，原因：{data.get('error', {}).get('detail')}"
+            f"Weather lookup failed: {data.get('error', {}).get('detail')}"
         )
         return None
     return data.get("location", [])[0] if data.get("location") else None
@@ -166,14 +165,16 @@ async def get_weather(conn: "ConnectionHandler", location: str = None, lang: str
     from core.utils.cache.manager import cache_manager, CacheType
 
     weather_config = conn.config.get("plugins", {}).get("get_weather", {})
-    api_host = weather_config.get("api_host", "mj7p3y7naa.re.qweatherapi.com")
-    api_key = weather_config.get("api_key", "a861d0d5e7bf4ee1a83d9a9e4f96d4da")
-    default_location = weather_config.get("default_location", "广州")
+    api_host = str(weather_config.get("api_host", "")).strip()
+    api_key = str(weather_config.get("api_key", "")).strip()
+    default_location = weather_config.get("default_location", "")
+    if not api_host or not api_key:
+        return ActionResponse(Action.ERROR, "Weather tool is not configured", None)
     client_ip = conn.client_ip
 
-    # 优先使用用户提供的location参数
+    # Prefer an explicitly supplied location.
     if not location:
-        # 通过客户端IP解析城市
+        # Resolve a city from the client IP when available.
         if client_ip:
             # 先从缓存获取IP对应的城市信息
             cached_ip_info = cache_manager.get(CacheType.IP_INFO, client_ip)
@@ -189,8 +190,10 @@ async def get_weather(conn: "ConnectionHandler", location: str = None, lang: str
             if not location:
                 location = default_location
         else:
-            # 若无IP，使用默认位置
+            # Fall back to the configured location when no client IP is available.
             location = default_location
+    if not location:
+        return ActionResponse(Action.REQLLM, "No weather location was provided", None)
     # 尝试从缓存获取完整天气报告
     weather_cache_key = f"full_weather_{location}_{lang}"
     cached_weather_report = cache_manager.get(CacheType.WEATHER, weather_cache_key)
@@ -201,11 +204,11 @@ async def get_weather(conn: "ConnectionHandler", location: str = None, lang: str
     city_info = await fetch_city_info(location, api_key, api_host)
     if not city_info:
         return ActionResponse(
-            Action.REQLLM, f"未找到相关的城市: {location}，请确认地点是否正确", None
+            Action.REQLLM, f"No matching city was found for: {location}", None
         )
     soup = await fetch_weather_page(city_info["fxLink"])
     if not soup:
-        return ActionResponse(Action.REQLLM, None, "请求失败")
+        return ActionResponse(Action.REQLLM, None, "Weather request failed")
     city_name, current_abstract, current_basic, temps_list = parse_weather_info(soup)
 
     weather_report = f"您查询的位置是：{city_name}\n\n当前天气: {current_abstract}\n"

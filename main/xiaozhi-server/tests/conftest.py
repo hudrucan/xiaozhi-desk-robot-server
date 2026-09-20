@@ -28,7 +28,7 @@ from pathlib import Path
 
 import yaml
 
-# Windows console 默认 GBK 编码；emoji / 中文 print 会炸，强制 UTF-8。
+# Force UTF-8 for consoles whose default encoding cannot represent test output.
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -163,33 +163,20 @@ _MOCKED_MODULES: tuple[str, ...] = (
     # 注：openai / httpx / requests 这些真实第三方包通常已装在 conda 环境，
     # shim 整个 module 会破坏 ``openai.types`` / ``httpx.AsyncClient`` 等子模块
     # 解析。仅当对应包没装时才 shim（__getattr__ 仍走真 import 路径）。
-    "anthropic",
-    "dashscope",
-    "tencentcloud",
-    "xunfei",
-    "vosk",
     "edge_tts",
-    "elevenlabs",
     "mem0",
     "mem0ai",
     "freezegun",
 )
 
-# 这些包即使装了也强制 shim — 它们要么本地模型链 import 时炸
-# (funasr 引 torch、torch DLL 路径长)，要么是 GPU 重型依赖，mock 跑不动。
-_FORCE_SHIM_MODULES: tuple[str, ...] = (
-    "funasr",
-    "torch",
-    "torchaudio",
-    "modelscope",
-)
+_FORCE_SHIM_MODULES: tuple[str, ...] = ()
 
 
 def _try_import_real(name: str) -> bool:
     """检查真实第三方包是否可加载（不真正 import，只检查 importer.find_spec）。
 
-    主动 ``__import__`` 会触发包级副作用（funasr 引 torch 等），绕过它直接
-    看包是否在 sys.path / site-packages 里。
+    Avoid importing packages merely to check availability because imports may
+    have package-level side effects.
     """
     import importlib.util
 

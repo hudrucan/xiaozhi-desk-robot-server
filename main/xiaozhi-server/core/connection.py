@@ -20,7 +20,6 @@ from core.utils.modules_initialize import (
     initialize_tts,
     initialize_asr,
 )
-from core.providers.tts.default import DefaultTTS
 from concurrent.futures import ThreadPoolExecutor
 from core.utils.dialogue import Message, Dialogue
 from core.providers.asr.dto.dto import InterfaceType
@@ -598,54 +597,49 @@ class ConnectionHandler:
         # === few-shot 示例（is_temporary）===
         # 展示 direct_answer 携带 response 参数的用法，一次调用完成回复
 
-        # 示例1：direct_answer（回复内容写在 response 参数里，无需递归）
+        # Example 1: direct_answer returns its response without another LLM pass.
         da_tc_id = "fewshot_da_001"
-        self.dialogue.put(Message(role="user", content="给我讲个故事吧", is_temporary=True))
+        self.dialogue.put(Message(role="user", content="Tell me a story", is_temporary=True))
         self.dialogue.put(Message(
             role="assistant",
             tool_calls=[{
                 "id": da_tc_id,
-                "function": {"arguments": '{"response": "好呀，你想听什么类型的呀？童话、冒险还是搞笑的？选一个我给你开讲~"}', "name": "direct_answer"},
+                "function": {"arguments": '{"response": "Sure. What kind of story would you like?"}', "name": "direct_answer"},
                 "type": "function", "index": 0,
             }],
             is_temporary=True,
         ))
         self.dialogue.put(Message(
             role="tool", tool_call_id=da_tc_id,
-            content="已直接回复", is_temporary=True,
+            content="Response sent", is_temporary=True,
         ))
 
-        # 示例2：真实工具调用（handle_exit_intent）
+        # Example 2: a real tool call (handle_exit_intent).
         if "handle_exit_intent" in tool_names:
             tc_id = "fewshot_exit_001"
-            self.dialogue.put(Message(role="user", content="拜拜", is_temporary=True))
+            self.dialogue.put(Message(role="user", content="Goodbye", is_temporary=True))
             self.dialogue.put(Message(
                 role="assistant",
                 tool_calls=[{
                     "id": tc_id,
-                    "function": {"arguments": '{"say_goodbye": "再见，下次再聊~"}', "name": "handle_exit_intent"},
+                    "function": {"arguments": "{}", "name": "handle_exit_intent"},
                     "type": "function", "index": 0,
                 }],
                 is_temporary=True,
             ))
             self.dialogue.put(Message(
                 role="tool", tool_call_id=tc_id,
-                content="退出意图已处理", is_temporary=True,
+                content="Exit intent handled", is_temporary=True,
             ))
             self.dialogue.put(Message(
-                role="assistant", content="再见，下次再聊~", is_temporary=True,
+                role="assistant", content="Goodbye", is_temporary=True,
             ))
 
-        self.logger.bind(tag=TAG).debug("已注入工具调用 few-shot 示例")
+        self.logger.bind(tag=TAG).debug("Tool-call few-shot examples injected")
 
     def _initialize_tts(self):
-        """初始化TTS"""
-        tts = initialize_tts(self.config)
-
-        if tts is None:
-            tts = DefaultTTS(self.config, delete_audio_file=True)
-
-        return tts
+        """Initialize TTS."""
+        return initialize_tts(self.config)
 
     def _initialize_asr(self):
         """初始化ASR"""
@@ -702,8 +696,8 @@ class ConnectionHandler:
         memory_type = self.config["Memory"][self.config["selected_module"]["Memory"]][
             "type"
         ]
-        # 如果使用 nomen 或 mem_report_only，直接返回
-        if memory_type == "nomem" or memory_type == "mem_report_only":
+        # No-memory mode needs no additional LLM wiring.
+        if memory_type == "nomem":
             return
         # 使用 mem_local_short 模式
         elif memory_type == "mem_local_short":

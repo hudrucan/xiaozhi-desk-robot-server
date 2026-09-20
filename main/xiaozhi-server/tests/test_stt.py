@@ -8,11 +8,7 @@ Live 模式（``RUN_LIVE_API_TESTS=1``）：调真实 ASR provider。
     async speech_to_text_wrapper(pcm_data, session_id) -> Tuple[Optional[str], Optional[str]]
     async speech_to_text(opus_data, session_id, artifacts) -> Tuple[Optional[str], Optional[str]]
 
-注意：
-- performance_tester_asr.py 用 3-arg 调 wrapper 是错的（base 只接 2 个），
-  这里用 2-arg 正确版本
-- FunASR 是本地模型：构造时会加载 model_dir 的模型文件；
-  如果模型没下载，`__init__` 直接抛异常，测试会 skip
+The wrapper receives the audio packet list and session ID.
 """
 from __future__ import annotations
 
@@ -98,7 +94,7 @@ def test_asr_speech_to_text_wrapper_returns_text() -> None:
     参考 performance_tester_asr.py：
     - 喂真实 wav 文件 bytes 给 speech_to_text_wrapper
     - 10s 超时
-    - 返回的 text 可能是 None（识别失败）/ str（部分 provider）/ dict（FunASR 等带 emotion/language 的）
+    - returned text may be None or a string
     """
     provider = _build_provider()
     # Mock 模式下没有 wav 资产也能跑（shim 不读文件）。
@@ -117,12 +113,7 @@ def test_asr_speech_to_text_wrapper_returns_text() -> None:
         )
 
     text, file_path = asyncio.run(run())
-    # ASR 结果兼容性：None / str / dict（FunASR 返回 {content, language, emotion}）
-    assert text is None or isinstance(text, (str, dict)), (
-        f"speech_to_text_wrapper 应返回 (None/str/dict, str|None)，"
+    assert text is None or isinstance(text, str), (
+        f"speech_to_text_wrapper should return (None/str, str|None); "
         f"得到 text 类型 {type(text).__name__}"
     )
-    if isinstance(text, dict):
-        # FunASR 风格：取 content 字段（live 模式才严格校验）。
-        if LIVE_API_TESTS:
-            assert text.get("content"), f"ASR dict 结果缺少 content：{text!r}"

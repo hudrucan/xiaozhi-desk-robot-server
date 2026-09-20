@@ -1,10 +1,10 @@
 """RAG（检索增强生成）链路测试。
 
 xiaozhi-esp32-server 项目里没有独立的 RAG provider —— RAG 由
-MemoryProvider（mem0ai / powermem）的 ``query_memory`` 配合 LLM 工具
+MemoryProvider (mem0ai or local memory) uses ``query_memory`` with the LLM
 调用实现。本测试聚焦「save → query → 拿到检索结果」这一核心链路。
 
-Mock 模式（默认）：mem0/powermem 等云调用走 shim，不发请求。
+Mock mode (default): optional mem0 calls use a shim and send no requests.
 Live 模式（``RUN_LIVE_API_TESTS=1``）：真发请求到所选 memory provider。
 """
 from __future__ import annotations
@@ -43,13 +43,13 @@ def test_rag_query_after_save_returns_string() -> None:
     """保存后 query_memory 应返回字符串（nomem 返回空串也合法）。"""
     provider = _build_memory_provider()
     msgs = [
-        {"role": "user", "content": "我喜欢喝咖啡"},
-        {"role": "assistant", "content": "好的记住了"},
+        {"role": "user", "content": "I like coffee."},
+        {"role": "assistant", "content": "I will remember that."},
     ]
 
     async def run():
         await provider.save_memory(msgs, "rag-session")
-        return await provider.query_memory("咖啡")
+        return await provider.query_memory("coffee")
 
     result = asyncio.run(run())
     assert isinstance(result, str), f"query_memory 应返回 str，得到 {type(result).__name__}"
@@ -60,7 +60,7 @@ def test_rag_query_no_match_returns_empty() -> None:
     provider = _build_memory_provider()
 
     async def run():
-        return await provider.query_memory("完全不存在的关键词xyz")
+        return await provider.query_memory("nonexistent-keyword-xyz")
 
     result = asyncio.run(run())
     assert isinstance(result, str)
@@ -71,7 +71,7 @@ def test_rag_empty_query_handled() -> None:
     provider = _build_memory_provider()
 
     async def run():
-        await provider.save_memory([{"role": "user", "content": "测试"}], "s")
+        await provider.save_memory([{"role": "user", "content": "test"}], "s")
         return await provider.query_memory("")
 
     result = asyncio.run(run())
