@@ -25,20 +25,20 @@ class TextMessageProcessor:
                 message_type = msg_json.get("type")
 
                 # 记录日志
-                conn.logger.bind(tag=TAG).info(f"收到{message_type}消息：{message}")
+                conn.logger.bind(tag=TAG).info(f"Received {message_type} message: {message}")
 
                 # 获取并执行处理器
                 handler = self.registry.get_handler(message_type)
                 if handler:
                     await handler.handle(conn, msg_json)
                 else:
-                    conn.logger.bind(tag=TAG).error(f"收到未知类型消息：{message}")
+                    conn.logger.bind(tag=TAG).error(f"Received message of unknown type: {message}")
             # 处理纯数字消息
             elif isinstance(msg_json, int):
-                conn.logger.bind(tag=TAG).info(f"收到数字消息：{message}")
+                conn.logger.bind(tag=TAG).info(f"Received numeric message: {message}")
                 await conn.websocket.send(message)
 
         except json.JSONDecodeError:
             # 非JSON消息直接转发
-            conn.logger.bind(tag=TAG).error(f"解析到错误的消息：{message}")
+            conn.logger.bind(tag=TAG).error(f"Failed to parse message: {message}")
             await conn.websocket.send(message)

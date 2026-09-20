@@ -129,14 +129,14 @@ class VisionHandler(BaseHandler):
                 content_type="application/json",
             )
         except ValueError as e:
-            self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
+            self.logger.bind(tag=TAG).error(f"MCP Vision POST request failed: {e}")
             return_json = self._create_error_response(str(e))
             response = web.Response(
                 text=json.dumps(return_json, separators=(",", ":")),
                 content_type="application/json",
             )
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"MCP Vision POST请求异常: {e}")
+            self.logger.bind(tag=TAG).error(f"MCP Vision POST request failed: {e}")
             return_json = self._create_error_response("处理请求时发生错误")
             response = web.Response(
                 text=json.dumps(return_json, separators=(",", ":")),
@@ -160,7 +160,7 @@ class VisionHandler(BaseHandler):
 
             response = web.Response(text=message, content_type="text/plain")
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"MCP Vision GET请求异常: {e}")
+            self.logger.bind(tag=TAG).error(f"MCP Vision GET request failed: {e}")
             return_json = self._create_error_response("服务器内部错误")
             response = web.Response(
                 text=json.dumps(return_json, separators=(",", ":")),

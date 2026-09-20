@@ -28,7 +28,7 @@ class VoiceprintProvider:
         self.speaker_ids = []
         
         if not self.original_url:
-            logger.bind(tag=TAG).warning("声纹识别URL未配置，声纹识别将被禁用")
+            logger.bind(tag=TAG).warning("Voiceprint recognition URL is not configured; disabling voiceprint recognition")
             self.enabled = False
         else:
             # 解析URL和key
@@ -40,7 +40,7 @@ class VoiceprintProvider:
             self.api_key = query_params.get('key', [''])[0]
             
             if not self.api_key:
-                logger.bind(tag=TAG).error("URL中未找到key参数，声纹识别将被禁用")
+                logger.bind(tag=TAG).error("No key parameter found in URL; disabling voiceprint recognition")
                 self.enabled = False
             else:
                 # 构造identify接口地址
@@ -58,16 +58,16 @@ class VoiceprintProvider:
                 
                 # 检查是否有有效的说话人配置
                 if not self.speaker_ids:
-                    logger.bind(tag=TAG).warning("未配置有效的说话人，声纹识别将被禁用")
+                    logger.bind(tag=TAG).warning("No valid speakers configured; disabling voiceprint recognition")
                     self.enabled = False
                 else:
                     # 进行健康检查，验证服务器是否可用
                     if self._check_server_health():
                         self.enabled = True
-                        logger.bind(tag=TAG).info(f"声纹识别已启用: API={self.api_url}, 说话人={len(self.speaker_ids)}个, 相似度阈值={self.similarity_threshold}")
+                        logger.bind(tag=TAG).info(f"Voiceprint recognition enabled: API={self.api_url}, speakers={len(self.speaker_ids)}, similarity threshold={self.similarity_threshold}")
                     else:
                         self.enabled = False
-                        logger.bind(tag=TAG).warning(f"声纹识别服务器不可用，声纹识别已禁用: {self.api_url}")
+                        logger.bind(tag=TAG).warning(f"Voiceprint server is unavailable; voiceprint recognition disabled: {self.api_url}")
     
     def _parse_speakers(self) -> Dict[str, Dict[str, str]]:
         """解析说话人配置"""
@@ -82,7 +82,7 @@ class VoiceprintProvider:
                         "description": description
                     }
             except Exception as e:
-                logger.bind(tag=TAG).warning(f"解析说话人配置失败: {speaker_str}, 错误: {e}")
+                logger.bind(tag=TAG).warning(f"Failed to parse speaker configuration: {speaker_str}, error: {e}")
         return speaker_map
     
     def _check_server_health(self) -> bool:
@@ -95,11 +95,11 @@ class VoiceprintProvider:
         # 检查缓存
         cached_result = cache_manager.get(CacheType.VOICEPRINT_HEALTH, cache_key)
         if cached_result is not None:
-            logger.bind(tag=TAG).debug(f"使用缓存的健康状态: {cached_result}")
+            logger.bind(tag=TAG).debug(f"Using cached health status: {cached_result}")
             return cached_result
         
         # 缓存过期或不存在
-        logger.bind(tag=TAG).info("执行声纹服务器健康检查")
+        logger.bind(tag=TAG).info("Running voiceprint server health check")
         
         try:
             # 健康检查URL
@@ -112,35 +112,35 @@ class VoiceprintProvider:
             if response.status_code == 200:
                 result = response.json()
                 if result.get("status") == "healthy":
-                    logger.bind(tag=TAG).info("声纹识别服务器健康检查通过")
+                    logger.bind(tag=TAG).info("Voiceprint server health check passed")
                     is_healthy = True
                 else:
-                    logger.bind(tag=TAG).warning(f"声纹识别服务器状态异常: {result}")
+                    logger.bind(tag=TAG).warning(f"Voiceprint server returned an unhealthy status: {result}")
                     is_healthy = False
             else:
-                logger.bind(tag=TAG).warning(f"声纹识别服务器健康检查失败: HTTP {response.status_code}")
+                logger.bind(tag=TAG).warning(f"Voiceprint server health check failed: HTTP {response.status_code}")
                 is_healthy = False
                 
         except requests.exceptions.ConnectTimeout:
-            logger.bind(tag=TAG).warning("声纹识别服务器连接超时")
+            logger.bind(tag=TAG).warning("Voiceprint server connection timed out")
             is_healthy = False
         except requests.exceptions.ConnectionError:
-            logger.bind(tag=TAG).warning("声纹识别服务器连接被拒绝")
+            logger.bind(tag=TAG).warning("Voiceprint server connection was refused")
             is_healthy = False
         except Exception as e:
-            logger.bind(tag=TAG).warning(f"声纹识别服务器健康检查异常: {e}")
+            logger.bind(tag=TAG).warning(f"Voiceprint server health check failed: {e}")
             is_healthy = False
         
         # 使用全局缓存管理器缓存结果
         cache_manager.set(CacheType.VOICEPRINT_HEALTH, cache_key, is_healthy)
-        logger.bind(tag=TAG).info(f"健康检查结果已缓存: {is_healthy}")
+        logger.bind(tag=TAG).info(f"Health-check result cached: {is_healthy}")
         
         return is_healthy
     
     async def identify_speaker(self, audio_data: bytes, session_id: str) -> Optional[str]:
         """识别说话人"""
         if not self.enabled or not self.api_url or not self.api_key:
-            logger.bind(tag=TAG).debug("声纹识别功能已禁用或未配置，跳过识别")
+            logger.bind(tag=TAG).debug("Voiceprint recognition is disabled or unconfigured; skipping recognition")
             return None
             
         try:
@@ -169,30 +169,29 @@ class VoiceprintProvider:
                         score = result.get("score", 0)
                         total_elapsed_time = time.monotonic() - api_start_time
                         
-                        logger.bind(tag=TAG).info(f"声纹识别耗时: {total_elapsed_time:.3f}s")
+                        logger.bind(tag=TAG).info(f"Voiceprint recognition duration: {total_elapsed_time:.3f}s")
                         
                         # 相似度阈值检查
                         if score < self.similarity_threshold:
-                            logger.bind(tag=TAG).warning(f"声纹识别相似度{score:.3f}低于阈值{self.similarity_threshold}")
+                            logger.bind(tag=TAG).warning(f"Voiceprint similarity {score:.3f} is below threshold {self.similarity_threshold}")
                             return "未知说话人"
                         
                         if speaker_id and speaker_id in self.speaker_map:
                             result_name = self.speaker_map[speaker_id]["name"]
-                            logger.bind(tag=TAG).info(f"声纹识别成功: {result_name} (相似度: {score:.3f})")
+                            logger.bind(tag=TAG).info(f"Voiceprint recognized: {result_name} (similarity: {score:.3f})")
                             return result_name
                         else:
-                            logger.bind(tag=TAG).warning(f"未识别的说话人ID: {speaker_id}")
+                            logger.bind(tag=TAG).warning(f"Unrecognized speaker ID: {speaker_id}")
                             return "未知说话人"
                     else:
-                        logger.bind(tag=TAG).error(f"声纹识别API错误: HTTP {response.status}")
+                        logger.bind(tag=TAG).error(f"Voiceprint recognition API error: HTTP {response.status}")
                         return None
                         
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - api_start_time
-            logger.bind(tag=TAG).error(f"声纹识别超时: {elapsed:.3f}s")
+            logger.bind(tag=TAG).error(f"Voiceprint recognition timed out after {elapsed:.3f}s")
             return None
         except Exception as e:
             elapsed = time.monotonic() - api_start_time
-            logger.bind(tag=TAG).error(f"声纹识别失败: {e}")
+            logger.bind(tag=TAG).error(f"Voiceprint recognition failed: {e}")
             return None
-

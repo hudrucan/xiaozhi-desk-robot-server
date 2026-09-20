@@ -26,7 +26,7 @@ class ListenTextMessageHandler(TextMessageHandler):
         if "mode" in msg_json:
             conn.client_listen_mode = msg_json["mode"]
             conn.logger.bind(tag=TAG).debug(
-                f"客户端拾音模式：{conn.client_listen_mode}"
+                f"Client listening mode: {conn.client_listen_mode}"
             )
         if msg_json["state"] == "start":
             # 设备从播放模式切回录音模式,清除所有音频状态和缓冲区

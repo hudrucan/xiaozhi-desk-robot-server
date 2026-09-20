@@ -209,7 +209,7 @@ class GlobalCacheManager:
             deleted = self._cleanup_expired(cache_name)
             if deleted > 0:
                 self._stats["cleanups"] += 1
-                self.logger.debug(f"清理缓存 {cache_name}: 删除 {deleted} 个过期条目")
+                self.logger.debug(f"Cleaned cache {cache_name}: removed {deleted} expired entries")
 
 
 # 创建全局缓存管理器实例

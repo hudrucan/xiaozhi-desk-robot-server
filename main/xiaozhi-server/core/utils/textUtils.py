@@ -102,7 +102,7 @@ async def get_emotion(conn: "ConnectionHandler", text):
             )
         )
     except Exception as e:
-        conn.logger.bind(tag=TAG).warning(f"发送情绪表情失败，错误:{e}")
+        conn.logger.bind(tag=TAG).warning(f"Failed to send emotion emoji, error: {e}")
     return
 
 

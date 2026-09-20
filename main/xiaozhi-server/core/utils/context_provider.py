@@ -49,16 +49,16 @@ class ContextDataProvider:
                             else:
                                 formatted_lines.append(f"- {data}")
                         else:
-                            self.logger.bind(tag=TAG).warning(f"API {url} 返回错误码: {result.get('msg')}")
+                            self.logger.bind(tag=TAG).warning(f"API {url} returned an error: {result.get('msg')}")
                     else:
-                        self.logger.bind(tag=TAG).warning(f"API {url} 返回的不是JSON字典")
+                        self.logger.bind(tag=TAG).warning(f"API {url} did not return a JSON object")
                 else:
-                    self.logger.bind(tag=TAG).warning(f"API {url} 请求失败: {response.status_code}")
+                    self.logger.bind(tag=TAG).warning(f"API {url} request failed: {response.status_code}")
             except Exception as e:
-                self.logger.bind(tag=TAG).error(f"获取上下文数据 {url} 失败: {e}")
+                self.logger.bind(tag=TAG).error(f"Failed to fetch context data from {url}: {e}")
         
         # 将所有格式化后的行拼接成一个字符串
         self.context_data = "\n".join(formatted_lines)
         if self.context_data:
-            self.logger.bind(tag=TAG).debug(f"已注入动态上下文数据:\n{self.context_data}")
+            self.logger.bind(tag=TAG).debug(f"Injected dynamic context data:\n{self.context_data}")
         return self.context_data

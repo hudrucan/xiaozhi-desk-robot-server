@@ -88,7 +88,7 @@ class WebSocketServer:
             # 从 WebSocket 请求中获取路径
             request_path = websocket.request.path
             if not request_path:
-                self.logger.bind(tag=TAG).error("无法获取请求路径")
+                self.logger.bind(tag=TAG).error("Unable to get request path")
                 await websocket.close()
                 return
             parsed_url = urlparse(request_path)
@@ -126,7 +126,7 @@ class WebSocketServer:
         try:
             await handler.handle_connection(websocket)
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"处理连接时出错: {e}")
+            self.logger.bind(tag=TAG).error(f"Error handling connection: {e}")
         finally:
             # 强制关闭连接（如果还没有关闭的话）
             try:
@@ -140,7 +140,7 @@ class WebSocketServer:
                     await websocket.close()
             except Exception as close_error:
                 self.logger.bind(tag=TAG).error(
-                    f"服务器端强制关闭连接时出错: {close_error}"
+                    f"Server failed to force-close connection: {close_error}"
                 )
 
     async def _http_response(self, websocket, request_headers):

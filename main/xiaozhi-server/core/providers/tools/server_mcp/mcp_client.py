@@ -67,7 +67,7 @@ class ServerMCPClient:
         await self._ready_evt.wait()
 
         self.logger.bind(tag=TAG).info(
-            f"服务端MCP客户端已连接，可用工具: {[name for name in self.name_mapping.values()]}"
+            f"Server MCP client connected; available tools: {[name for name in self.name_mapping.values()]}"
         )
 
     async def cleanup(self):
@@ -79,7 +79,7 @@ class ServerMCPClient:
         try:
             await asyncio.wait_for(self._worker_task, timeout=20)
         except (asyncio.TimeoutError, Exception) as e:
-            self.logger.bind(tag=TAG).error(f"服务端MCP客户端关闭错误: {e}")
+            self.logger.bind(tag=TAG).error(f"Error closing server MCP client: {e}")
         finally:
             self._worker_task = None
 
@@ -260,6 +260,6 @@ class ServerMCPClient:
                 await self._shutdown_evt.wait()
 
             except Exception as e:
-                self.logger.bind(tag=TAG).error(f"服务端MCP客户端工作协程错误: {e}")
+                self.logger.bind(tag=TAG).error(f"Server MCP client worker failed: {e}")
                 self._ready_evt.set()
                 raise

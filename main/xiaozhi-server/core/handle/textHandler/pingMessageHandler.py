@@ -26,11 +26,11 @@ class PingMessageHandler(TextMessageHandler):
         # 检查是否启用了WebSocket心跳功能
         enable_websocket_ping = conn.config.get("enable_websocket_ping", False)
         if not enable_websocket_ping:
-            conn.logger.debug(f"WebSocket心跳功能未启用，忽略PING消息")
+            conn.logger.debug("WebSocket heartbeat is disabled; ignoring PING message")
             return
 
         try:
-            conn.logger.debug(f"收到PING消息，发送PONG响应")
+            conn.logger.debug("Received PING message; sending PONG response")
             conn.last_activity_time = time.time() * 1000
             # 构造PONG响应消息
             pong_message = {
@@ -42,4 +42,4 @@ class PingMessageHandler(TextMessageHandler):
             await conn.websocket.send(json.dumps(pong_message))
 
         except Exception as e:
-            conn.logger.error(f"处理PING消息时发生错误: {e}")
+            conn.logger.error(f"Error handling PING message: {e}")

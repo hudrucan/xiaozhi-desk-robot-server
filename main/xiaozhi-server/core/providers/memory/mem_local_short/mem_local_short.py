@@ -130,7 +130,7 @@ class MemoryProvider(MemoryProviderBase):
     async def save_memory(self, msgs, session_id=None):
         # 打印使用的模型信息
         model_info = getattr(self.llm, "model_name", str(self.llm.__class__.__name__))
-        logger.bind(tag=TAG).debug(f"使用记忆保存模型: {model_info}")
+        logger.bind(tag=TAG).debug(f"Using memory-saving model: {model_info}")
         api_key = getattr(self.llm, "api_key", None)
         memory_key_msg = check_model_key("记忆总结专用LLM", api_key)
         if memory_key_msg:

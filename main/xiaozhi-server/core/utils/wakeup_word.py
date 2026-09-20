@@ -64,10 +64,10 @@ class WakeupWordsConfig:
                     self._last_load_time = current_time
                     return config
         except (TimeoutError, IOError) as e:
-            print(f"加载配置文件失败: {e}")
+            print(f"Failed to load configuration file: {e}")
             return {}
         except Exception as e:
-            print(f"加载配置文件时发生未知错误: {e}")
+            print(f"Unexpected error while loading configuration file: {e}")
             return {}
 
     def _save_config(self, config: Dict):
@@ -79,10 +79,10 @@ class WakeupWordsConfig:
                     self._config_cache = config
                     self._last_load_time = time.time()
         except (TimeoutError, IOError) as e:
-            print(f"保存配置文件失败: {e}")
+            print(f"Failed to save configuration file: {e}")
             raise
         except Exception as e:
-            print(f"保存配置文件时发生未知错误: {e}")
+            print(f"Unexpected error while saving configuration file: {e}")
             raise
 
     def get_wakeup_response(self, voice: str) -> Dict:
@@ -116,7 +116,7 @@ class WakeupWordsConfig:
             }
             self._save_config(config)
         except Exception as e:
-            print(f"更新唤醒词回复配置失败: {e}")
+            print(f"Failed to update wake-word response configuration: {e}")
             raise
 
     def generate_file_path(self, voice: str) -> str:
@@ -131,10 +131,10 @@ class WakeupWordsConfig:
                 try:
                     os.remove(file_path)
                 except Exception as e:
-                    print(f"删除已存在的音频文件失败: {e}")
+                    print(f"Failed to delete existing audio file: {e}")
                     raise
 
             return file_path
         except Exception as e:
-            print(f"生成音频文件路径失败: {e}")
+            print(f"Failed to generate audio file path: {e}")
             raise

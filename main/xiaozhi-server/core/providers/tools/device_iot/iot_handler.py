@@ -23,7 +23,7 @@ async def handleIotDescriptors(conn: "ConnectionHandler", descriptors):
         await asyncio.sleep(1)
         wait_max_time -= 1
         if wait_max_time <= 0:
-            logger.bind(tag=TAG).debug("连接对象没有func_handler")
+            logger.bind(tag=TAG).debug("Connection object has no func_handler")
             return
 
     functions_changed = False
@@ -75,13 +75,13 @@ async def handleIotStatus(conn: "ConnectionHandler", states):
                         if property_item["name"] == k:
                             if type(v) != type(property_item["value"]):
                                 logger.bind(tag=TAG).error(
-                                    f"属性{property_item['name']}的值类型不匹配"
+                                    f"Value type mismatch for property {property_item['name']}"
                                 )
                                 break
                             else:
                                 property_item["value"] = v
                                 logger.bind(tag=TAG).info(
-                                    f"物联网状态更新: {key} , {property_item['name']} = {v}"
+                                    f"IoT state update: {key}, {property_item['name']} = {v}"
                                 )
                             break
                 break

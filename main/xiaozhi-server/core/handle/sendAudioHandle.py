@@ -24,7 +24,7 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
         return
 
     if conn.tts.tts_audio_first_sentence:
-        conn.logger.bind(tag=TAG).info(f"发送第一段语音: {text}")
+        conn.logger.bind(tag=TAG).info(f"Sending first speech segment: {text}")
         conn.tts.tts_audio_first_sentence = False
 
     if sentenceType == SentenceType.FIRST:
@@ -45,7 +45,7 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
     await sendAudio(conn, audios)
     # 发送句子开始消息
     if sentenceType is not SentenceType.MIDDLE:
-        conn.logger.bind(tag=TAG).info(f"发送音频消息: {sentenceType}, {text}")
+        conn.logger.bind(tag=TAG).info(f"Sending audio message: {sentenceType}, {text}")
 
     # End playback after the final text segment.
     if sentenceType == SentenceType.LAST:
@@ -65,7 +65,7 @@ async def _wait_for_audio_completion(conn: "ConnectionHandler"):
         rate_controller = conn.audio_rate_controller
         send_delay_ms = conn.config.get("tts_audio_send_delay", 0)
         conn.logger.bind(tag=TAG).debug(
-            f"等待音频发送完成，队列中还有 {len(rate_controller.queue)} 个包"
+            f"Waiting for audio transmission; {len(rate_controller.queue)} packet(s) remain queued"
         )
         await rate_controller.queue_empty_event.wait()
 
@@ -77,7 +77,7 @@ async def _wait_for_audio_completion(conn: "ConnectionHandler"):
             playback_time = (PRE_BUFFER_COUNT + 2) * rate_controller.interval_ms / 1000.0
         await asyncio.sleep(playback_time)
 
-        conn.logger.bind(tag=TAG).debug("音频发送完成")
+        conn.logger.bind(tag=TAG).debug("Audio transmission completed")
 
 
 async def _send_to_mqtt_gateway(

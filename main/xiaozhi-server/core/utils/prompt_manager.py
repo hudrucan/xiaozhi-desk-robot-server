@@ -85,7 +85,7 @@ class PromptManager:
             cached_template = self.cache_manager.get(self.CacheType.CONFIG, cache_key)
             if cached_template is not None:
                 self.base_prompt_template = cached_template
-                self.logger.bind(tag=TAG).debug("从缓存加载基础提示词模板")
+                self.logger.bind(tag=TAG).debug("Loading base prompt template from cache")
                 return
 
             # 缓存未命中，从文件读取
@@ -98,11 +98,11 @@ class PromptManager:
                     self.CacheType.CONFIG, cache_key, template_content
                 )
                 self.base_prompt_template = template_content
-                self.logger.bind(tag=TAG).debug("成功加载基础提示词模板并缓存")
+                self.logger.bind(tag=TAG).debug("Base prompt template loaded and cached")
             else:
-                self.logger.bind(tag=TAG).warning(f"未找到{template_path}文件")
+                self.logger.bind(tag=TAG).warning(f"Template file not found: {template_path}")
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"加载提示词模板失败: {e}")
+            self.logger.bind(tag=TAG).error(f"Failed to load prompt template: {e}")
 
     def get_quick_prompt(self, user_prompt: str, device_id: str = None) -> str:
         """快速获取系统提示词（使用用户配置）"""
@@ -111,20 +111,20 @@ class PromptManager:
             self.CacheType.DEVICE_PROMPT, device_cache_key
         )
         if cached_device_prompt is not None:
-            self.logger.bind(tag=TAG).debug(f"使用设备 {device_id} 的缓存提示词")
+            self.logger.bind(tag=TAG).debug(f"Using cached prompt for device {device_id}")
             return cached_device_prompt
         else:
             self.logger.bind(tag=TAG).debug(
-                f"设备 {device_id} 无缓存提示词，使用传入的提示词"
+                f"No cached prompt for device {device_id}; using the supplied prompt"
             )
 
         # 使用传入的提示词并缓存（如果有设备ID）
         if device_id:
             device_cache_key = f"device_prompt:{device_id}"
             self.cache_manager.set(self.CacheType.DEVICE_PROMPT, device_cache_key, user_prompt)
-            self.logger.bind(tag=TAG).debug(f"设备 {device_id} 的提示词已缓存")
+            self.logger.bind(tag=TAG).debug(f"Prompt cached for device {device_id}")
 
-        self.logger.bind(tag=TAG).info(f"使用快速提示词: {user_prompt[:50]}...")
+        self.logger.bind(tag=TAG).info(f"Using fast prompt: {user_prompt[:50]}...")
         return user_prompt
 
     def _get_current_time_info(self) -> tuple:
@@ -160,7 +160,7 @@ class PromptManager:
             self.cache_manager.set(self.CacheType.LOCATION, client_ip, location)
             return location
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"获取位置信息失败: {e}")
+            self.logger.bind(tag=TAG).error(f"Failed to get location information: {e}")
             return "未知位置"
 
     def _get_weather_info(self, conn: "ConnectionHandler", location: str) -> str:
@@ -253,10 +253,10 @@ class PromptManager:
                 else:
                     self.context_data = ""
 
-            self.logger.bind(tag=TAG).debug(f"上下文信息更新完成")
+            self.logger.bind(tag=TAG).debug("Context information updated")
 
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"更新上下文信息失败: {e}")
+            self.logger.bind(tag=TAG).error(f"Failed to update context information: {e}")
 
     def build_enhanced_prompt(
         self, user_prompt: str, device_id: str, client_ip: str = None, *args, **kwargs
@@ -293,7 +293,7 @@ class PromptManager:
                 .get("language")
                 or "中文"
             )
-            self.logger.bind(tag=TAG).debug(f"获取到选择的语言: {language}")
+            self.logger.bind(tag=TAG).debug(f"Selected language: {language}")
 
             # 替换模板变量
             template = Template(self.base_prompt_template)
@@ -318,10 +318,10 @@ class PromptManager:
                 self.CacheType.DEVICE_PROMPT, device_cache_key, enhanced_prompt
             )
             self.logger.bind(tag=TAG).info(
-                f"构建增强提示词成功，长度: {len(enhanced_prompt)}"
+                f"Enhanced prompt built successfully, length: {len(enhanced_prompt)}"
             )
             return enhanced_prompt
 
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"构建增强提示词失败: {e}")
+            self.logger.bind(tag=TAG).error(f"Failed to build enhanced prompt: {e}")
             return user_prompt

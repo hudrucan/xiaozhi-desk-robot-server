@@ -58,7 +58,7 @@ class AudioRateController:
             if elapsed_since_empty >= self.interval_ms:
                 self.start_timestamp = time.monotonic() - (self.play_position / 1000)
                 self.logger.bind(tag=TAG).debug(
-                    f"队列从空恢复，重置时间戳，当前播放位置: {self.play_position}ms，间隔: {elapsed_since_empty:.0f}ms"
+                    f"Queue resumed from empty; reset timestamp at playback position {self.play_position} ms after {elapsed_since_empty:.0f} ms"
                 )
 
         self.queue.append(("audio", opus_packet))
@@ -78,7 +78,7 @@ class AudioRateController:
             if elapsed_since_empty >= self.interval_ms:
                 self.start_timestamp = time.monotonic() - (self.play_position / 1000)
                 self.logger.bind(tag=TAG).debug(
-                    f"队列从空恢复，重置时间戳，当前播放位置: {self.play_position}ms，间隔: {elapsed_since_empty:.0f}ms"
+                    f"Queue resumed from empty; reset timestamp at playback position {self.play_position} ms after {elapsed_since_empty:.0f} ms"
                 )
 
         self.queue.append(("message", message_callback))
@@ -110,7 +110,7 @@ class AudioRateController:
                 try:
                     await message_callback()
                 except Exception as e:
-                    self.logger.bind(tag=TAG).error(f"发送消息失败: {e}")
+                    self.logger.bind(tag=TAG).error(f"Failed to send message: {e}")
                     raise
 
             elif item_type == "audio":
@@ -133,7 +133,7 @@ class AudioRateController:
                         try:
                             await asyncio.sleep(wait_ms / 1000)
                         except asyncio.CancelledError:
-                            self.logger.bind(tag=TAG).debug("音频发送任务被取消")
+                            self.logger.bind(tag=TAG).debug("Audio sending task was cancelled")
                             raise
                         # 等待结束后重新检查时间（循环回到 while True）
                     else:
@@ -146,7 +146,7 @@ class AudioRateController:
                 try:
                     await send_audio_callback(opus_packet)
                 except Exception as e:
-                    self.logger.bind(tag=TAG).error(f"发送音频失败: {e}")
+                    self.logger.bind(tag=TAG).error(f"Failed to send audio: {e}")
                     raise
 
         # 队列处理完后清除事件
@@ -173,9 +173,9 @@ class AudioRateController:
 
                     await self.check_queue(send_audio_callback)
             except asyncio.CancelledError:
-                self.logger.bind(tag=TAG).debug("音频发送循环已停止")
+                self.logger.bind(tag=TAG).debug("Audio sending loop stopped")
             except Exception as e:
-                self.logger.bind(tag=TAG).error(f"音频发送循环异常: {e}")
+                self.logger.bind(tag=TAG).error(f"Audio sending loop failed: {e}")
 
         self.pending_send_task = asyncio.create_task(_send_loop())
         return self.pending_send_task
@@ -184,4 +184,4 @@ class AudioRateController:
         """停止发送任务"""
         if self.pending_send_task and not self.pending_send_task.done():
             self.pending_send_task.cancel()
-            self.logger.bind(tag=TAG).debug("已取消音频发送任务")
+            self.logger.bind(tag=TAG).debug("Audio sending task cancelled")

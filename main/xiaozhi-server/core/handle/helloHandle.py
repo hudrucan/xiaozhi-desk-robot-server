@@ -49,17 +49,17 @@ async def handleHelloMessage(conn: "ConnectionHandler", msg_json):
     audio_params = msg_json.get("audio_params")
     if audio_params:
         format = audio_params.get("format")
-        conn.logger.bind(tag=TAG).debug(f"客户端音频格式: {format}")
+        conn.logger.bind(tag=TAG).debug(f"Client audio format: {format}")
         conn.audio_format = format
     features = msg_json.get("features")
     if features:
-        conn.logger.bind(tag=TAG).debug(f"客户端特性: {features}")
+        conn.logger.bind(tag=TAG).debug(f"Client features: {features}")
         conn.features = features
         if features.get("mcp"):
-            conn.logger.bind(tag=TAG).debug("客户端支持MCP")
+            conn.logger.bind(tag=TAG).debug("Client supports MCP")
             conn.mcp_client = MCPClient()
         if features.get("aec"):
-            conn.logger.bind(tag=TAG).debug("客户端启用了服务端AEC")
+            conn.logger.bind(tag=TAG).debug("Client enabled server-side AEC")
             conn.client_aec = True
 
     await conn.websocket.send(json.dumps(conn.welcome_msg))
@@ -122,7 +122,7 @@ async def checkWakeupWords(conn: "ConnectionHandler", text):
     # 将唤醒词回复视为新会话，生成新的 sentence_id，确保流控器重置
     conn.sentence_id = str(uuid.uuid4().hex)
 
-    conn.logger.bind(tag=TAG).info(f"播放唤醒词回复: {response.get('text')}")
+    conn.logger.bind(tag=TAG).info(f"Playing wake-word response: {response.get('text')}")
     await sendAudioMessage(conn, SentenceType.FIRST, opus_packets, response.get("text"))
     await sendAudioMessage(conn, SentenceType.LAST, [], None)
 

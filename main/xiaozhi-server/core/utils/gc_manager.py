@@ -30,10 +30,10 @@ class GlobalGCManager:
     async def start(self):
         """启动定时GC任务"""
         if self._task is not None:
-            logger.bind(tag=TAG).warning("GC管理器已经在运行")
+            logger.bind(tag=TAG).warning("GC manager is already running")
             return
 
-        logger.bind(tag=TAG).info(f"启动全局GC管理器，间隔{self.interval_seconds}秒")
+        logger.bind(tag=TAG).info(f"Starting global GC manager with a {self.interval_seconds}-second interval")
         self._stop_event.clear()
         self._task = asyncio.create_task(self._gc_loop())
 
@@ -42,7 +42,7 @@ class GlobalGCManager:
         if self._task is None:
             return
 
-        logger.bind(tag=TAG).info("停止全局GC管理器")
+        logger.bind(tag=TAG).info("Stopping global GC manager")
         self._stop_event.set()
 
         if self._task and not self._task.done():
@@ -73,12 +73,12 @@ class GlobalGCManager:
                 await self._run_gc()
 
         except asyncio.CancelledError:
-            logger.bind(tag=TAG).info("GC循环任务被取消")
+            logger.bind(tag=TAG).info("GC loop task was cancelled")
             raise
         except Exception as e:
-            logger.bind(tag=TAG).error(f"GC循环任务异常: {e}")
+            logger.bind(tag=TAG).error(f"GC loop task failed: {e}")
         finally:
-            logger.bind(tag=TAG).info("GC循环任务已退出")
+            logger.bind(tag=TAG).info("GC loop task exited")
 
     async def _run_gc(self):
         """执行垃圾回收"""
@@ -95,11 +95,11 @@ class GlobalGCManager:
 
             before, collected, after = await loop.run_in_executor(None, do_gc)
             logger.bind(tag=TAG).debug(
-                f"全局GC执行完成 - 回收对象: {collected}, "
-                f"对象数量: {before} -> {after}"
+                f"Global GC completed - collected objects: {collected}, "
+                f"object count: {before} -> {after}"
             )
         except Exception as e:
-            logger.bind(tag=TAG).error(f"执行GC时出错: {e}")
+            logger.bind(tag=TAG).error(f"Error running GC: {e}")
 
 
 # 全局单例

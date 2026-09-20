@@ -50,7 +50,7 @@ async def startToChat(conn: "ConnectionHandler", text):
             if "speaker" in data and "content" in data:
                 speaker_name = data["speaker"]
                 actual_content = data["content"]
-                conn.logger.bind(tag=TAG).info(f"解析到说话人信息: {speaker_name}")
+                conn.logger.bind(tag=TAG).info(f"Parsed speaker information: {speaker_name}")
 
                 # 仅在该说话人首次出现时保留 {"speaker":...} JSON，让模型自然称呼一次；
                 # 后续轮降为纯文本，避免每轮重复出现名字诱导模型反复称呼
@@ -107,7 +107,7 @@ async def no_voice_close_connect(conn: "ConnectionHandler", have_voice):
             conn.client_abort = False
             end_prompt = conn.config.get("end_prompt", {})
             if end_prompt and end_prompt.get("enable", True) is False:
-                conn.logger.bind(tag=TAG).info("结束对话，无需发送结束提示语")
+                conn.logger.bind(tag=TAG).info("Ending dialogue without a closing prompt")
                 await conn.close()
                 return
             prompt = end_prompt.get("prompt")

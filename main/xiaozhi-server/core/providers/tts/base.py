@@ -114,7 +114,7 @@ class TTSProviderBase(ABC):
         )
 
     def handle_opus(self, opus_data: bytes):
-        logger.bind(tag=TAG).debug(f"推送数据到队列里面帧数～～ {len(opus_data)}")
+        logger.bind(tag=TAG).debug(f"Pushing {len(opus_data)} frame(s) to the queue")
         self.tts_audio_queue.put((SentenceType.MIDDLE, opus_data, None, getattr(self, 'current_sentence_id', None)))
 
     def handle_audio_file(self, file_audio: bytes, text):
@@ -149,16 +149,16 @@ class TTSProviderBase(ABC):
                         max_repeat_time -= 1
                 except Exception as e:
                     logger.bind(tag=TAG).warning(
-                        f"语音生成失败{5 - max_repeat_time + 1}次: {original_text}，错误: {e}"
+                        f"Speech generation attempt {5 - max_repeat_time + 1} failed for {original_text}, error: {e}"
                     )
                     max_repeat_time -= 1
             if max_repeat_time > 0:
                 logger.bind(tag=TAG).info(
-                    f"语音生成成功: {original_text}，重试{5 - max_repeat_time}次"
+                    f"Speech generated for {original_text} after {5 - max_repeat_time} retry attempt(s)"
                 )
             else:
                 logger.bind(tag=TAG).error(
-                    f"语音生成失败: {original_text}，请检查网络或服务是否正常"
+                    f"Speech generation failed for {original_text}; check the network and service status"
                 )
             return None
         else:
@@ -169,7 +169,7 @@ class TTSProviderBase(ABC):
                         asyncio.run(self.text_to_speak(text, tmp_file))
                     except Exception as e:
                         logger.bind(tag=TAG).warning(
-                            f"语音生成失败{5 - max_repeat_time + 1}次: {original_text}，错误: {e}"
+                            f"Speech generation attempt {5 - max_repeat_time + 1} failed for {original_text}, error: {e}"
                         )
                         # 未执行成功，删除文件
                         if os.path.exists(tmp_file):
@@ -178,11 +178,11 @@ class TTSProviderBase(ABC):
 
                 if max_repeat_time > 0:
                     logger.bind(tag=TAG).info(
-                        f"语音生成成功: {original_text}:{tmp_file}，重试{5 - max_repeat_time}次"
+                        f"Speech generated for {original_text}: {tmp_file} after {5 - max_repeat_time} retry attempt(s)"
                     )
                 else:
                     logger.bind(tag=TAG).error(
-                        f"语音生成失败: {original_text}，请检查网络或服务是否正常"
+                        f"Speech generation failed for {original_text}; check the network and service status"
                     )
                 self.tts_audio_queue.put((SentenceType.FIRST, None, original_text, getattr(self, 'current_sentence_id', None)))
                 self._process_audio_file_stream(tmp_file, callback=opus_handler)
@@ -216,16 +216,16 @@ class TTSProviderBase(ABC):
                         max_repeat_time -= 1
                 except Exception as e:
                     logger.bind(tag=TAG).warning(
-                        f"语音生成失败{5 - max_repeat_time + 1}次: {original_text}，错误: {e}"
+                        f"Speech generation attempt {5 - max_repeat_time + 1} failed for {original_text}, error: {e}"
                     )
                     max_repeat_time -= 1
             if max_repeat_time > 0:
                 logger.bind(tag=TAG).info(
-                    f"语音生成成功: {original_text}，重试{5 - max_repeat_time}次"
+                    f"Speech generated for {original_text} after {5 - max_repeat_time} retry attempt(s)"
                 )
             else:
                 logger.bind(tag=TAG).error(
-                    f"语音生成失败: {original_text}，请检查网络或服务是否正常"
+                    f"Speech generation failed for {original_text}; check the network and service status"
                 )
             return None
         else:
@@ -236,7 +236,7 @@ class TTSProviderBase(ABC):
                         asyncio.run(self.text_to_speak(text, tmp_file))
                     except Exception as e:
                         logger.bind(tag=TAG).warning(
-                            f"语音生成失败{5 - max_repeat_time + 1}次: {original_text}，错误: {e}"
+                            f"Speech generation attempt {5 - max_repeat_time + 1} failed for {original_text}, error: {e}"
                         )
                         # 未执行成功，删除文件
                         if os.path.exists(tmp_file):
@@ -245,11 +245,11 @@ class TTSProviderBase(ABC):
 
                 if max_repeat_time > 0:
                     logger.bind(tag=TAG).info(
-                        f"语音生成成功: {original_text}:{tmp_file}，重试{5 - max_repeat_time}次"
+                        f"Speech generated for {original_text}: {tmp_file} after {5 - max_repeat_time} retry attempt(s)"
                     )
                 else:
                     logger.bind(tag=TAG).error(
-                        f"语音生成失败: {original_text}，请检查网络或服务是否正常"
+                        f"Speech generation failed for {original_text}; check the network and service status"
                     )
 
                 return tmp_file
@@ -370,7 +370,7 @@ class TTSProviderBase(ABC):
             try:
                 message = self.tts_text_queue.get(timeout=1)
                 if self.conn.client_abort:
-                    logger.bind(tag=TAG).info("收到打断信息，终止TTS文本处理线程")
+                    logger.bind(tag=TAG).info("Interrupt received; stopping TTS text-processing thread")
                     continue
                 # 过滤旧消息：检查sentence_id是否匹配
                 if message.sentence_id != self.conn.sentence_id:
@@ -404,7 +404,7 @@ class TTSProviderBase(ABC):
                 continue
             except Exception as e:
                 logger.bind(tag=TAG).error(
-                    f"处理TTS文本失败: {str(e)}, 类型: {type(e).__name__}, 堆栈: {traceback.format_exc()}"
+                    f"Failed to process TTS text: {str(e)}, type: {type(e).__name__}, stack trace: {traceback.format_exc()}"
                 )
                 continue
 
@@ -425,7 +425,7 @@ class TTSProviderBase(ABC):
                     continue
 
                 if self.conn.client_abort:
-                    logger.bind(tag=TAG).debug("收到打断信号，跳过当前音频数据")
+                    logger.bind(tag=TAG).debug("Interrupt signal received; skipping current audio data")
                     continue
 
                 # 发送音频
