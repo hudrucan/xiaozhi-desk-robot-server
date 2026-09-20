@@ -348,6 +348,14 @@ Memory:
     llm: ChatGLMLLM
 
 ASR:
+  GeminiASR:
+    type: gemini
+    model_name: gemini-3.5-transcribe
+    api_key: your_api_key
+    language: vi-VN
+    mode: verbatim
+    timeout: 120
+    output_dir: tmp/
   FunASR:
     type: fun_local
     model_dir: models/SenseVoiceSmall
