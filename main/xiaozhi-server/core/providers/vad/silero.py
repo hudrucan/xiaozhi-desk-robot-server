@@ -106,7 +106,12 @@ class VADProvider(VADProviderBase):
                 if conn.client_have_voice and not client_have_voice:
                     stop_duration = time.time() * 1000 - conn.vad_last_voice_time
                     if stop_duration >= self.silence_threshold_ms:
+                        was_voice_stopped = conn.client_voice_stop
                         conn.client_voice_stop = True
+                        if not was_voice_stopped:
+                            logger.bind(tag=TAG).info(
+                                f"Speech end detected after {stop_duration:.0f} ms of silence"
+                            )
                 if client_have_voice:
                     conn.client_have_voice = True
                     conn.vad_last_voice_time = time.time() * 1000

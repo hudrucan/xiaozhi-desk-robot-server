@@ -156,7 +156,7 @@ class ASRProviderBase(ABC):
 
             # 性能监控
             total_time = time.monotonic() - total_start_time
-            logger.bind(tag=TAG).debug(f"Total processing time: {total_time:.3f}s")
+            logger.bind(tag=TAG).info(f"Total processing time: {total_time:.3f}s")
 
             # 检查文本长度
             text_len, _ = remove_punctuation_and_length(content_for_length_check)
