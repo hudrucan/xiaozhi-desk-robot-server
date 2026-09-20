@@ -780,6 +780,7 @@ class ConnectionHandler:
     def chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
+        llm_started_at = time.monotonic()
 
         if query is not None:
             self.logger.bind(tag=TAG).info(f"LLM received user message: {query}")
@@ -878,9 +879,13 @@ class ConnectionHandler:
         content_arguments = ""
         emotion_flag = True
         try:
-            for response in llm_responses:
+            for response_index, response in enumerate(llm_responses):
                 if self.client_abort:
                     break
+                if depth == 0 and response_index == 0:
+                    self.logger.bind(tag=TAG).info(
+                        f"LLM first response received after {time.monotonic() - llm_started_at:.3f}s"
+                    )
                 if self.intent_type == "function_call" and functions is not None:
                     content, tools_call = response
                     if "content" in response:

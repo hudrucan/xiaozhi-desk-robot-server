@@ -45,7 +45,7 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
     await sendAudio(conn, audios)
     # 发送句子开始消息
     if sentenceType is not SentenceType.MIDDLE:
-        conn.logger.bind(tag=TAG).info(f"Sending audio message: {sentenceType}, {text}")
+        conn.logger.bind(tag=TAG).debug(f"Sending audio message: {sentenceType}, {text}")
 
     # End playback after the final text segment.
     if sentenceType == SentenceType.LAST:

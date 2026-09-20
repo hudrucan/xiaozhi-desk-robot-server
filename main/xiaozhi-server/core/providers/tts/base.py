@@ -142,7 +142,7 @@ class TTSProviderBase(ABC):
                     )
                     max_repeat_time -= 1
             if max_repeat_time > 0:
-                logger.bind(tag=TAG).info(
+                logger.bind(tag=TAG).debug(
                     f"Speech generated for {original_text} after {max_attempts - max_repeat_time} retry attempt(s)"
                 )
             else:
@@ -174,7 +174,7 @@ class TTSProviderBase(ABC):
                         max_repeat_time -= 1
 
                 if max_repeat_time > 0:
-                    logger.bind(tag=TAG).info(
+                    logger.bind(tag=TAG).debug(
                         f"Speech generated for {original_text}: {tmp_file} after {max_attempts - max_repeat_time} retry attempt(s)"
                     )
                 else:
@@ -218,7 +218,7 @@ class TTSProviderBase(ABC):
                     )
                     max_repeat_time -= 1
             if max_repeat_time > 0:
-                logger.bind(tag=TAG).info(
+                logger.bind(tag=TAG).debug(
                     f"Speech generated for {original_text} after {max_attempts - max_repeat_time} retry attempt(s)"
                 )
             else:
@@ -242,7 +242,7 @@ class TTSProviderBase(ABC):
                         max_repeat_time -= 1
 
                 if max_repeat_time > 0:
-                    logger.bind(tag=TAG).info(
+                    logger.bind(tag=TAG).debug(
                         f"Speech generated for {original_text}: {tmp_file} after {max_attempts - max_repeat_time} retry attempt(s)"
                     )
                 else:
