@@ -54,6 +54,17 @@ class ListenTextMessageHandler(TextMessageHandler):
             if "text" in msg_json:
                 conn.last_activity_time = time.time() * 1000
                 original_text = msg_json["text"]  # 保留原始文本
+
+                if msg_json.get("input_mode") == "text":
+                    if not isinstance(original_text, str) or not original_text.strip():
+                        conn.logger.bind(tag=TAG).warning(
+                            "Ignoring typed input with empty or invalid text"
+                        )
+                        return
+                    conn.just_woken_up = False
+                    await startToChat(conn, original_text)
+                    return
+
                 filtered_len, filtered_text = remove_punctuation_and_length(
                     original_text
                 )

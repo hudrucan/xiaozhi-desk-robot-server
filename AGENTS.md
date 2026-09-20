@@ -234,7 +234,7 @@ When touching `core/connection.py` or cross-cutting session code:
 1. identify the current behavior,
 2. identify all callers,
 3. preserve protocol behavior,
-4. add/adjust tests or a repeatable smoke-test procedure,
+4. document a concise manual smoke-test procedure when useful,
 5. change one responsibility at a time.
 
 A large file is not, by itself, justification for a rewrite.
@@ -289,7 +289,24 @@ A Conda Python 3.10 environment is acceptable when native/ML dependencies are ea
 
 ## Validation
 
-For meaningful server changes, validate the smallest applicable set:
+By default, validation in agent work is limited to static logic review:
+
+- trace callers and affected control flow,
+- inspect imports and configuration boundaries,
+- search for relevant references and stale paths,
+- inspect the final diff for scope and consistency.
+
+Do not run tests, compilation, builds, package installation, server startup, or
+runtime smoke tests unless the user explicitly requests them. The user owns
+runtime validation.
+
+Do not add or modify test files by default. Add only the smallest necessary test
+when the change cannot be reviewed safely without one or when the user explicitly
+requests tests. Test names, fixtures, comments, and test data must be written in
+English, not Vietnamese.
+
+When handing off a meaningful server change, suggest the smallest applicable
+manual checks for the user to run:
 
 - server starts without tracebacks,
 - local config loads,
@@ -305,9 +322,9 @@ For meaningful server changes, validate the smallest applicable set:
 - reconnect creates clean state,
 - camera/vision works when touched.
 
-For provider-only changes, test that provider directly plus one end-to-end turn when practical.
-
-For session/protocol changes, test on real firmware before considering the work complete.
+For provider-only changes, suggest a direct provider check plus one end-to-end
+turn when practical. For session/protocol changes, explicitly note that real
+firmware validation remains required.
 
 ## Current non-goals
 
