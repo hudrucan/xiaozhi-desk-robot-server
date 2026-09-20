@@ -51,7 +51,6 @@ class LLMPerformanceTester:
                 content = content.replace("{{current_time}}", "2024年8月17日 12:30:45")
                 content = content.replace("{{today_date}}", "2024年8月17日")
                 content = content.replace("{{today_weekday}}", "星期六")
-                content = content.replace("{{lunar_date}}", "甲辰年七月十四")
                 content = content.replace("{{local_address}}", "北京市")
                 content = content.replace("{{weather_info}}", "今天晴，25-32℃")
                 return content

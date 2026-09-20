@@ -13,7 +13,6 @@ loguru==0.7.3
 requests==2.32.5
 bs4==0.0.2
 mcp==1.22.0
-cnlunar==0.2.0
 aioconsole==0.8.2
 PyJWT==2.10.1
 cryptography==50.0.1

@@ -1,7 +1,7 @@
 """Tests for core/utils/current_time.py.
 
 Uses freezegun to control `datetime.now()` so the tests don't flake
-around midnight, and to verify the weekday/lunar mapping logic.
+around midnight, and to verify the weekday mapping logic.
 """
 from datetime import datetime
 
@@ -39,19 +39,11 @@ def test_weekday_map_has_all_seven_days():
 
 
 @freeze_time("2026-09-02 10:30:00")
-def test_get_current_time_info_returns_four_tuple():
+def test_get_current_time_info_returns_three_tuple():
     info = current_time.get_current_time_info()
     assert isinstance(info, tuple)
-    assert len(info) == 4
-    time_str, date_str, weekday, lunar = info
+    assert len(info) == 3
+    time_str, date_str, weekday = info
     assert time_str == "10:30"
     assert date_str == "2026-09-02"
     assert weekday == "星期三"
-    assert "年" in lunar  # lunar output contains "年"
-
-
-@freeze_time("2026-09-02 10:30:00")
-def test_get_current_lunar_date_contains_year():
-    """cnlunar should produce a string containing 年 character."""
-    lunar = current_time.get_current_lunar_date()
-    assert "年" in lunar

@@ -109,14 +109,11 @@ async def process_intent_result(
 
                     from core.utils.current_time import get_current_time_info
 
-                    current_time, today_date, today_weekday, lunar_date = (
-                        get_current_time_info()
-                    )
+                    current_time, today_date, today_weekday = get_current_time_info()
 
                     # 构建带上下文的基础提示
                     context_prompt = f"""当前时间：{current_time}
                                         今天日期：{today_date} ({today_weekday})
-                                        今天农历：{lunar_date}
 
                                         请根据以上信息回答用户的问题：{original_text}"""
 

@@ -13,7 +13,6 @@ class CacheType(Enum):
 
     LOCATION = "location"
     WEATHER = "weather"
-    LUNAR = "lunar"
     INTENT = "intent"
     IP_INFO = "ip_info"
     CONFIG = "config"
@@ -43,9 +42,6 @@ class CacheConfig:
             ),
             CacheType.WEATHER: cls(
                 strategy=CacheStrategy.TTL, ttl=28800, max_size=1000  # 8小时
-            ),
-            CacheType.LUNAR: cls(
-                strategy=CacheStrategy.TTL, ttl=2592000, max_size=365  # 30天过期
             ),
             CacheType.INTENT: cls(
                 strategy=CacheStrategy.TTL_LRU, ttl=600, max_size=1000  # 10分钟

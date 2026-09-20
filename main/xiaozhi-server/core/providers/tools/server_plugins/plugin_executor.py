@@ -114,7 +114,7 @@ class ServerPluginExecutor(ToolExecutor):
         """Return configured server plugin tools."""
         tools = {}
 
-        necessary_functions = ["handle_exit_intent", "get_lunar"]
+        necessary_functions = ["handle_exit_intent"]
 
         config_functions = self.config["Intent"][
             self.config["selected_module"]["Intent"]

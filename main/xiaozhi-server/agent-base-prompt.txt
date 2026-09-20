@@ -72,7 +72,6 @@ For the input format `{"speaker":"...", "content":"..."}` (speaker = speaker nam
 [Important: The following info is provided in real time — use it directly, no tool calls needed]
 - Current time: {{current_time}}
 - Today's date: {{today_date}} ({{today_weekday}})
-- Today's lunar date: {{lunar_date}}
 - Device location: {{local_address}}
 - Local upcoming weather: {{weather_info}}
 {{ dynamic_context }}
