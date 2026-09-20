@@ -103,7 +103,6 @@ class TTSProviderBase(ABC):
         )
 
     def handle_opus(self, opus_data: bytes):
-        logger.bind(tag=TAG).debug(f"Pushing {len(opus_data)} frame(s) to the queue")
         self.tts_audio_queue.put((SentenceType.MIDDLE, opus_data, None, getattr(self, 'current_sentence_id', None)))
 
     def handle_audio_file(self, file_audio: bytes, text):
@@ -149,6 +148,14 @@ class TTSProviderBase(ABC):
             else:
                 logger.bind(tag=TAG).error(
                     f"Speech generation failed for {original_text}; check the network and service status"
+                )
+                self.tts_audio_queue.put(
+                    (
+                        SentenceType.FIRST,
+                        None,
+                        original_text,
+                        getattr(self, "current_sentence_id", None),
+                    )
                 )
             return None
         else:

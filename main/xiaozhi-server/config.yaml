@@ -60,14 +60,13 @@ enable_wakeup_words_response_cache: true
 # Respond when a wake word starts a conversation.
 enable_greeting: true
 # Short acknowledgement requested from the LLM after wake-word detection.
-wakeup_greeting: "Reply with one brief acknowledgement that you are listening. Do not introduce yourself or offer additional help."
+wakeup_greeting: "Hello"
 # Play a notification sound after speech finishes.
 enable_stop_tts_notify: false
 # Notification sound path.
 stop_tts_notify_voice: "config/assets/tts_notify.mp3"
 # Enable WebSocket ping keepalive.
 enable_websocket_ping: false
-
 
 # Delay between outgoing TTS audio packets.
 #   0: derive precise pacing from the audio frame rate.
