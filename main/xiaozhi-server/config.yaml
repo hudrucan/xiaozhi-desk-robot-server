@@ -93,6 +93,7 @@ xiaozhi:
 
 # Example sentences for manual module checks.
 module_test:
+  tts_text: "This is a speech synthesis latency test."
   test_sentences:
     - "Hello, please introduce yourself."
     - "What's the weather like today?"

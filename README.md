@@ -236,9 +236,16 @@ Use:
 ```bash
 cd main/xiaozhi-server
 python performance_tester.py
+
+# Or run one active provider directly.
+python performance_tester.py performance_tester_asr
+python performance_tester.py performance_tester_llm
+python performance_tester.py performance_tester_tts
 ```
 
-to inspect supported provider performance.
+Each benchmark runs the provider selected in the merged configuration. Set
+`PERF_RUNS`, `PERF_TIMEOUT_SECONDS`, `PERF_ASR_AUDIO`, `PERF_LLM_PROMPT`, or
+`PERF_TTS_TEXT` to override its small default workload.
 
 ## MCP and Desk Robot behavior
 
