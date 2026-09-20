@@ -19,6 +19,7 @@ class TTSProvider(TTSProviderBase):
         else:
             self.voice = config.get("voice")
         self.audio_file_type = config.get("format", "mp3")
+        self.buffer_full_response = config.get("buffer_full_response", True)
 
         volume = config.get("volume", "50")
         self.volume = int(volume) if volume else 50
@@ -35,6 +36,11 @@ class TTSProvider(TTSProviderBase):
         self.edge_rate = f"{self.speech_rate:+}%"
         self.edge_volume = f"{self.volume:+}%"
         self.edge_pitch = f"{self.pitch_rate:+}Hz"
+
+    def _get_segment_text(self):
+        if self.buffer_full_response:
+            return None
+        return super()._get_segment_text()
 
     def generate_filename(self, extension=".mp3"):
         return os.path.join(

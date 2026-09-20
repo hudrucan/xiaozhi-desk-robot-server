@@ -263,6 +263,8 @@ TTS:
     type: edge
     voice: your_edge_voice
     language: your_language
+    # Generate the complete response in one request to avoid sentence gaps.
+    buffer_full_response: true
     # Retry once after the initial request fails.
     max_retries: 1
     output_dir: tmp/
