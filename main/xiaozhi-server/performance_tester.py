@@ -6,10 +6,10 @@ import os
 
 def list_performance_tester_modules():
     performance_tester_dir = os.path.join(
-        os.path.dirname(__file__), "performance_tester"
+        os.path.dirname(__file__), "performance_benchmarks"
     )
     return sorted(
-        file[:-3]
+        file.removeprefix("performance_tester_").removesuffix(".py")
         for file in os.listdir(performance_tester_dir)
         if file.startswith("performance_tester_") and file.endswith(".py")
     )
@@ -17,7 +17,9 @@ def list_performance_tester_modules():
 
 def load_module(module_name):
     module_path = os.path.join(
-        os.path.dirname(__file__), "performance_tester", f"{module_name}.py"
+        os.path.dirname(__file__),
+        "performance_benchmarks",
+        f"performance_tester_{module_name}.py",
     )
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:
@@ -49,20 +51,21 @@ def parse_args():
     parser.add_argument(
         "module",
         nargs="?",
-        help="Tester module, for example performance_tester_tts",
+        choices=["asr", "llm", "tts", "vllm"],
+        help="Provider benchmark to run",
     )
     return parser.parse_args()
 
 
 def select_module(modules, requested_module):
     if requested_module:
-        module_name = requested_module.removesuffix(".py")
-        if module_name not in modules:
+        if requested_module not in modules:
             available = ", ".join(modules)
             raise ValueError(
-                f"Unknown performance tester: {module_name}. Available: {available}"
+                f"Unknown performance tester: {requested_module}. "
+                f"Available: {available}"
             )
-        return module_name
+        return requested_module
 
     print("Available performance testers:")
     for index, module_name in enumerate(modules, 1):

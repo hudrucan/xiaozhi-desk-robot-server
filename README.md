@@ -238,15 +238,17 @@ cd main/xiaozhi-server
 python performance_tester.py
 
 # Or run one active provider directly.
-python performance_tester.py performance_tester_asr
-python performance_tester.py performance_tester_asr_live
-python performance_tester.py performance_tester_llm
-python performance_tester.py performance_tester_tts
+python performance_tester.py asr  # or llm, tts, vllm
 ```
 
 Each benchmark runs the provider selected in the merged configuration. Set
 `PERF_RUNS`, `PERF_TIMEOUT_SECONDS`, `PERF_ASR_AUDIO`, `PERF_LLM_PROMPT`, or
 `PERF_TTS_TEXT` to override its small default workload.
+
+The LLM benchmark samples prompts from `module_test.test_sentences` using a
+reproducible shuffle. Set `PERF_LLM_SEED` for a different order or
+`PERF_LLM_PROMPT` for one fixed prompt. The selected provider and model always
+come from the merged server configuration.
 
 ## MCP and Desk Robot behavior
 

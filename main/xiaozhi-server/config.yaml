@@ -96,8 +96,13 @@ module_test:
   tts_text: "This is a speech synthesis latency test."
   test_sentences:
     - "Hello, please introduce yourself."
-    - "What's the weather like today?"
-    - "Summarize the principles and applications of quantum computing."
+    - "Explain why leaves look green in two short sentences."
+    - "Give me three practical ways to stay focused."
+    - "What is 17 multiplied by 23?"
+    - "Summarize why sleep is important."
+    - "Tell me a short joke."
+    - "Briefly compare tea and coffee."
+    - "Describe a calm evening scene in one sentence."
 
 # Wake words used to distinguish activation from regular speech.
 wakeup_words:

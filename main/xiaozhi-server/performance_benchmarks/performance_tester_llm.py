@@ -2,6 +2,7 @@ import asyncio
 import logging
 import math
 import os
+import random
 import statistics
 import time
 
@@ -22,23 +23,41 @@ def get_setting(name, default):
     return value
 
 
+def select_prompts(config, count, seed):
+    override = os.getenv("PERF_LLM_PROMPT")
+    prompts = [override] if override else config.get("module_test", {}).get(
+        "test_sentences", []
+    )
+    prompts = [str(prompt).strip() for prompt in prompts if str(prompt).strip()]
+    if not prompts:
+        prompts = ["Hello."]
+
+    rng = random.Random(seed)
+    selected = []
+    while len(selected) < count:
+        batch = prompts.copy()
+        rng.shuffle(batch)
+        selected.extend(batch)
+    return prompts, selected[:count]
+
+
 def collect_response(provider, messages):
     started_at = time.perf_counter()
-    first_token_time = None
+    first_output = None
     response_parts = []
 
     for chunk in provider.response("performance-test", messages):
         if not chunk:
             continue
-        if first_token_time is None:
-            first_token_time = time.perf_counter() - started_at
+        if first_output is None:
+            first_output = time.perf_counter() - started_at
         response_parts.append(str(chunk))
 
-    total_time = time.perf_counter() - started_at
-    response = "".join(response_parts)
-    if first_token_time is None or not response.strip():
+    total = time.perf_counter() - started_at
+    response = "".join(response_parts).strip()
+    if first_output is None or not response:
         raise RuntimeError("Provider returned no response")
-    return first_token_time, total_time, response
+    return first_output, total, response
 
 
 def format_stats(label, values):
@@ -61,54 +80,54 @@ async def main():
 
     provider_type = provider_config.get("type", provider_name)
     provider = create_llm_instance(provider_type, provider_config)
-    prompt_manager = PromptManager(config)
-    system_prompt = prompt_manager.build_enhanced_prompt(
+    system_prompt = PromptManager(config).build_enhanced_prompt(
         config.get("prompt", ""),
         "performance-test",
     )
-    default_prompts = config.get("module_test", {}).get("test_sentences", [])
-    test_prompt = os.getenv("PERF_LLM_PROMPT") or (
-        default_prompts[0] if default_prompts else "Hello."
-    )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": test_prompt},
-    ]
     runs = get_setting("PERF_RUNS", 5)
     timeout = get_setting("PERF_TIMEOUT_SECONDS", 60)
-    first_token_times = []
+    seed = int(os.getenv("PERF_LLM_SEED", 42))
+    prompt_set, prompts = select_prompts(config, runs, seed)
+    first_output_times = []
     total_times = []
 
-    print(f"LLM provider: {provider_name} ({provider_type})")
-    print(f"Runs: {runs}; timeout per run: {timeout}s")
-    print(f"Prompt: {test_prompt}")
+    model_name = provider_config.get("model_name", "default")
+    print(f"LLM provider: {provider_name} ({provider_type}, {model_name})")
+    print(f"Samples: {runs}; timeout per sample: {timeout}s")
+    print(f"Prompt set: {len(prompt_set)}; seed: {seed}")
+    print(f"System prompt: {len(system_prompt)} characters")
 
-    for run_number in range(1, runs + 1):
+    for sample_number, prompt in enumerate(prompts, 1):
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
         try:
-            first_token, total, response = await asyncio.wait_for(
+            first_output, total, response = await asyncio.wait_for(
                 asyncio.to_thread(collect_response, provider, messages),
                 timeout=timeout,
             )
-            first_token_times.append(first_token)
+            first_output_times.append(first_output)
             total_times.append(total)
+            print(f"\nSample {sample_number}/{runs}: {prompt}")
             print(
-                f"Run {run_number}/{runs}: first token {first_token:.3f}s, "
-                f"total {total:.3f}s - {response[:100]}"
+                f"First output {first_output:.3f}s, total {total:.3f}s - "
+                f"{response[:100]}"
             )
         except asyncio.TimeoutError:
-            print(f"Run {run_number}/{runs}: failed - timed out after {timeout}s")
-            print("Stopping to avoid overlapping requests from a timed-out provider call.")
+            print(f"\nSample {sample_number}/{runs}: timed out after {timeout}s")
+            print("Stopping to avoid overlapping requests from a timed-out call.")
             break
         except Exception as error:
             print(
-                f"Run {run_number}/{runs}: failed - "
+                f"\nSample {sample_number}/{runs}: failed - "
                 f"{type(error).__name__}: {error}"
             )
 
     print("\nLLM benchmark summary")
     print(f"Success rate: {len(total_times)}/{runs} ({len(total_times) / runs:.0%})")
     if total_times:
-        print(format_stats("First token", first_token_times))
+        print(format_stats("First output", first_output_times))
         print(format_stats("Total response", total_times))
 
 
