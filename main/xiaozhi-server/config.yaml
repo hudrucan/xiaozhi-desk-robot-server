@@ -224,6 +224,16 @@ ASR:
     base_url: https://api.openai.com/v1/audio/transcriptions
     model_name: gpt-4o-mini-transcribe
     output_dir: tmp/
+  SherpaASR:
+    type: sherpa
+    model_dir: models/asr/sherpa/vi-zipformer-int8
+    encoder: encoder.int8.onnx
+    decoder: decoder.onnx
+    joiner: joiner.int8.onnx
+    tokens: tokens.txt
+    num_threads: 2
+    sentence_case: true
+    output_dir: tmp/
 
 VAD:
   SileroVAD:
@@ -284,6 +294,18 @@ TTS:
     buffer_full_response: true
     # Retry once after the initial request fails.
     max_retries: 1
+    output_dir: tmp/
+  SherpaTTS:
+    type: sherpa
+    model_dir: models/tts/sherpa/vi-medium
+    model: model.onnx
+    tokens: tokens.txt
+    data_dir: espeak-ng-data
+    num_threads: 2
+    speed: 1.0
+    silence_scale: 0.2
+    buffer_full_response: true
+    max_retries: 0
     output_dir: tmp/
   OpenAITTS:
     type: openai

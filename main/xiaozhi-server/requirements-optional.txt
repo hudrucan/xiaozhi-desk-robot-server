@@ -1,2 +1,5 @@
 # Optional remote memory provider.
 mem0ai==1.0.0
+
+# Optional local Sherpa ASR and TTS providers.
+sherpa-onnx==1.13.8
