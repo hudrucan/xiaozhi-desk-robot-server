@@ -8,7 +8,7 @@ from google.genai import types
 from .base import ASRBenchmarkBase
 
 
-class GeminiLiveASRBenchmark(ASRBenchmarkBase):
+class GeminiASRBenchmark(ASRBenchmarkBase):
     def live_config(self):
         language = self.provider_config.get("language", "auto")
         language_codes = [] if language == "auto" else [language]
@@ -39,7 +39,7 @@ class GeminiLiveASRBenchmark(ASRBenchmarkBase):
             final = server_content.input_transcription
             if final and final.text and activity_ending.is_set():
                 return final.text.strip(), first_interim, time.perf_counter()
-        raise RuntimeError("Gemini Live session ended before returning a transcript")
+        raise RuntimeError("Gemini ASR session ended before returning a transcript")
 
     async def run(self):
         chunk_ms = self.get_setting("PERF_AUDIO_CHUNK_MS", 120)
@@ -60,7 +60,7 @@ class GeminiLiveASRBenchmark(ASRBenchmarkBase):
                 config=self.live_config(),
             ) as session:
                 connect_time = time.perf_counter() - connect_started_at
-                print(f"Live session connected in {connect_time:.3f}s")
+                print(f"ASR session connected in {connect_time:.3f}s")
 
                 for run_number in range(1, self.runs + 1):
                     turn_started_at = time.perf_counter()
@@ -118,7 +118,7 @@ class GeminiLiveASRBenchmark(ASRBenchmarkBase):
         finally:
             await client.aio.aclose()
 
-        print("\nGemini Live ASR benchmark summary")
+        print("\nGemini ASR benchmark summary")
         print(f"Success rate: {len(finalization_times)}/{self.runs}")
         if first_interim_times:
             print(self.format_stats("First interim", first_interim_times))

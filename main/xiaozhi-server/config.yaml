@@ -201,14 +201,6 @@ Memory:
 ASR:
   GeminiASR:
     type: gemini
-    model_name: your_gemini_asr_model
-    api_key: your_api_key
-    language: auto
-    mode: verbatim
-    timeout: 120
-    output_dir: tmp/
-  GeminiLiveASR:
-    type: gemini_live
     model_name: gemini-3.5-transcribe-live
     api_key: your_api_key
     language: auto

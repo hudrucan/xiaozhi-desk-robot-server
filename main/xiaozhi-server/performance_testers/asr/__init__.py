@@ -1,8 +1,8 @@
 def create_benchmark(provider_name, provider_config):
-    if provider_config.get("type") == "gemini_live":
-        from .gemini_live import GeminiLiveASRBenchmark
+    if provider_config.get("type") == "gemini":
+        from .gemini import GeminiASRBenchmark
 
-        return GeminiLiveASRBenchmark(provider_name, provider_config)
+        return GeminiASRBenchmark(provider_name, provider_config)
 
     from .batch import BatchASRBenchmark
 
