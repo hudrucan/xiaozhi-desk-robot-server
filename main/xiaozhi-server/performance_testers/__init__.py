@@ -1,1 +1,1 @@
-"""Provider performance benchmarks."""
+"""Provider performance testers."""
