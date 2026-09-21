@@ -90,7 +90,16 @@ class TTSProviderBase(ABC):
             ";",
             "：",
         )
-        self.first_sentence_punctuations = self.punctuations
+        self.first_sentence_punctuations = (
+            "，",
+            "~",
+            "、",
+            ",",
+            *self.punctuations,
+        )
+        self.split_on_all_punctuations = bool(
+            config.get("split_on_all_punctuations", False)
+        )
         self.tts_stop_request = False
         self.processed_chars = 0
         self.is_first_sentence = True
@@ -452,10 +461,11 @@ class TTSProviderBase(ABC):
         current_text = full_text[self.processed_chars :]  # 从未处理的位置开始
         last_punct_pos = -1
 
-        # 根据是否是第一句话选择不同的标点符号集合
+        # Use shorter boundaries for the first segment, or for every segment
+        # when explicitly enabled by the provider configuration.
         punctuations_to_use = (
             self.first_sentence_punctuations
-            if self.is_first_sentence
+            if self.is_first_sentence or self.split_on_all_punctuations
             else self.punctuations
         )
 
@@ -473,7 +483,7 @@ class TTSProviderBase(ABC):
             )
             self.processed_chars += len(segment_text_raw)  # 更新已处理字符位置
 
-            # The first segment now waits for a complete sentence boundary.
+            # Allow a shorter first segment to reduce time to first audio.
             if self.is_first_sentence:
                 self.is_first_sentence = False
 

@@ -241,7 +241,7 @@ VAD:
     threshold: 0.5
     threshold_low: 0.3
     model_dir: models/vad
-    min_silence_duration_ms: 200  # Increase this for longer pauses within speech.
+    min_silence_duration_ms: 200 # Increase this for longer pauses within speech.
 
 LLM:
   GeminiLLM:
@@ -304,10 +304,12 @@ TTS:
     data_dir: espeak-ng-data
     num_threads: 2
     speaker_id: 0
+    number_language: your_language_code
     speed: 1.0
     silence_scale: 0.2
     volume_gain: 1.0
-    buffer_full_response: true
+    buffer_full_response: false
+    split_on_all_punctuations: true
     max_retries: 0
     output_dir: tmp/
   OpenAITTS:

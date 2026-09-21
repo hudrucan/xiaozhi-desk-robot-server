@@ -1,5 +1,6 @@
 import asyncio
 import io
+import re
 import wave
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from core.providers.tts.base import TTSProviderBase
 
 
 class TTSProvider(TTSProviderBase):
+    _INTEGER_PATTERN = re.compile(r"(?<![\w.])[0-9]+(?![\w.])")
+
     def __init__(self, config, delete_audio_file):
         super().__init__(config, delete_audio_file)
         self.audio_file_type = "wav"
@@ -17,6 +20,19 @@ class TTSProvider(TTSProviderBase):
         self.silence_scale = float(config.get("silence_scale", 0.2))
         self.speaker_id = int(config.get("speaker_id", 0))
         self.volume_gain = max(0.0, float(config.get("volume_gain", 1.0)))
+        self.number_language = config.get("number_language")
+
+        self._num2words = None
+        if self.number_language:
+            try:
+                from num2words import num2words
+            except ImportError as error:
+                raise RuntimeError(
+                    "Sherpa TTS number normalization requires the optional "
+                    "num2words package"
+                ) from error
+            num2words(0, lang=self.number_language)
+            self._num2words = num2words
 
         try:
             import sherpa_onnx
@@ -62,12 +78,24 @@ class TTSProvider(TTSProviderBase):
             return None
         return super()._get_segment_text()
 
+    def _normalize_numbers(self, text: str) -> str:
+        if self._num2words is None:
+            return text
+        return self._INTEGER_PATTERN.sub(
+            lambda match: self._num2words(
+                int(match.group(0)), lang=self.number_language
+            ),
+            text,
+        )
+
     def _generate_wav(self, text: str) -> bytes:
         generation_config = self._sherpa_onnx.GenerationConfig()
         generation_config.sid = self.speaker_id
         generation_config.speed = self.speed
         generation_config.silence_scale = self.silence_scale
-        audio = self.tts.generate(text, generation_config)
+        audio = self.tts.generate(
+            self._normalize_numbers(text), generation_config
+        )
         if len(audio.samples) == 0:
             raise RuntimeError("Sherpa TTS returned no audio")
 

@@ -10,8 +10,6 @@ pip install -r requirements-optional.txt
 
 Download compatible models from the upstream sources:
 
-- [Sherpa ONNX ASR models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models)
-- [Sherpa ONNX TTS models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models)
 - [Sherpa ONNX source](https://github.com/k2-fsa/sherpa-onnx)
 
 Keep ASR and TTS assets under their respective provider directories, then set
