@@ -355,7 +355,9 @@ async def send_status_message(conn: "ConnectionHandler", state, phase=None):
 
 
 async def _send_sentence_start(conn: "ConnectionHandler", text):
-    await send_status_message(conn, "clear", "thinking")
+    if getattr(conn, "display_status_phase", None) == "thinking":
+        await send_tts_message(conn, "start")
+        await send_status_message(conn, "clear", "thinking")
     await send_tts_message(conn, "sentence_start", text)
 
 
@@ -385,10 +387,12 @@ async def send_stt_message(conn: "ConnectionHandler", text):
     await conn.websocket.send(
         json.dumps({"type": "stt", "text": stt_text, "session_id": conn.session_id})
     )
-    await send_tts_message(conn, "start")
-    # 发送start消息后客户端状态会处于说话中状态，同步服务端状态
+    if (conn.features or {}).get("status"):
+        await send_status_message(conn, "busy", "thinking")
+    else:
+        await send_tts_message(conn, "start")
+    # Block new turn audio while the current turn is being processed.
     conn.client_is_speaking = True
-    await send_status_message(conn, "busy", "thinking")
 
 
 async def send_display_message(conn: "ConnectionHandler", text):
