@@ -16,6 +16,7 @@ class TTSProvider(TTSProviderBase):
         self.speed = float(config.get("speed", 1.0))
         self.silence_scale = float(config.get("silence_scale", 0.2))
         self.speaker_id = int(config.get("speaker_id", 0))
+        self.volume_gain = max(0.0, float(config.get("volume_gain", 1.0)))
 
         try:
             import sherpa_onnx
@@ -70,7 +71,11 @@ class TTSProvider(TTSProviderBase):
         if len(audio.samples) == 0:
             raise RuntimeError("Sherpa TTS returned no audio")
 
-        samples = np.clip(audio.samples, -1.0, 1.0)
+        samples = np.clip(
+            np.asarray(audio.samples, dtype=np.float32) * self.volume_gain,
+            -1.0,
+            1.0,
+        )
         pcm_data = (samples * 32767.0).astype(np.int16).tobytes()
         output = io.BytesIO()
         with wave.open(output, "wb") as wav_file:

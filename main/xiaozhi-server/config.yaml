@@ -226,7 +226,7 @@ ASR:
     output_dir: tmp/
   SherpaASR:
     type: sherpa
-    model_dir: models/asr/sherpa/vi-zipformer-int8
+    model_dir: models/asr/sherpa/your-model
     encoder: encoder.int8.onnx
     decoder: decoder.onnx
     joiner: joiner.int8.onnx
@@ -297,13 +297,16 @@ TTS:
     output_dir: tmp/
   SherpaTTS:
     type: sherpa
-    model_dir: models/tts/sherpa/vi-medium
+    language: your_language
+    model_dir: models/tts/sherpa/your-model
     model: model.onnx
     tokens: tokens.txt
     data_dir: espeak-ng-data
     num_threads: 2
+    speaker_id: 0
     speed: 1.0
     silence_scale: 0.2
+    volume_gain: 1.0
     buffer_full_response: true
     max_retries: 0
     output_dir: tmp/

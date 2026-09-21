@@ -199,7 +199,3 @@ main/digital-human/wakeword_runtime/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2
 sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2
 
 .claude/auto-context.md
-
-# Optional local speech models are downloaded separately.
-main/xiaozhi-server/models/asr/sherpa/
-main/xiaozhi-server/models/tts/sherpa/
