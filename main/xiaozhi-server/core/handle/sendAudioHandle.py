@@ -33,11 +33,11 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
             == conn.sentence_id
         ):
             conn.audio_rate_controller.add_message(
-                lambda: send_tts_message(conn, "sentence_start", text)
+                lambda: _send_sentence_start(conn, text)
             )
         else:
             # 新句子或流控器未初始化，立即发送
-            await send_tts_message(conn, "sentence_start", text)
+            await _send_sentence_start(conn, text)
 
     await sendAudio(conn, audios)
     # 发送句子开始消息
@@ -334,6 +334,29 @@ async def send_tts_message(conn: "ConnectionHandler", state, text=None):
 
     # 发送消息到客户端
     await conn.websocket.send(json.dumps(message))
+    if state == "stop":
+        await send_status_message(conn, "clear", "thinking")
+
+
+async def send_status_message(conn: "ConnectionHandler", state, phase=None):
+    """Send an optional display-status extension to supported clients."""
+    if not (conn.features or {}).get("status"):
+        return
+
+    current_phase = getattr(conn, "display_status_phase", None)
+    if state == "clear" and phase is not None and current_phase != phase:
+        return
+
+    message = {"type": "status", "state": state, "session_id": conn.session_id}
+    if phase is not None:
+        message["phase"] = phase
+    await conn.websocket.send(json.dumps(message))
+    conn.display_status_phase = phase if state == "busy" else None
+
+
+async def _send_sentence_start(conn: "ConnectionHandler", text):
+    await send_status_message(conn, "clear", "thinking")
+    await send_tts_message(conn, "sentence_start", text)
 
 
 async def send_stt_message(conn: "ConnectionHandler", text):
@@ -365,6 +388,7 @@ async def send_stt_message(conn: "ConnectionHandler", text):
     await send_tts_message(conn, "start")
     # 发送start消息后客户端状态会处于说话中状态，同步服务端状态
     conn.client_is_speaking = True
+    await send_status_message(conn, "busy", "thinking")
 
 
 async def send_display_message(conn: "ConnectionHandler", text):

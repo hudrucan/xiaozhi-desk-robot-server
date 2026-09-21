@@ -232,6 +232,10 @@ async def handle_mcp_message(
                             pending_typed_input,
                             check_wakeup_word=False,
                         )
+                    else:
+                        from core.handle.sendAudioHandle import send_status_message
+
+                        await send_status_message(conn, "clear", "initializing")
             return
 
     # Handle method calls (requests from the client)
@@ -249,6 +253,10 @@ async def handle_mcp_message(
             await mcp_client.reject_call_result(
                 msg_id, Exception(f"MCP错误: {error_msg}")
             )
+        elif msg_id in (1, 2):
+            from core.handle.sendAudioHandle import send_status_message
+
+            await send_status_message(conn, "clear", "initializing")
 
 
 async def send_mcp_initialize_message(conn: "ConnectionHandler"):

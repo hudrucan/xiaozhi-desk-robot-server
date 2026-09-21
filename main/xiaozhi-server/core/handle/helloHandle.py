@@ -11,7 +11,11 @@ from core.utils.dialogue import Message
 from core.utils.util import audio_to_data
 from core.providers.tts.dto.dto import SentenceType
 from core.utils.wakeup_word import WakeupWordsConfig
-from core.handle.sendAudioHandle import sendAudioMessage, send_tts_message
+from core.handle.sendAudioHandle import (
+    sendAudioMessage,
+    send_status_message,
+    send_tts_message,
+)
 from core.utils.util import remove_punctuation_and_length, opus_datas_to_wav_bytes
 from core.providers.tools.device_mcp import MCPClient, send_mcp_initialize_message
 
@@ -66,6 +70,7 @@ async def handleHelloMessage(conn: "ConnectionHandler", msg_json):
 
     # The device waits for the server hello before processing MCP messages.
     if features and features.get("mcp"):
+        await send_status_message(conn, "busy", "initializing")
         asyncio.create_task(send_mcp_initialize_message(conn))
 
 
