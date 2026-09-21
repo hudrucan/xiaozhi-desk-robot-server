@@ -1,12 +1,60 @@
 import asyncio
 import io
+import os
 import re
+import tempfile
+import threading
 import wave
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
+from config.logger import setup_logging
 from core.providers.tts.base import TTSProviderBase
+
+
+TAG = __name__
+logger = setup_logging()
+_NATIVE_STDERR_LOCK = threading.Lock()
+_UNKNOWN_PHONEME_LOG = re.compile(
+    rb".*piper-phonemize-lexicon\.cc:PiperPhonemesToIdsVits:\d+ "
+    rb"Skip unknown phonemes\. Unicode codepoint: \\U\+([0-9A-Fa-f]+)\."
+)
+
+
+def _generate_without_native_log_spam(generate):
+    """Run Sherpa while retaining every native error except known log spam."""
+    with _NATIVE_STDERR_LOCK:
+        original_stderr = os.dup(2)
+        skipped = Counter()
+        with tempfile.TemporaryFile() as captured:
+            try:
+                os.dup2(captured.fileno(), 2)
+                result = generate()
+            finally:
+                os.dup2(original_stderr, 2)
+                captured.seek(0)
+                retained = []
+                for line in captured.readlines():
+                    match = _UNKNOWN_PHONEME_LOG.fullmatch(line.strip())
+                    if match:
+                        skipped[match.group(1).decode("ascii").upper()] += 1
+                    elif line.strip():
+                        retained.append(line)
+                if retained:
+                    os.write(original_stderr, b"".join(retained))
+                os.close(original_stderr)
+
+        if skipped:
+            summary = ", ".join(
+                f"U+{codepoint} x{count}"
+                for codepoint, count in sorted(skipped.items())
+            )
+            logger.bind(tag=TAG).debug(
+                f"Sherpa skipped unsupported phonemes: {summary}"
+            )
+        return result
 
 
 class TTSProvider(TTSProviderBase):
@@ -93,8 +141,10 @@ class TTSProvider(TTSProviderBase):
         generation_config.sid = self.speaker_id
         generation_config.speed = self.speed
         generation_config.silence_scale = self.silence_scale
-        audio = self.tts.generate(
-            self._normalize_numbers(text), generation_config
+        audio = _generate_without_native_log_spam(
+            lambda: self.tts.generate(
+                self._normalize_numbers(text), generation_config
+            )
         )
         if len(audio.samples) == 0:
             raise RuntimeError("Sherpa TTS returned no audio")
