@@ -42,7 +42,6 @@ class TTSProviderBase(ABC):
         self.max_retries = max(0, int(config.get("max_retries", 4)))
         self.tts_text_queue = queue.Queue()
         self.tts_audio_queue = queue.Queue()
-        self.tts_audio_first_sentence = True
         self.before_stop_play_files = []
         # sentence_id 到文本的映射，用于流式TTS获取正确的字幕文本
         self._sentence_text_map = {}
@@ -379,7 +378,6 @@ class TTSProviderBase(ABC):
                     self.processed_chars = 0
                     self.tts_text_buff = []
                     self.is_first_sentence = True
-                    self.tts_audio_first_sentence = True
                 elif ContentType.TEXT == message.content_type:
                     self.tts_text_buff.append(message.content_detail)
                     segment_text = self._get_segment_text()

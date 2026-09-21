@@ -46,6 +46,7 @@ class ASRProvider(ASRProviderBase):
         self._send_queue = asyncio.Queue(maxsize=self.audio_queue_size)
         self._sender_task = None
         self._receiver_task = None
+        self._reconnect_task = None
         self._closed = False
 
         self._pre_roll = deque(maxlen=10)
@@ -81,7 +82,7 @@ class ASRProvider(ASRProviderBase):
             ),
         )
 
-    async def _ensure_session(self, refresh_if_old=True):
+    async def _ensure_session(self, refresh_if_old=True, log_connected=True):
         async with self._connect_lock:
             session_age = time.monotonic() - self._session_started_at
             refresh_required = (
@@ -100,7 +101,8 @@ class ASRProvider(ASRProviderBase):
             self._session = await self._session_context.__aenter__()
             self._session_started_at = time.monotonic()
             self._receiver_task = asyncio.create_task(self._receiver_loop())
-            logger.bind(tag=TAG).info("Gemini Live ASR session connected")
+            if log_connected:
+                logger.bind(tag=TAG).info("Gemini Live ASR session connected")
             return self._session
 
     async def receive_audio(self, conn, pcm_frame, audio_have_voice):
@@ -191,11 +193,53 @@ class ASRProvider(ASRProviderBase):
             pass
         except Exception as error:
             if not self._closed:
-                logger.bind(tag=TAG).error(
-                    f"Gemini Live ASR receive failed: {error}"
+                turn_active = (
+                    self._stream_active
+                    or self._ending_turn
+                    or self._awaiting_final
                 )
+                is_policy_close = (
+                    getattr(error, "code", None) == 1008
+                    or str(error).startswith("1008 ")
+                )
+                idle_close = is_policy_close and not turn_active
+                if idle_close:
+                    logger.bind(tag=TAG).debug(
+                        "Gemini Live ASR idle session closed"
+                    )
+                else:
+                    logger.bind(tag=TAG).error(
+                        f"Gemini Live ASR receive failed: {error}"
+                    )
+                self._receiver_task = None
                 self._session = None
                 await self._discard_active_turn()
+                if idle_close:
+                    self._reconnect_task = asyncio.create_task(
+                        self._reconnect_after_idle_close()
+                    )
+
+    async def _reconnect_after_idle_close(self):
+        try:
+            await asyncio.sleep(0)
+            if self._closed:
+                return
+            await self._ensure_session(
+                refresh_if_old=False,
+                log_connected=False,
+            )
+            logger.bind(tag=TAG).info(
+                "Gemini Live ASR session reconnected after idle timeout"
+            )
+        except asyncio.CancelledError:
+            pass
+        except Exception as error:
+            if not self._closed:
+                logger.bind(tag=TAG).warning(
+                    f"Gemini Live ASR idle reconnect failed: {error}"
+                )
+        finally:
+            self._reconnect_task = None
 
     async def _handle_final_transcript(self, text):
         if not self._awaiting_final or self._conn is None:
@@ -225,6 +269,17 @@ class ASRProvider(ASRProviderBase):
             self._conn.reset_audio_states()
 
     async def _close_session(self):
+        reconnect_task = self._reconnect_task
+        self._reconnect_task = None
+        if (
+            reconnect_task is not None
+            and reconnect_task is not asyncio.current_task()
+            and not reconnect_task.done()
+        ):
+            reconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reconnect_task
+
         receiver_task = self._receiver_task
         self._receiver_task = None
         if (

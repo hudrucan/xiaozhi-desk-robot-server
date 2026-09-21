@@ -23,11 +23,8 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
     if sentence_id is not None and sentence_id != conn.sentence_id:
         return
 
-    if conn.tts.tts_audio_first_sentence:
-        conn.logger.bind(tag=TAG).info(f"Sending first speech segment: {text}")
-        conn.tts.tts_audio_first_sentence = False
-
     if sentenceType == SentenceType.FIRST:
+        conn.logger.bind(tag=TAG).info(f"Sending speech segment: {text}")
         # 同一句子的后续消息加入流控队列，其他情况立即发送
         if (
             hasattr(conn, "audio_rate_controller")
