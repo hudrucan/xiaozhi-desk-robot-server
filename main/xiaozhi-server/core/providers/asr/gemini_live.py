@@ -189,6 +189,8 @@ class ASRProvider(ASRProviderBase):
                     final = server_content.input_transcription
                     if final and final.text and self._awaiting_final:
                         await self._handle_final_transcript(final.text)
+                    elif server_content.turn_complete and self._awaiting_final:
+                        await self._handle_final_transcript("")
         except asyncio.CancelledError:
             pass
         except Exception as error:

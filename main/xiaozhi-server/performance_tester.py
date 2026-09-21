@@ -6,7 +6,7 @@ import os
 
 def list_performance_tester_modules():
     performance_tester_dir = os.path.join(
-        os.path.dirname(__file__), "performance_benchmarks"
+        os.path.dirname(__file__), "performance_testers"
     )
     return sorted(
         file.removeprefix("performance_tester_").removesuffix(".py")
@@ -18,7 +18,7 @@ def list_performance_tester_modules():
 def load_module(module_name):
     module_path = os.path.join(
         os.path.dirname(__file__),
-        "performance_benchmarks",
+        "performance_testers",
         f"performance_tester_{module_name}.py",
     )
     spec = importlib.util.spec_from_file_location(module_name, module_path)

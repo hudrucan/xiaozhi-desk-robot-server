@@ -13,9 +13,7 @@ class VADProvider(VADProviderBase):
     def __init__(self, config):
         logger.bind(tag=TAG).info("SileroVAD", config)
 
-        model_path = os.path.join(
-            config["model_dir"], "src", "silero_vad", "data", "silero_vad.onnx"
-        )
+        model_path = os.path.join(config["model_dir"], "silero_vad.onnx")
         opts = onnxruntime.SessionOptions()
         opts.inter_op_num_threads = 1
         opts.intra_op_num_threads = 1

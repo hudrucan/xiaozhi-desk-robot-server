@@ -230,7 +230,7 @@ VAD:
     type: silero
     threshold: 0.5
     threshold_low: 0.3
-    model_dir: models/snakers4_silero-vad
+    model_dir: models/vad
     min_silence_duration_ms: 200  # Increase this for longer pauses within speech.
 
 LLM:

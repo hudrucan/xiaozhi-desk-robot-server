@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from config.settings import load_config
-from performance_benchmarks.asr import create_benchmark
+from performance_testers.asr import create_benchmark
 
 
 logging.basicConfig(level=logging.WARNING)
