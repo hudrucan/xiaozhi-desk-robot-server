@@ -4,6 +4,11 @@ import time
 
 from google import genai
 from google.genai import types
+from performance_testers.resource_usage import (
+    print_benchmark_usage,
+    print_initialization_usage,
+    process_usage,
+)
 
 from .base import ASRBenchmarkBase
 
@@ -44,7 +49,11 @@ class GeminiASRBenchmark(ASRBenchmarkBase):
     async def run(self):
         chunk_ms = self.get_setting("PERF_AUDIO_CHUNK_MS", 120)
         chunk_bytes = chunk_ms * 32
+        initial_usage = process_usage()
+        initialization_started_at = time.perf_counter()
         client = genai.Client(api_key=self.provider_config.get("api_key"))
+        initialization_duration = time.perf_counter() - initialization_started_at
+        initialized_usage = process_usage()
         model_name = self.provider_config.get(
             "model_name", "gemini-3.5-transcribe-live"
         )
@@ -53,6 +62,11 @@ class GeminiASRBenchmark(ASRBenchmarkBase):
         total_times = []
 
         self.print_header(model_name)
+        print_initialization_usage(
+            initialization_duration,
+            initial_usage,
+            initialized_usage,
+        )
         connect_started_at = time.perf_counter()
         try:
             async with client.aio.live.connect(
@@ -125,3 +139,4 @@ class GeminiASRBenchmark(ASRBenchmarkBase):
         if finalization_times:
             print(self.format_stats("Final after speech end", finalization_times))
             print(self.format_stats("Total turn", total_times))
+        print_benchmark_usage(initialized_usage)

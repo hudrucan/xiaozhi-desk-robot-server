@@ -9,6 +9,11 @@ import time
 from config.settings import load_config
 from core.utils.llm import create_instance as create_llm_instance
 from core.utils.prompt_manager import PromptManager
+from performance_testers.resource_usage import (
+    print_benchmark_usage,
+    print_initialization_usage,
+    process_usage,
+)
 
 
 logging.basicConfig(level=logging.WARNING)
@@ -79,7 +84,11 @@ async def main():
         raise ValueError("The selected LLM provider is not configured")
 
     provider_type = provider_config.get("type", provider_name)
+    initial_usage = process_usage()
+    initialization_started_at = time.perf_counter()
     provider = create_llm_instance(provider_type, provider_config)
+    initialization_duration = time.perf_counter() - initialization_started_at
+    initialized_usage = process_usage()
     system_prompt = PromptManager(config).build_enhanced_prompt(
         config.get("prompt", ""),
         "performance-test",
@@ -93,6 +102,11 @@ async def main():
 
     model_name = provider_config.get("model_name", "default")
     print(f"LLM provider: {provider_name} ({provider_type}, {model_name})")
+    print_initialization_usage(
+        initialization_duration,
+        initial_usage,
+        initialized_usage,
+    )
     print(f"Samples: {runs}; timeout per sample: {timeout}s")
     print(f"Prompt set: {len(prompt_set)}; seed: {seed}")
     print(f"System prompt: {len(system_prompt)} characters")
@@ -129,6 +143,7 @@ async def main():
     if total_times:
         print(format_stats("First output", first_output_times))
         print(format_stats("Total response", total_times))
+    print_benchmark_usage(initialized_usage)
 
 
 if __name__ == "__main__":

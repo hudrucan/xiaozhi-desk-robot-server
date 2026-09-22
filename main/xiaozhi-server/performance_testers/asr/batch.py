@@ -2,6 +2,11 @@ import asyncio
 import time
 
 from core.utils.asr import create_instance as create_asr_instance
+from performance_testers.resource_usage import (
+    print_benchmark_usage,
+    print_initialization_usage,
+    process_usage,
+)
 
 from .base import ASRBenchmarkBase
 
@@ -9,13 +14,22 @@ from .base import ASRBenchmarkBase
 class BatchASRBenchmark(ASRBenchmarkBase):
     async def run(self):
         provider_type = self.provider_config.get("type", self.provider_name)
+        initial_usage = process_usage()
+        initialization_started_at = time.perf_counter()
         provider = create_asr_instance(
             provider_type,
             self.provider_config,
             delete_audio_file=True,
         )
+        initialization_duration = time.perf_counter() - initialization_started_at
+        initialized_usage = process_usage()
         durations = []
         self.print_header(provider_type)
+        print_initialization_usage(
+            initialization_duration,
+            initial_usage,
+            initialized_usage,
+        )
 
         try:
             for run_number in range(1, self.runs + 1):
@@ -56,3 +70,4 @@ class BatchASRBenchmark(ASRBenchmarkBase):
         )
         if durations:
             print(self.format_stats("Latency", durations))
+        print_benchmark_usage(initialized_usage)
