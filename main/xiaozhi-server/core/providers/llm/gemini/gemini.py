@@ -122,38 +122,78 @@ class LLMProvider(LLMProviderBase):
     def _generate(self, dialogue, tools):
         role_map = {"assistant": "model", "user": "user"}
         contents: list = []
+        tool_call_names = {}
         # Convert the shared dialogue format to Gemini content parts.
         for m in dialogue:
             r = m["role"]
 
             if r == "assistant" and "tool_calls" in m:
-                tc = m["tool_calls"][0]
-                thought_signature = self._thought_signatures.get(
-                    tc.get("id"), _MISSING_THOUGHT_SIGNATURE
-                )
+                parts = []
+                for tc in m["tool_calls"]:
+                    tool_call_id = tc.get("id")
+                    tool_name = tc["function"]["name"]
+                    if tool_call_id:
+                        tool_call_names[tool_call_id] = tool_name
+
+                    function_call = {
+                        "name": tool_name,
+                        "args": json.loads(tc["function"]["arguments"]),
+                    }
+                    if tool_call_id:
+                        function_call["id"] = tool_call_id
+
+                    parts.append(
+                        {
+                            "function_call": function_call,
+                            "thought_signature": self._thought_signatures.get(
+                                tool_call_id, _MISSING_THOUGHT_SIGNATURE
+                            ),
+                        }
+                    )
+
                 contents.append(
                     {
                         "role": "model",
-                        "parts": [
-                            {
-                                "function_call": {
-                                    "name": tc["function"]["name"],
-                                    "args": json.loads(tc["function"]["arguments"]),
-                                },
-                                "thought_signature": thought_signature,
-                            }
-                        ],
+                        "parts": parts,
                     }
                 )
                 continue
 
             if r == "tool":
-                contents.append(
-                    {
-                        "role": "model",
-                        "parts": [{"text": str(m.get("content", ""))}],
-                    }
-                )
+                tool_call_id = m.get("tool_call_id")
+                tool_name = tool_call_names.get(tool_call_id)
+                if not tool_name:
+                    log.bind(tag=TAG).warning(
+                        f"Missing Gemini function name for tool call {tool_call_id}"
+                    )
+                    contents.append(
+                        {
+                            "role": "user",
+                            "parts": [{"text": str(m.get("content", ""))}],
+                        }
+                    )
+                    continue
+
+                function_response = {
+                    "name": tool_name,
+                    "response": {"result": str(m.get("content", ""))},
+                }
+                if tool_call_id:
+                    function_response["id"] = tool_call_id
+                response_part = {"function_response": function_response}
+                if (
+                    contents
+                    and contents[-1]["role"] == "user"
+                    and all(
+                        "function_response" in part
+                        for part in contents[-1]["parts"]
+                    )
+                ):
+                    contents[-1]["parts"].append(response_part)
+                else:
+                    contents.append(
+                        {"role": "user", "parts": [response_part]}
+                    )
                 continue
 
             contents.append(
@@ -180,11 +220,12 @@ class LLMProvider(LLMProviderBase):
         try:
             for chunk in stream:
                 cand = chunk.candidates[0]
+                tool_calls = []
                 for part in cand.content.parts:
                     # Function call.
                     if getattr(part, "function_call", None):
                         fc = part.function_call
-                        tool_call_id = uuid.uuid4().hex
+                        tool_call_id = getattr(fc, "id", None) or uuid.uuid4().hex
                         if part.thought_signature:
                             self._thought_signatures[tool_call_id] = (
                                 part.thought_signature
@@ -195,8 +236,9 @@ class LLMProvider(LLMProviderBase):
                             ):
                                 oldest_id = next(iter(self._thought_signatures))
                                 self._thought_signatures.pop(oldest_id, None)
-                        yield None, [
+                        tool_calls.append(
                             SimpleNamespace(
+                                index=len(tool_calls),
                                 id=tool_call_id,
                                 type="function",
                                 function=SimpleNamespace(
@@ -206,11 +248,15 @@ class LLMProvider(LLMProviderBase):
                                     ),
                                 ),
                             )
-                        ]
-                        return
+                        )
+                        continue
                     # Regular text output.
                     if getattr(part, "text", None):
                         yield part.text if tools is None else (part.text, None)
+
+                if tool_calls:
+                    yield None, tool_calls
+                    return
 
         finally:
             if tools is not None:

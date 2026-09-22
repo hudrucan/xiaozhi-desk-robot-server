@@ -149,6 +149,7 @@ voiceprint:
 prompt: |
   You are a helpful voice assistant. Respond clearly and concisely in the
   user's language.
+  Write natural-language tool arguments in the user's language.
 
 # Default system-prompt template file.
 prompt_template: agent-base-prompt.txt
