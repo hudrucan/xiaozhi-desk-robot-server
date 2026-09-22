@@ -1,9 +1,11 @@
 import asyncio
+import audioop
 import io
 import os
 import re
 import tempfile
 import threading
+import time
 import wave
 from collections import Counter
 from pathlib import Path
@@ -12,6 +14,8 @@ import numpy as np
 
 from config.logger import setup_logging
 from core.providers.tts.base import TTSProviderBase
+from core.providers.tts.dto.dto import SentenceType
+from core.utils.tts import MarkdownCleaner
 
 
 TAG = __name__
@@ -69,6 +73,7 @@ class TTSProvider(TTSProviderBase):
         self.speaker_id = int(config.get("speaker_id", 0))
         self.volume_gain = max(0.0, float(config.get("volume_gain", 1.0)))
         self.number_language = config.get("number_language")
+        self._resample_state = None
 
         self._num2words = None
         if self.number_language:
@@ -136,7 +141,12 @@ class TTSProvider(TTSProviderBase):
             text,
         )
 
-    def _generate_wav(self, text: str) -> bytes:
+    def _generate_pcm(self, text: str) -> tuple[bytes, int]:
+        started_at = time.monotonic()
+        sentence_id = getattr(self, "current_sentence_id", None)
+        logger.bind(tag=TAG).debug(
+            f"Sherpa TTS synth start: sentence_id={sentence_id}, chars={len(text)}"
+        )
         generation_config = self._sherpa_onnx.GenerationConfig()
         generation_config.sid = self.speaker_id
         generation_config.speed = self.speed
@@ -146,22 +156,135 @@ class TTSProvider(TTSProviderBase):
                 self._normalize_numbers(text), generation_config
             )
         )
+        completed_at = time.monotonic()
         if len(audio.samples) == 0:
             raise RuntimeError("Sherpa TTS returned no audio")
+
+        logger.bind(tag=TAG).debug(
+            "Sherpa TTS synth complete: "
+            f"sentence_id={sentence_id}, elapsed_ms={(completed_at - started_at) * 1000:.1f}, "
+            f"samples={len(audio.samples)}, sample_rate={audio.sample_rate}"
+        )
 
         samples = np.clip(
             np.asarray(audio.samples, dtype=np.float32) * self.volume_gain,
             -1.0,
             1.0,
         )
-        pcm_data = (samples * 32767.0).astype(np.int16).tobytes()
+        pcm_data = (samples * 32767.0).astype("<i2").tobytes()
+        logger.bind(tag=TAG).debug(
+            "Sherpa TTS first PCM available: "
+            f"sentence_id={sentence_id}, elapsed_ms={(time.monotonic() - started_at) * 1000:.1f}"
+        )
+        return pcm_data, audio.sample_rate
+
+    def _resample_pcm(
+        self, pcm_data: bytes, source_rate: int, target_rate: int
+    ) -> bytes:
+        if source_rate == target_rate:
+            return pcm_data
+        resampled, self._resample_state = audioop.ratecv(
+            pcm_data, 2, 1, source_rate, target_rate, self._resample_state
+        )
+        return resampled
+
+    def _generate_wav(self, text: str) -> bytes:
+        pcm_data, sample_rate = self._generate_pcm(text)
         output = io.BytesIO()
         with wave.open(output, "wb") as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
-            wav_file.setframerate(audio.sample_rate)
+            wav_file.setframerate(sample_rate)
             wav_file.writeframes(pcm_data)
         return output.getvalue()
+
+    def _start_tts_response(self):
+        self._resample_state = None
+        self.opus_encoder.reset_state()
+
+    def _finish_tts_response(self, opus_handler):
+        if self.conn.audio_format == "opus":
+            self.opus_encoder.encode_pcm_to_opus_stream(
+                b"", end_of_stream=True, callback=opus_handler
+            )
+        self._resample_state = None
+
+    def _abort_tts_response(self):
+        self._resample_state = None
+        self.opus_encoder.reset_state()
+
+    def to_tts_stream(self, text, opus_handler=None):
+        original_text = text
+        text = MarkdownCleaner.clean_markdown(text)
+        if self._correct_words_pattern:
+            text = self._correct_words_pattern.sub(
+                lambda match: self.correct_words[match.group(0)], text
+            )
+
+        max_attempts = self.max_retries + 1
+        for attempt in range(max_attempts):
+            try:
+                started_at = time.monotonic()
+                pcm_data, source_rate = self._generate_pcm(text)
+                if self.conn.client_abort:
+                    self._abort_tts_response()
+                    return
+
+                target_rate = self.conn.sample_rate
+                pcm_data = self._resample_pcm(
+                    pcm_data, source_rate=source_rate, target_rate=target_rate
+                )
+                self.tts_audio_queue.put(
+                    (
+                        SentenceType.FIRST,
+                        None,
+                        original_text,
+                        getattr(self, "current_sentence_id", None),
+                    )
+                )
+
+                if self.conn.audio_format == "pcm":
+                    opus_handler(pcm_data)
+                    return
+
+                first_opus_logged = False
+
+                def handle_opus_frame(opus_data):
+                    nonlocal first_opus_logged
+                    if not first_opus_logged:
+                        logger.bind(tag=TAG).debug(
+                            "Sherpa TTS first Opus frame: "
+                            f"sentence_id={getattr(self, 'current_sentence_id', None)}, "
+                            f"elapsed_ms={(time.monotonic() - started_at) * 1000:.1f}"
+                        )
+                        first_opus_logged = True
+                    opus_handler(opus_data)
+
+                self.opus_encoder.encode_pcm_to_opus_stream(
+                    pcm_data,
+                    end_of_stream=False,
+                    callback=handle_opus_frame,
+                )
+                return
+            except Exception as error:
+                if attempt + 1 < max_attempts:
+                    logger.bind(tag=TAG).warning(
+                        f"Speech generation attempt {attempt + 1} failed for "
+                        f"{original_text}, error: {error}"
+                    )
+                    continue
+                logger.bind(tag=TAG).error(
+                    f"Speech generation failed for {original_text}; "
+                    f"check the model and runtime status: {error}"
+                )
+                self.tts_audio_queue.put(
+                    (
+                        SentenceType.FIRST,
+                        None,
+                        original_text,
+                        getattr(self, "current_sentence_id", None),
+                    )
+                )
 
     async def text_to_speak(self, text, output_file):
         wav_data = await asyncio.to_thread(self._generate_wav, text)

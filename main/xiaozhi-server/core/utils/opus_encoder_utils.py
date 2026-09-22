@@ -72,21 +72,26 @@ class OpusEncoderUtils:
         # 校验PCM数据
         self._validate_pcm_data(new_samples)
 
-        # 将新数据追加到缓冲区
-        self.buffer = np.append(self.buffer, new_samples)
+        # Avoid copying a full chunk when there is no partial frame to prepend.
+        # This is common for providers that deliver a complete PCM segment.
+        if len(self.buffer) > 0:
+            samples = np.concatenate((self.buffer, new_samples))
+        else:
+            samples = new_samples
 
         offset = 0
 
         # 处理所有完整帧
-        while offset <= len(self.buffer) - self.total_frame_size:
-            frame = self.buffer[offset : offset + self.total_frame_size]
+        while offset <= len(samples) - self.total_frame_size:
+            frame = samples[offset : offset + self.total_frame_size]
             output = self._encode(frame)
             if output:
                 callback(output)
             offset += self.total_frame_size
 
-        # 保留未处理的样本
-        self.buffer = self.buffer[offset:]
+        # Copy only the sub-frame remainder so it does not retain the complete
+        # segment's backing array between punctuation-delimited TTS calls.
+        self.buffer = samples[offset:].copy()
 
         # 流结束时处理剩余数据
         if end_of_stream and len(self.buffer) > 0:

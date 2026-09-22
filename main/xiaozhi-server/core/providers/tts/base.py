@@ -116,6 +116,15 @@ class TTSProviderBase(ABC):
     def handle_audio_file(self, file_audio: bytes, text):
         self.before_stop_play_files.append((file_audio, text))
 
+    def _start_tts_response(self):
+        """Provider hook invoked when a new response starts."""
+
+    def _finish_tts_response(self, opus_handler: Callable[[bytes], None]):
+        """Provider hook invoked after the final response text is processed."""
+
+    def _abort_tts_response(self):
+        """Provider hook invoked while queued TTS work is being aborted."""
+
     def to_tts_stream(self, text, opus_handler: Callable[[bytes], None] = None) -> None:
         # 保留原始文本用于显示/上报
         original_text = text
@@ -376,6 +385,7 @@ class TTSProviderBase(ABC):
             try:
                 message = self.tts_text_queue.get(timeout=1)
                 if self.conn.client_abort:
+                    self._abort_tts_response()
                     logger.bind(tag=TAG).info("Interrupt received; stopping TTS text-processing thread")
                     continue
                 # 过滤旧消息：检查sentence_id是否匹配
@@ -387,6 +397,7 @@ class TTSProviderBase(ABC):
                     self.processed_chars = 0
                     self.tts_text_buff = []
                     self.is_first_sentence = True
+                    self._start_tts_response()
                 elif ContentType.TEXT == message.content_type:
                     self.tts_text_buff.append(message.content_detail)
                     segment_text = self._get_segment_text()
@@ -401,6 +412,7 @@ class TTSProviderBase(ABC):
                         )
                 if message.sentence_type == SentenceType.LAST:
                     self._process_remaining_text_stream(opus_handler=self.handle_opus)
+                    self._finish_tts_response(opus_handler=self.handle_opus)
                     self.tts_audio_queue.put(
                         (message.sentence_type, [], message.content_detail, message.sentence_id)
                     )
