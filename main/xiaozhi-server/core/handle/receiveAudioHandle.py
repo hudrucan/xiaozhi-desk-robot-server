@@ -91,6 +91,30 @@ async def startToChat(conn: "ConnectionHandler", text, check_wakeup_word=True):
     conn.executor.submit(conn.chat, actual_text)
 
 
+async def process_pending_typed_input_if_ready(conn: "ConnectionHandler") -> bool:
+    """Start a queued typed turn after both server and device setup complete."""
+    components_ready = getattr(conn, "components_ready", None)
+    if components_ready is None or not components_ready.is_set():
+        return False
+
+    mcp_client = getattr(conn, "mcp_client", None)
+    if mcp_client and not await mcp_client.is_ready():
+        return False
+
+    # Re-read after awaiting MCP readiness so concurrent readiness callbacks
+    # cannot consume the same queued input twice.
+    pending_typed_input = getattr(conn, "pending_typed_input", None)
+    if pending_typed_input is None:
+        return False
+
+    conn.pending_typed_input = None
+    conn.logger.bind(tag=TAG).info(
+        "Processing typed input after initialization completed"
+    )
+    await startToChat(conn, pending_typed_input, check_wakeup_word=False)
+    return True
+
+
 async def no_voice_close_connect(conn: "ConnectionHandler", have_voice):
     if have_voice:
         conn.last_activity_time = time.time() * 1000

@@ -221,17 +221,11 @@ async def handle_mcp_message(
                         conn, "pending_typed_input", None
                     )
                     if pending_typed_input is not None:
-                        conn.pending_typed_input = None
-                        logger.bind(tag=TAG).info(
-                            "Processing typed input after device MCP tools became ready"
+                        from core.handle.receiveAudioHandle import (
+                            process_pending_typed_input_if_ready,
                         )
-                        from core.handle.receiveAudioHandle import startToChat
 
-                        await startToChat(
-                            conn,
-                            pending_typed_input,
-                            check_wakeup_word=False,
-                        )
+                        await process_pending_typed_input_if_ready(conn)
                     else:
                         from core.handle.sendAudioHandle import send_status_message
 

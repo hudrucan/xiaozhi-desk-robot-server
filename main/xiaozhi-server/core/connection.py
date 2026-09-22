@@ -143,6 +143,7 @@ class ConnectionHandler:
         self.iot_descriptors = {}
         self.func_handler = None
         self.pending_typed_input = None
+        self.components_ready = None
 
         self.cmd_exit = self.config["exit_commands"]
 
@@ -223,6 +224,7 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).info(f"Output audio sample rate: {self.sample_rate}")
 
             # Initialize connection components without blocking the receive loop.
+            self.components_ready = asyncio.Event()
             asyncio.create_task(self._background_initialize())
 
             try:
@@ -560,9 +562,11 @@ class ConnectionHandler:
             self._init_prompt_enhancement()
             """注入工具调用few-shot示例（仅function_call模式）"""
             self._inject_tool_call_fewshot()
+            return True
 
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"Failed to instantiate components: {e}")
+            return False
 
     def _init_prompt_enhancement(self):
 
@@ -678,7 +682,18 @@ class ConnectionHandler:
     async def _background_initialize(self):
         """Initialize connection-scoped components in the worker pool."""
         try:
-            self.executor.submit(self._initialize_components)
+            initialized = await self.loop.run_in_executor(
+                self.executor, self._initialize_components
+            )
+            if not initialized:
+                return
+            self.components_ready.set()
+
+            from core.handle.receiveAudioHandle import (
+                process_pending_typed_input_if_ready,
+            )
+
+            await process_pending_typed_input_if_ready(self)
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"Background initialization failed: {e}")
 

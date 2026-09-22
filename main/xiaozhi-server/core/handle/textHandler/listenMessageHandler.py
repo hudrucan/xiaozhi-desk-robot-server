@@ -63,16 +63,22 @@ class ListenTextMessageHandler(TextMessageHandler):
                         return
                     conn.just_woken_up = False
 
+                    components_ready = getattr(conn, "components_ready", None)
+                    server_ready = (
+                        components_ready is not None
+                        and components_ready.is_set()
+                    )
                     mcp_client = getattr(conn, "mcp_client", None)
-                    if mcp_client and not await mcp_client.is_ready():
+                    mcp_ready = not mcp_client or await mcp_client.is_ready()
+                    if not server_ready or not mcp_ready:
                         if getattr(conn, "pending_typed_input", None) is None:
                             conn.pending_typed_input = original_text
                             conn.logger.bind(tag=TAG).info(
-                                "Deferring typed input until device MCP tools are ready"
+                                "Deferring typed input until initialization completes"
                             )
                         else:
                             conn.logger.bind(tag=TAG).warning(
-                                "Ignoring typed input while another typed input is waiting for MCP"
+                                "Ignoring typed input while another typed input is waiting"
                             )
                         return
 
