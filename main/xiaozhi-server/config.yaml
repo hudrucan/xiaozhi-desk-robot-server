@@ -310,6 +310,32 @@ TTS:
     split_on_all_punctuations: true
     max_retries: 0
     output_dir: tmp/
+  VieNeuTTS:
+    # VieNeu v3 Nano runs locally with ONNX and downloads its model into the
+    # Hugging Face cache on first use.
+    type: vieneu
+    language: your_language
+    model_repo: pnnbao-ump/VieNeu-TTS-v3-Nano
+    model_dir: ""
+    hf_token: ""
+    voice: Minh Quân
+    threads: 0
+    # Eight steps with negative sway is the fast Nano configuration.
+    steps: 8
+    cfg: 3.0
+    sway: -1.0
+    speed: 1.0
+    seed:
+    max_chars: 140
+    # Raise quieter speech toward a consistent loudness, then soft-limit peaks.
+    mastering: true
+    target_active_rms_dbfs: -10.0
+    peak_ceiling_dbfs: -1.0
+    # Applied after loudness normalization; values above 1 increase density.
+    volume_gain: 1.0
+    apply_watermark: false
+    max_retries: 0
+    output_dir: tmp/
   OpenAITTS:
     type: openai
     api_key: your_api_key
