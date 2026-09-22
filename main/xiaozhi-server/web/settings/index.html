@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0906" />
+    <title>Xiaozhi Server Settings</title>
+    <link rel="stylesheet" href="/settings/styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="Xiaozhi Server settings">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span>
+          </span>
+          <span>
+            <strong>Xiaozhi</strong>
+            <small>Local server</small>
+          </span>
+        </a>
+
+        <nav class="navigation" aria-label="Settings sections">
+          <a class="active" href="#overview"><span>01</span>Overview</a>
+          <a href="#providers"><span>02</span>Providers</a>
+          <a href="#assistant"><span>03</span>Assistant</a>
+          <a href="#runtime"><span>04</span>Runtime</a>
+          <a href="#integrations"><span>05</span>Integrations</a>
+        </nav>
+
+        <div class="sidebar-status">
+          <div class="status-row">
+            <span class="status-dot"></span>
+            <span>Configuration API</span>
+            <strong id="apiStatus">Checking</strong>
+          </div>
+          <p id="configPath">data/.config.yaml</p>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Desk Robot control room</p>
+            <h1>Server settings</h1>
+          </div>
+          <div class="topbar-actions">
+            <span class="save-state" id="saveState">No unsaved changes</span>
+            <button class="button secondary" id="discardButton" disabled>Discard</button>
+            <button class="button primary" id="saveButton" disabled>Save changes</button>
+          </div>
+        </header>
+
+        <div class="content">
+          <section id="overview" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">System snapshot</p>
+                <h2>Overview</h2>
+              </div>
+              <span class="badge online"><i></i>Server online</span>
+            </div>
+
+            <div class="metric-grid" id="providerSummary"></div>
+
+            <article class="panel restart-panel hidden" id="restartPanel">
+              <div class="panel-icon">↻</div>
+              <div>
+                <h3>Restart required</h3>
+                <p>Your configuration is saved. Restart the server to apply it to new sessions.</p>
+              </div>
+              <button class="button warning" id="restartButton">Restart server</button>
+            </article>
+
+            <div class="overview-grid">
+              <article class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Connection</p>
+                    <h3>Server endpoints</h3>
+                  </div>
+                  <span class="line-icon">⌁</span>
+                </div>
+                <dl class="detail-list" id="endpointSummary"></dl>
+              </article>
+
+              <article class="panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Local override</p>
+                    <h3>Configuration safety</h3>
+                  </div>
+                  <span class="line-icon">◇</span>
+                </div>
+                <ul class="check-list">
+                  <li>Secrets remain masked in the browser</li>
+                  <li>Writes are validated and atomic</li>
+                  <li>The previous file is kept as <code>.backup</code></li>
+                  <li>Runtime state changes only after restart</li>
+                </ul>
+              </article>
+            </div>
+          </section>
+
+          <section id="providers" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Speech pipeline</p>
+                <h2>Providers</h2>
+                <p class="section-copy">Select each module, then tune only the active provider.</p>
+              </div>
+            </div>
+            <div class="provider-grid" id="providerSelectors"></div>
+            <div id="providerEditors"></div>
+          </section>
+
+          <section id="assistant" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Personality & turns</p>
+                <h2>Assistant</h2>
+                <p class="section-copy">Control the system prompt and short spoken responses.</p>
+              </div>
+            </div>
+            <div class="form-grid" id="assistantFields"></div>
+          </section>
+
+          <section id="runtime" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Server behavior</p>
+                <h2>Runtime</h2>
+                <p class="section-copy">Network changes take effect after a server restart.</p>
+              </div>
+            </div>
+            <div class="form-grid" id="runtimeFields"></div>
+          </section>
+
+          <section id="integrations" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Tools & recognition</p>
+                <h2>Integrations</h2>
+                <p class="section-copy">Configure MCP, server plugins, and optional voiceprint support.</p>
+              </div>
+            </div>
+            <div class="form-grid" id="integrationFields"></div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+    <div class="restart-overlay hidden" id="restartOverlay">
+      <div class="restart-card">
+        <span class="spinner"></span>
+        <p class="eyebrow">Applying configuration</p>
+        <h2>Restarting Xiaozhi</h2>
+        <p>The page will reconnect when the server is ready.</p>
+      </div>
+    </div>
+
+    <script src="/settings/app.js" defer></script>
+  </body>
+</html>

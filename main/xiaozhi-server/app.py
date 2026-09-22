@@ -1,7 +1,8 @@
+import asyncio
+import os
+import signal
 import sys
 import uuid
-import signal
-import asyncio
 from aioconsole import ainput
 from config.settings import load_config
 from config.logger import setup_logging
@@ -15,7 +16,7 @@ TAG = __name__
 logger = setup_logging()
 
 
-async def wait_for_exit() -> None:
+async def wait_for_exit(restart_event: asyncio.Event) -> bool:
     """
     Block until Ctrl-C or SIGTERM is received.
     - Unix: use add_signal_handler.
@@ -27,14 +28,24 @@ async def wait_for_exit() -> None:
     if sys.platform != "win32":  # Unix / macOS
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop_event.set)
-        await stop_event.wait()
+        signal_task = asyncio.create_task(stop_event.wait())
+        restart_task = asyncio.create_task(restart_event.wait())
+        done, pending = await asyncio.wait(
+            [signal_task, restart_task], return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        return restart_task in done
     else:
         # Keep the Windows loop pending so KeyboardInterrupt reaches asyncio.run
         # and shutdown is not blocked by leftover non-daemon threads.
         try:
-            await asyncio.Future()
+            restart_task = asyncio.create_task(restart_event.wait())
+            await restart_task
+            return True
         except KeyboardInterrupt:  # Ctrl‑C
-            pass
+            return False
 
 
 async def monitor_stdin():
@@ -56,6 +67,8 @@ async def main():
 
     config["server"]["auth_key"] = auth_key
 
+    restart_event = asyncio.Event()
+
     # Start stdin monitoring.
     stdin_task = asyncio.create_task(monitor_stdin())
 
@@ -67,7 +80,7 @@ async def main():
     ws_server = WebSocketServer(config)
     ws_task = asyncio.create_task(ws_server.start())
     # Start the HTTP server.
-    ota_server = SimpleHttpServer(config)
+    ota_server = SimpleHttpServer(config, restart_event.set)
     ota_task = asyncio.create_task(ota_server.start())
 
     port = int(config["server"].get("http_port", 8003))
@@ -81,6 +94,17 @@ async def main():
         get_local_ip(),
         port,
     )
+    settings_config = config.get("server", {}).get("settings", {})
+    if settings_config.get("enabled", True):
+        logger.bind(tag=TAG).info(
+            "Settings UI:\t\thttp://{}:{}/settings/",
+            (
+                get_local_ip()
+                if settings_config.get("allow_remote", False)
+                else "127.0.0.1"
+            ),
+            port,
+        )
     mcp_endpoint = config.get("mcp_endpoint", None)
     if mcp_endpoint is not None and "你" not in mcp_endpoint:
         # Validate the MCP endpoint format.
@@ -115,8 +139,9 @@ async def main():
         "=============================================================\n"
     )
 
+    should_restart = False
     try:
-        await wait_for_exit()
+        should_restart = await wait_for_exit(restart_event)
     except asyncio.CancelledError:
         print("Task cancelled; cleaning up resources...")
     finally:
@@ -136,6 +161,10 @@ async def main():
             return_when=asyncio.ALL_COMPLETED,
         )
         print("Server shut down successfully.")
+
+    if should_restart:
+        logger.bind(tag=TAG).info("Restarting server to apply configuration")
+        os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 if __name__ == "__main__":

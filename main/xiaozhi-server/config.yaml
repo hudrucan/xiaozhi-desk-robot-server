@@ -10,6 +10,11 @@ server:
   port: 8000
   # HTTP port for the standalone OTA and vision endpoints.
   http_port: 8003
+  # Lightweight local settings UI served by the existing HTTP server.
+  settings:
+    enabled: true
+    # Keep configuration writes on this machine unless LAN access is explicit.
+    allow_remote: false
   # WebSocket URL returned to the device by the OTA endpoint.
   # Replace this generic local URL in data/.config.yaml with the address reachable
   # by the device.

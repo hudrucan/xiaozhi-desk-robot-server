@@ -2,17 +2,22 @@ import asyncio
 from aiohttp import web
 from config.logger import setup_logging
 from core.api.ota_handler import OTAHandler
+from core.api.settings_handler import SettingsHandler
 from core.api.vision_handler import VisionHandler
 
 TAG = __name__
 
 
 class SimpleHttpServer:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, request_restart=None):
         self.config = config
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config)
+        self.settings_handler = None
+        settings_config = config.get("server", {}).get("settings", {})
+        if settings_config.get("enabled", True) and request_restart is not None:
+            self.settings_handler = SettingsHandler(config, request_restart)
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:
         """获取websocket地址
@@ -33,6 +38,7 @@ class SimpleHttpServer:
             return f"ws://{local_ip}:{port}/xiaozhi/v1/"
 
     async def start(self):
+        runner = None
         try:
             server_config = self.config["server"]
             host = server_config.get("ip", "0.0.0.0")
@@ -57,6 +63,28 @@ class SimpleHttpServer:
                         ),
                     ]
                 )
+
+                if self.settings_handler is not None:
+                    app.add_routes(
+                        [
+                            web.get("/settings", self.settings_handler.handle_redirect),
+                            web.get("/settings/", self.settings_handler.handle_index),
+                            web.get(
+                                "/settings/{filename}",
+                                self.settings_handler.handle_asset,
+                            ),
+                            web.get(
+                                "/api/settings", self.settings_handler.handle_get
+                            ),
+                            web.put(
+                                "/api/settings", self.settings_handler.handle_put
+                            ),
+                            web.post(
+                                "/api/settings/restart",
+                                self.settings_handler.handle_restart,
+                            ),
+                        ]
+                    )
                 # Vision routes.
                 app.add_routes(
                     [
@@ -85,3 +113,6 @@ class SimpleHttpServer:
 
             self.logger.bind(tag=TAG).error(f"Stack trace: {traceback.format_exc()}")
             raise
+        finally:
+            if runner is not None:
+                await runner.cleanup()
