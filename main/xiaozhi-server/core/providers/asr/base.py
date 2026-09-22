@@ -4,12 +4,10 @@ import wave
 import uuid
 import json
 import time
-import queue
 import shutil
 import asyncio
 import tempfile
 import traceback
-import threading
 
 from abc import ABC, abstractmethod
 from config.logger import setup_logging
@@ -33,28 +31,23 @@ class ASRProviderBase(ABC):
 
     # 打开音频通道
     async def open_audio_channels(self, conn: "ConnectionHandler"):
-        conn.asr_priority_thread = threading.Thread(
-            target=self.asr_text_priority_thread, args=(conn,), daemon=True
-        )
-        conn.asr_priority_thread.start()
+        conn.asr_audio_task = asyncio.create_task(self.asr_audio_consumer(conn))
 
     # 有序处理ASR音频
-    def asr_text_priority_thread(self, conn: "ConnectionHandler"):
+    async def asr_audio_consumer(self, conn: "ConnectionHandler"):
         while not conn.stop_event.is_set():
             try:
-                message = conn.asr_audio_queue.get(timeout=1)
-                future = asyncio.run_coroutine_threadsafe(
-                    handleAudioMessage(conn, message),
-                    conn.loop,
-                )
-                future.result()
-            except queue.Empty:
-                continue
+                message = await conn.asr_audio_queue.get()
+                try:
+                    await handleAudioMessage(conn, message)
+                finally:
+                    conn.asr_audio_queue.task_done()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.bind(tag=TAG).error(
                     f"Failed to process ASR text: {str(e)}, type: {type(e).__name__}, stack trace: {traceback.format_exc()}"
                 )
-                continue
 
     # 接收音频
     async def receive_audio(self, conn: "ConnectionHandler", pcm_frame, audio_have_voice):
@@ -74,15 +67,22 @@ class ASRProviderBase(ABC):
             if conn.asr.interface_type != InterfaceType.STREAM and conn.client_voice_stop:
                 # 直接使用asr_audio中的PCM数据
                 pcm_bytes = b"".join(conn.asr_audio)
-                # 检查是否有足够的音频数据（每帧1920字节，15帧约28800字节）
-                if len(pcm_bytes) > 1920 * 15:
+                min_audio_ms = max(0, int(conn.config.get("asr_min_audio_ms", 300)))
+                min_audio_bytes = 16000 * 2 * min_audio_ms // 1000
+                if len(pcm_bytes) >= min_audio_bytes:
                     await self.handle_voice_stop(conn, [pcm_bytes])
+                else:
+                    conn.complete_turn_metrics("audio_too_short")
                 conn.reset_audio_states()
 
     # 处理语音停止
     async def handle_voice_stop(self, conn: "ConnectionHandler", asr_audio_task: List[bytes]):
         """并行处理ASR和声纹识别"""
         try:
+            if not conn.has_active_turn_metrics():
+                conn.start_turn_metrics("voice")
+            conn.mark_turn_metric("speech_end")
+            conn.mark_turn_metric("asr_start")
             total_start_time = time.monotonic()
 
             # 数据已经是PCM直接使用
@@ -93,6 +93,7 @@ class ASRProviderBase(ABC):
             wav_data = None
             if conn.voiceprint_provider and combined_pcm_data:
                 wav_data = self._pcm_to_wav(combined_pcm_data)
+            audio_duration_ms = len(combined_pcm_data) * 1000 / (16000 * 2)
 
             # 定义ASR任务
             asr_task = self.speech_to_text_wrapper(
@@ -156,6 +157,7 @@ class ASRProviderBase(ABC):
 
             # 性能监控
             total_time = time.monotonic() - total_start_time
+            conn.mark_turn_metric("asr_done")
             logger.bind(tag=TAG).info(f"Total processing time: {total_time:.3f}s")
 
             # 检查文本长度
@@ -164,7 +166,13 @@ class ASRProviderBase(ABC):
 
             if text_len > 0:
                 await startToChat(conn, enhanced_text)
+            else:
+                logger.bind(tag=TAG).warning(
+                    f"ASR returned empty text for {audio_duration_ms:.0f} ms of PCM audio"
+                )
+                conn.complete_turn_metrics("empty_asr_result")
         except Exception as e:
+            conn.complete_turn_metrics("asr_failed")
             logger.bind(tag=TAG).error(f"Failed to handle speech stop: {e}")
             import traceback
 

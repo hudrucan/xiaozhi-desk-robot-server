@@ -29,6 +29,13 @@ class ListenTextMessageHandler(TextMessageHandler):
                 f"Client listening mode: {conn.client_listen_mode}"
             )
         if msg_json["state"] == "start":
+            last_tts_stop_sent_at = getattr(conn, "last_tts_stop_sent_at", None)
+            if last_tts_stop_sent_at is not None:
+                resume_delay_ms = (time.monotonic() - last_tts_stop_sent_at) * 1000
+                conn.logger.bind(tag=TAG).info(
+                    f"Listening resumed {resume_delay_ms:.1f} ms after TTS stop"
+                )
+                conn.last_tts_stop_sent_at = None
             # 设备从播放模式切回录音模式,清除所有音频状态和缓冲区
             conn.reset_audio_states()
         elif msg_json["state"] == "stop":
@@ -36,6 +43,9 @@ class ListenTextMessageHandler(TextMessageHandler):
             if conn.asr is None:
                 return
 
+            if not conn.has_active_turn_metrics():
+                conn.start_turn_metrics("voice")
+            conn.mark_turn_metric("speech_end")
             conn.client_voice_stop = True
             if conn.asr.interface_type == InterfaceType.STREAM:
                 # 流式模式下，发送结束请求

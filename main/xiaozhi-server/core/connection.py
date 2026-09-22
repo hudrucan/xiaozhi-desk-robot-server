@@ -20,7 +20,7 @@ from core.utils.modules_initialize import (
     initialize_tts,
     initialize_asr,
 )
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from core.utils.dialogue import Message, Dialogue
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
@@ -98,6 +98,8 @@ class ConnectionHandler:
         self.loop = None  # 在 handle_connection 中获取运行中的事件循环
         self.stop_event = threading.Event()
         self.executor = ThreadPoolExecutor(max_workers=5)
+        self._turn_metrics_lock = threading.Lock()
+        self._turn_metrics = None
 
         # 依赖的组件
         self.vad = None
@@ -126,7 +128,10 @@ class ConnectionHandler:
         # 因为实际部署时可能会用到公共的本地ASR，不能把变量暴露给公共ASR
         # 所以涉及到ASR的变量，需要在这里定义，属于connection的私有变量
         self.asr_audio = []  # 存储PCM帧列表，供VAD和ASR共享
-        self.asr_audio_queue = queue.Queue()
+        self.asr_audio_queue = asyncio.Queue(
+            maxsize=max(1, int(self.config.get("asr_audio_queue_max_frames", 200)))
+        )
+        self.asr_audio_task = None
         self.current_speaker = None  # 存储当前说话人
         self.introduced_speakers = set()  # 已"首次引入"的说话人，控制只在首轮带名字
         self.system_introduced_speakers = set()  # 已在 system 注入过身份的说话人，控制 system 身份只首轮出现
@@ -311,7 +316,7 @@ class ConnectionHandler:
             # 入口处直接解码PCM，避免VAD和ASR重复解码
             pcm_frame = self._decode_opus_packet(message)
             if pcm_frame:
-                self.asr_audio_queue.put(pcm_frame)
+                self.enqueue_asr_audio(pcm_frame)
 
     def _unwrap_websocket_audio_message(self, message: bytes):
         """Extract one Opus packet from the negotiated WebSocket protocol."""
@@ -369,8 +374,10 @@ class ConnectionHandler:
             if timestamp > 0 and self.client_aec:
                 pcm_frame = self._apply_aec(timestamp, pcm_frame)
 
-            self.asr_audio_queue.put(pcm_frame)
+            self.enqueue_asr_audio(pcm_frame)
             return True
+        except RuntimeError:
+            raise
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"Failed to parse WebSocket audio packet: {e}")
 
@@ -602,22 +609,23 @@ class ConnectionHandler:
         # === few-shot 示例（is_temporary）===
         # 展示 direct_answer 携带 response 参数的用法，一次调用完成回复
 
-        # Example 1: direct_answer returns its response without another LLM pass.
-        da_tc_id = "fewshot_da_001"
-        self.dialogue.put(Message(role="user", content="Tell me a story", is_temporary=True))
-        self.dialogue.put(Message(
-            role="assistant",
-            tool_calls=[{
-                "id": da_tc_id,
-                "function": {"arguments": '{"response": "Sure. What kind of story would you like?"}', "name": "direct_answer"},
-                "type": "function", "index": 0,
-            }],
-            is_temporary=True,
-        ))
-        self.dialogue.put(Message(
-            role="tool", tool_call_id=da_tc_id,
-            content="Response sent", is_temporary=True,
-        ))
+        if self.config.get("enable_direct_answer_tool", True):
+            # Example 1: direct_answer returns its response without another LLM pass.
+            da_tc_id = "fewshot_da_001"
+            self.dialogue.put(Message(role="user", content="Tell me a story", is_temporary=True))
+            self.dialogue.put(Message(
+                role="assistant",
+                tool_calls=[{
+                    "id": da_tc_id,
+                    "function": {"arguments": '{"response": "Sure. What kind of story would you like?"}', "name": "direct_answer"},
+                    "type": "function", "index": 0,
+                }],
+                is_temporary=True,
+            ))
+            self.dialogue.put(Message(
+                role="tool", tool_call_id=da_tc_id,
+                content="Response sent", is_temporary=True,
+            ))
 
         # Example 2: a real tool call (handle_exit_intent).
         if "handle_exit_intent" in tool_names:
@@ -804,6 +812,7 @@ class ConnectionHandler:
         if depth == 0:
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
+            self.mark_turn_metric("llm_dispatch", sentence_id=current_sentence_id)
             self.dialogue.put(Message(role="user", content=query))
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
@@ -844,12 +853,19 @@ class ConnectionHandler:
             functions = list(self.func_handler.get_functions())
             # 仅在第一层调用时注入 direct_answer 虚拟工具
             # 递归调用（depth>0）不注入，避免模型在生成文本回复时再次调 direct_answer 导致循环
-            if functions is not None and depth == 0:
+            if (
+                functions is not None
+                and depth == 0
+                and self.config.get("enable_direct_answer_tool", True)
+            ):
                 functions.append(DIRECT_ANSWER_TOOL)
 
         response_message = []
 
         try:
+            self.mark_turn_metric(
+                "llm_request" if depth == 0 else "resumed_llm_request"
+            )
             # 使用带记忆的对话
             memory_str = None
             # 仅当query非空（代表用户询问）时查询记忆
@@ -885,6 +901,22 @@ class ConnectionHandler:
                 )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM processing failed for {query}: {e}")
+            self.tts.tts_text_queue.put(
+                TTSMessageDTO(
+                    sentence_id=current_sentence_id,
+                    sentence_type=SentenceType.MIDDLE,
+                    content_type=ContentType.TEXT,
+                    content_detail=get_system_error_response(self.config),
+                )
+            )
+            if depth == 0:
+                self.tts.tts_text_queue.put(
+                    TTSMessageDTO(
+                        sentence_id=current_sentence_id,
+                        sentence_type=SentenceType.LAST,
+                        content_type=ContentType.ACTION,
+                    )
+                )
             return None
 
         # 处理流式响应
@@ -898,9 +930,12 @@ class ConnectionHandler:
                 if self.client_abort:
                     break
                 if depth == 0 and response_index == 0:
+                    self.mark_turn_metric("llm_first_response")
                     self.logger.bind(tag=TAG).info(
                         f"LLM first response received after {time.monotonic() - llm_started_at:.3f}s"
                     )
+                elif depth > 0 and response_index == 0:
+                    self.mark_turn_metric("resumed_llm_first_response")
                 if self.intent_type == "function_call" and functions is not None:
                     content, tools_call = response
                     if "content" in response:
@@ -1082,20 +1117,39 @@ class ConnectionHandler:
                         ),
                         self.loop,
                     )
+                    self.start_tool_metric(
+                        tool_call_data["id"], tool_call_data["name"]
+                    )
                     futures_with_data.append((future, tool_call_data))
 
                 # 工具调用超时时间，可配置，默认30秒
                 tool_call_timeout = int(self.config.get("tool_call_timeout", 30))
-                # 等待协程结束（实际等待时长为最慢的那个）
                 tool_results = []
+                completed_futures, _ = wait(
+                    [future for future, _ in futures_with_data],
+                    timeout=tool_call_timeout,
+                )
 
                 for future, tool_call_data in futures_with_data:
+                    if future not in completed_futures:
+                        future.cancel()
+                        self.finish_tool_metric(tool_call_data["id"], "timed_out")
+                        self.logger.bind(tag=TAG).error(
+                            f"Tool call timed out: {tool_call_data['name']}"
+                        )
+                        tool_results.append((
+                            ActionResponse(action=Action.ERROR, result="哎呀，网络遇到点问题，请稍后再试下！"),
+                            tool_call_data,
+                        ))
+                        continue
                     try:
-                        result = future.result(timeout=tool_call_timeout)
+                        result = future.result()
+                        self.finish_tool_metric(tool_call_data["id"], "completed")
                         tool_results.append((result, tool_call_data))
                     except Exception as e:
+                        self.finish_tool_metric(tool_call_data["id"], "failed")
                         self.logger.bind(tag=TAG).error(
-                            f"Tool call timed out or failed: {tool_call_data['name']}, error: {e}"
+                            f"Tool call failed: {tool_call_data['name']}, error: {e}"
                         )
                         # 超时时返回错误响应，避免整个流程卡死
                         tool_results.append((
@@ -1241,9 +1295,105 @@ class ConnectionHandler:
         self.client_is_speaking = False
         self.logger.bind(tag=TAG).debug("Cleared server speaking state")
 
+    def start_turn_metrics(self, source):
+        if not self.config.get("enable_turn_metrics", True):
+            return
+        now = time.monotonic()
+        with self._turn_metrics_lock:
+            self._turn_metrics = {
+                "turn_id": uuid.uuid4().hex,
+                "source": source,
+                "started_at": now,
+                "sentence_id": None,
+                "marks": {},
+                "tools": {},
+                "queue_peaks": {},
+            }
+
+    def has_active_turn_metrics(self):
+        with self._turn_metrics_lock:
+            return self._turn_metrics is not None
+
+    def mark_turn_metric(self, event, sentence_id=None):
+        now = time.monotonic()
+        with self._turn_metrics_lock:
+            if self._turn_metrics is None:
+                return
+            if sentence_id is not None:
+                self._turn_metrics["sentence_id"] = sentence_id
+            self._turn_metrics["marks"].setdefault(event, now)
+
+    def record_queue_depth(self, queue_name, depth):
+        with self._turn_metrics_lock:
+            if self._turn_metrics is None:
+                return
+            peaks = self._turn_metrics["queue_peaks"]
+            peaks[queue_name] = max(depth, peaks.get(queue_name, 0))
+
+    def enqueue_asr_audio(self, pcm_frame):
+        try:
+            self.asr_audio_queue.put_nowait(pcm_frame)
+        except asyncio.QueueFull as error:
+            raise RuntimeError(
+                "ASR audio queue overflow; closing the stale connection"
+            ) from error
+        self.record_queue_depth("asr_audio", self.asr_audio_queue.qsize())
+
+    def start_tool_metric(self, tool_call_id, tool_name):
+        now = time.monotonic()
+        with self._turn_metrics_lock:
+            if self._turn_metrics is None:
+                return
+            self._turn_metrics["tools"][tool_call_id] = {
+                "name": tool_name,
+                "started_at": now,
+            }
+
+    def finish_tool_metric(self, tool_call_id, outcome):
+        now = time.monotonic()
+        with self._turn_metrics_lock:
+            if self._turn_metrics is None:
+                return
+            metric = self._turn_metrics["tools"].get(tool_call_id)
+            if metric is None or "duration_ms" in metric:
+                return
+            metric["duration_ms"] = round(
+                (now - metric.pop("started_at")) * 1000, 1
+            )
+            metric["outcome"] = outcome
+
+    def complete_turn_metrics(self, outcome):
+        completed_at = time.monotonic()
+        with self._turn_metrics_lock:
+            metrics = self._turn_metrics
+            self._turn_metrics = None
+        if metrics is None:
+            return
+
+        started_at = metrics.pop("started_at")
+        marks = metrics.pop("marks")
+        tools = metrics.pop("tools")
+        metrics["outcome"] = outcome
+        metrics["total_ms"] = round((completed_at - started_at) * 1000, 1)
+        metrics["marks_ms"] = {
+            name: round((marked_at - started_at) * 1000, 1)
+            for name, marked_at in marks.items()
+        }
+        for metric in tools.values():
+            if "started_at" in metric:
+                metric["duration_ms"] = round(
+                    (completed_at - metric.pop("started_at")) * 1000, 1
+                )
+                metric["outcome"] = "incomplete"
+        metrics["tools"] = list(tools.values())
+        self.logger.bind(tag=TAG).info(
+            f"Turn metrics: {json.dumps(metrics, ensure_ascii=False)}"
+        )
+
     async def close(self, ws=None):
         """资源清理方法"""
         try:
+            self.complete_turn_metrics("connection_closed")
             # 清理 VAD 连接资源
             if (
                     hasattr(self, "vad")
@@ -1271,6 +1421,15 @@ class ConnectionHandler:
                 except asyncio.CancelledError:
                     pass
                 self.timeout_task = None
+
+            if self.asr_audio_task and not self.asr_audio_task.done():
+                if self.asr_audio_task is not asyncio.current_task():
+                    self.asr_audio_task.cancel()
+                    try:
+                        await self.asr_audio_task
+                    except asyncio.CancelledError:
+                        pass
+                self.asr_audio_task = None
 
             # 取消AEC缓存清理任务
             if hasattr(self, "_aec_cache_cleanup_task") and self._aec_cache_cleanup_task and not self._aec_cache_cleanup_task.done():
@@ -1380,7 +1539,7 @@ class ConnectionHandler:
                     except queue.Empty:
                         break
 
-            # 重置音频流控器（取消后台任务并清空队列）
+            # Reset the sender even when the decoded input queue is empty.
             if hasattr(self, "audio_rate_controller") and self.audio_rate_controller:
                 self.audio_rate_controller.reset()
                 self.logger.bind(tag=TAG).debug("Audio rate controller reset")
@@ -1388,6 +1547,13 @@ class ConnectionHandler:
             self.logger.bind(tag=TAG).debug(
                 f"Cleanup finished: TTS queue size={self.tts.tts_text_queue.qsize()}, audio queue size={self.tts.tts_audio_queue.qsize()}"
             )
+
+        while True:
+            try:
+                self.asr_audio_queue.get_nowait()
+                self.asr_audio_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
 
     def reset_audio_states(self):
         """

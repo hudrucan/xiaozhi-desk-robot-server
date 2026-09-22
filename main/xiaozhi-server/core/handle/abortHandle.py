@@ -17,4 +17,5 @@ async def handleAbortMessage(conn: "ConnectionHandler"):
         json.dumps({"type": "tts", "state": "stop", "session_id": conn.session_id})
     )
     conn.clearSpeakStatus()
+    conn.complete_turn_metrics("aborted")
     conn.logger.bind(tag=TAG).info("Abort message received-end")

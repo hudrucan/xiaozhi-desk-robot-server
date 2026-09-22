@@ -111,7 +111,11 @@ class TTSProviderBase(ABC):
         )
 
     def handle_opus(self, opus_data: bytes):
+        if self.conn:
+            self.conn.mark_turn_metric("tts_first_opus")
         self.tts_audio_queue.put((SentenceType.MIDDLE, opus_data, None, getattr(self, 'current_sentence_id', None)))
+        if self.conn:
+            self.conn.record_queue_depth("tts_audio", self.tts_audio_queue.qsize())
 
     def handle_audio_file(self, file_audio: bytes, text):
         self.before_stop_play_files.append((file_audio, text))
@@ -384,6 +388,9 @@ class TTSProviderBase(ABC):
         while not self.conn.stop_event.is_set():
             try:
                 message = self.tts_text_queue.get(timeout=1)
+                self.conn.record_queue_depth(
+                    "tts_text", self.tts_text_queue.qsize() + 1
+                )
                 if self.conn.client_abort:
                     self._abort_tts_response()
                     logger.bind(tag=TAG).info("Interrupt received; stopping TTS text-processing thread")
@@ -402,6 +409,7 @@ class TTSProviderBase(ABC):
                     self.tts_text_buff.append(message.content_detail)
                     segment_text = self._get_segment_text()
                     if segment_text:
+                        self.conn.mark_turn_metric("tts_infer_start")
                         self.to_tts_stream(segment_text, opus_handler=self.handle_opus)
                 elif ContentType.FILE == message.content_type:
                     self._process_remaining_text_stream(opus_handler=self.handle_opus)
@@ -550,6 +558,8 @@ class TTSProviderBase(ABC):
         if remaining_text:
             segment_text = textUtils.get_string_no_punctuation_or_emoji(remaining_text)
             if segment_text:
+                if self.conn:
+                    self.conn.mark_turn_metric("tts_infer_start")
                 self.to_tts_stream(segment_text, opus_handler=opus_handler)
                 self.processed_chars += len(full_text)
                 return True

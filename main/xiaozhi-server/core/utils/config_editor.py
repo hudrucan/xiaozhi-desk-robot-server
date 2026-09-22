@@ -17,10 +17,14 @@ EDITABLE_ROOTS = {
     "TTS",
     "VAD",
     "VLLM",
+    "asr_audio_queue_max_frames",
+    "asr_min_audio_ms",
     "close_connection_no_voice_time",
     "delete_audio",
+    "enable_direct_answer_tool",
     "enable_greeting",
     "enable_stop_tts_notify",
+    "enable_turn_metrics",
     "enable_wakeup_words_response_cache",
     "enable_websocket_ping",
     "end_prompt",
@@ -182,6 +186,11 @@ class ConfigEditor:
         log_level = str(config.get("log", {}).get("log_level", "INFO")).upper()
         if log_level not in {"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"}:
             raise ValueError("log.log_level is not supported")
+
+        if int(config.get("asr_min_audio_ms", 300)) < 0:
+            raise ValueError("asr_min_audio_ms must not be negative")
+        if int(config.get("asr_audio_queue_max_frames", 200)) < 1:
+            raise ValueError("asr_audio_queue_max_frames must be at least 1")
 
     def _write_atomic(self, config):
         directory = os.path.dirname(self.local_path)

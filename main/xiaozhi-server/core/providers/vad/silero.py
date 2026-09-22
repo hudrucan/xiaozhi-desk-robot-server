@@ -99,6 +99,9 @@ class VADProvider(VADProviderBase):
                 client_have_voice = (
                     conn.client_voice_window.count(True) >= self.frame_window_threshold
                 )
+                if client_have_voice and not conn.has_active_turn_metrics():
+                    conn.start_turn_metrics("voice")
+                    conn.mark_turn_metric("speech_start")
 
                 # 如果之前有声音，但本次没有声音，且与上次有声音的时间差已经超过了静默阈值，则认为已经说完一句话
                 if conn.client_have_voice and not client_have_voice:
@@ -107,6 +110,10 @@ class VADProvider(VADProviderBase):
                         was_voice_stopped = conn.client_voice_stop
                         conn.client_voice_stop = True
                         if not was_voice_stopped:
+                            if not conn.has_active_turn_metrics():
+                                conn.start_turn_metrics("voice")
+                            conn.mark_turn_metric("vad_speech_end")
+                            conn.mark_turn_metric("speech_end")
                             logger.bind(tag=TAG).info(
                                 f"Speech end detected after {stop_duration:.0f} ms of silence"
                             )

@@ -60,6 +60,14 @@ close_connection_no_voice_time: 120
 tts_timeout: 15
 # Tool-call timeout in seconds.
 tool_call_timeout: 30
+# Keep the virtual direct-answer tool configurable for latency A/B comparisons.
+enable_direct_answer_tool: true
+# Emit one structured timing summary after each turn.
+enable_turn_metrics: true
+# Ignore only extremely short audio bursts before invoking non-streaming ASR.
+asr_min_audio_ms: 300
+# Bound decoded input audio to about twelve seconds of 60 ms frames.
+asr_audio_queue_max_frames: 200
 # Cache wake-word responses to reduce startup response latency.
 enable_wakeup_words_response_cache: true
 # Respond when a wake word starts a conversation.
@@ -327,6 +335,11 @@ TTS:
     speed: 1.0
     seed:
     max_chars: 140
+    # Emit the first TTS segment at a word boundary without waiting indefinitely
+    # for model punctuation. Later segments still use punctuation boundaries.
+    first_segment_chars: 32
+    # Reuse the local inference engine after a device reconnects.
+    keep_model_warm: true
     # Raise quieter speech toward a consistent loudness, then soft-limit peaks.
     mastering: true
     target_active_rms_dbfs: -10.0

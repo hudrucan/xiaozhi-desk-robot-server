@@ -14,7 +14,7 @@ from core.utils.audioRateController import AudioRateController
 TAG = __name__
 # 音频帧时长（毫秒）
 AUDIO_FRAME_DURATION = 60
-# 预缓冲包数量，直接发送以减少延迟
+# Pre-buffer packet count, sent directly to reduce latency.
 PRE_BUFFER_COUNT = 5
 
 
@@ -70,8 +70,18 @@ async def _wait_for_audio_completion(conn: "ConnectionHandler"):
             # 自定义节奏：等待最后帧在客户端播放完成
             playback_time = 2 * rate_controller.interval_ms / 1000.0
         else:
-            # 默认节奏：前 N 帧预缓冲已直接发出，需要等待它们播放完成
-            playback_time = (PRE_BUFFER_COUNT + 2) * rate_controller.interval_ms / 1000.0
+            # The first queued frame is also sent immediately, so the client
+            # playback tail is the configured prebuffer plus one frame.
+            sent_frames = getattr(conn, "audio_flow_control", {}).get(
+                "packet_count", 0
+            )
+            buffered_frames = min(
+                sent_frames,
+                PRE_BUFFER_COUNT + 1,
+            )
+            playback_time = (
+                buffered_frames * rate_controller.interval_ms / 1000.0
+            )
         await asyncio.sleep(playback_time)
 
         conn.logger.bind(tag=TAG).debug("Audio transmission completed")
@@ -248,12 +258,14 @@ async def _send_audio_with_rate_control(
         if send_delay_ms > 0:
             # 自定义节奏模式：所有包入队按 send_delay 发（关闭预缓冲）
             rate_controller.add_audio(packet)
+            conn.record_queue_depth("audio_sender", len(rate_controller.queue))
         else:
             # 默认节奏模式（60ms/包）：前 N 包预缓冲直接发，后续入队由后台任务按 interval_ms 节奏发
             if flow_control["packet_count"] < PRE_BUFFER_COUNT:
                 await _do_send_audio(conn, packet, flow_control)
             else:
                 rate_controller.add_audio(packet)
+                conn.record_queue_depth("audio_sender", len(rate_controller.queue))
 
 
 async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
@@ -270,6 +282,11 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
         await _send_to_mqtt_gateway(conn, opus_packet, timestamp, sequence)
     else:
         await conn.websocket.send(_wrap_websocket_audio_packet(conn, opus_packet))
+
+    if packet_index == 0:
+        conn.mark_turn_metric(
+            "first_audio_sent", sentence_id=getattr(conn, "sentence_id", None)
+        )
 
     # 更新流控状态
     flow_control["packet_count"] = packet_index + 1
@@ -331,10 +348,13 @@ async def send_tts_message(conn: "ConnectionHandler", state, text=None):
         if hasattr(conn, "audio_rate_controller") and conn.audio_rate_controller:
             conn.audio_rate_controller.stop_sending()
         conn.clearSpeakStatus()
+        conn.mark_turn_metric("playback_done")
+        conn.complete_turn_metrics("completed")
 
     # 发送消息到客户端
     await conn.websocket.send(json.dumps(message))
     if state == "stop":
+        conn.last_tts_stop_sent_at = time.monotonic()
         await send_status_message(conn, "clear", "thinking")
 
 

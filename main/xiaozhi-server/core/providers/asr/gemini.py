@@ -114,6 +114,10 @@ class ASRProvider(ASRProviderBase):
             if not audio_have_voice:
                 return
 
+            if not conn.has_active_turn_metrics():
+                conn.start_turn_metrics("voice")
+                conn.mark_turn_metric("speech_start")
+            conn.mark_turn_metric("asr_start")
             self._stream_active = True
             self._turn_number += 1
             await self._send_queue.put(("start", self._turn_number))
@@ -248,17 +252,22 @@ class ASRProvider(ASRProviderBase):
             return
 
         transcript = text.strip()
+        self._conn.mark_turn_metric("asr_done")
         self._awaiting_final = False
         self._ending_turn = False
         self._pre_roll.clear()
         self._conn.reset_audio_states()
         if not transcript or self._conn.stop_event.is_set():
+            self._conn.complete_turn_metrics("empty_asr_result")
             return
 
         logger.bind(tag=TAG).info(f"Recognized text: {transcript}")
         await startToChat(self._conn, transcript)
 
     async def _discard_active_turn(self):
+        had_active_turn = (
+            self._stream_active or self._ending_turn or self._awaiting_final
+        )
         self._stream_active = False
         self._ending_turn = False
         self._awaiting_final = False
@@ -269,6 +278,8 @@ class ASRProvider(ASRProviderBase):
                 self._send_queue.get_nowait()
         if self._conn is not None:
             self._conn.reset_audio_states()
+            if had_active_turn:
+                self._conn.complete_turn_metrics("asr_failed")
 
     async def _close_session(self):
         reconnect_task = self._reconnect_task

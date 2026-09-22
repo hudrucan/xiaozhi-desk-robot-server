@@ -39,6 +39,10 @@ async def resume_vad_detection(conn: "ConnectionHandler"):
 
 
 async def startToChat(conn: "ConnectionHandler", text, check_wakeup_word=True):
+    if not conn.has_active_turn_metrics():
+        conn.start_turn_metrics("text")
+        conn.mark_turn_metric("input_ready")
+
     # 检查输入是否是JSON格式（包含说话人信息）
     speaker_name = None
     actual_text = text
