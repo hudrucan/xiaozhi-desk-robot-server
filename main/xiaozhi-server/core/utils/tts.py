@@ -4,7 +4,7 @@ import sys
 import importlib
 
 from config.logger import setup_logging
-from core.utils.textUtils import check_emoji
+from core.utils.text_utils import remove_emojis
 
 logger = setup_logging()
 
@@ -134,7 +134,7 @@ class MarkdownCleaner:
             text = regex.sub(replacement, text)
 
         # 去除emoji表情
-        text = check_emoji(text)
+        text = remove_emojis(text)
 
         # 检查文本是否全为英文和基本标点符号
         if text and all((c.isascii() or c.isspace() or c in punctuation_set) for c in text):

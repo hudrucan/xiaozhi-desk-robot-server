@@ -10,7 +10,7 @@ import concurrent.futures
 
 from core.utils import p3
 from datetime import datetime
-from core.utils import textUtils
+from core.utils import text_utils
 from typing import Callable, Any
 from abc import ABC, abstractmethod
 from config.logger import setup_logging
@@ -498,7 +498,7 @@ class TTSProviderBase(ABC):
 
         if last_punct_pos != -1:
             segment_text_raw = current_text[: last_punct_pos + 1]
-            segment_text = textUtils.get_string_no_punctuation_or_emoji(
+            segment_text = text_utils.strip_edge_separators(
                 segment_text_raw
             )
             self.processed_chars += len(segment_text_raw)  # 更新已处理字符位置
@@ -556,7 +556,7 @@ class TTSProviderBase(ABC):
         full_text = "".join(self.tts_text_buff)
         remaining_text = full_text[self.processed_chars :]
         if remaining_text:
-            segment_text = textUtils.get_string_no_punctuation_or_emoji(remaining_text)
+            segment_text = text_utils.strip_edge_separators(remaining_text)
             if segment_text:
                 if self.conn:
                     self.conn.mark_turn_metric("tts_infer_start")

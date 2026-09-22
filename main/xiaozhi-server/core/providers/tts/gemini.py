@@ -9,7 +9,7 @@ import aiohttp
 from config.logger import setup_logging
 from core.providers.tts.base import TTSProviderBase
 from core.providers.tts.dto.dto import SentenceType
-from core.utils import textUtils
+from core.utils import text_utils
 from core.utils.tts import MarkdownCleaner
 
 
@@ -136,7 +136,7 @@ class TTSProvider(TTSProviderBase):
         segment_text_raw = current_text[: split_at + 1]
         self.processed_chars += len(segment_text_raw)
         self.is_first_sentence = False
-        return textUtils.get_string_no_punctuation_or_emoji(segment_text_raw)
+        return text_utils.strip_edge_separators(segment_text_raw)
 
     def to_tts_stream(self, text, opus_handler=None):
         original_text = text

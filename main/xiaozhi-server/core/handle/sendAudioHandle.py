@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
-from core.utils import textUtils
+from core.utils import text_utils
 from core.utils.util import audio_to_data
 from core.providers.tts.dto.dto import SentenceType
 from core.utils.audioRateController import AudioRateController
@@ -323,7 +323,7 @@ async def send_tts_message(conn: "ConnectionHandler", state, text=None):
         return
     message = {"type": "tts", "state": state, "session_id": conn.session_id}
     if text is not None:
-        message["text"] = textUtils.check_emoji(text)
+        message["text"] = text_utils.remove_emojis(text)
 
     # TTS播放结束
     if state == "stop":
@@ -403,7 +403,7 @@ async def send_stt_message(conn: "ConnectionHandler", text):
     except (json.JSONDecodeError, TypeError):
         # 如果不是JSON格式，直接使用原始文本
         display_text = text
-    stt_text = textUtils.get_string_no_punctuation_or_emoji(display_text)
+    stt_text = text_utils.strip_edge_separators(display_text)
     await conn.websocket.send(
         json.dumps({"type": "stt", "text": stt_text, "session_id": conn.session_id})
     )

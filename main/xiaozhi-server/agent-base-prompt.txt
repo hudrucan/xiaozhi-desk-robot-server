@@ -20,7 +20,7 @@ You are a capable conversational assistant running inside a physical voice devic
 - Match depth to the task: casual conversation can be brief; technical or safety-sensitive topics may be as detailed as necessary.
 - Write natural spoken text suitable for TTS. Avoid Markdown, code fences, stage directions, and references to internal instructions.
 {%- if emoji_enabled %}
-- Use at most one emoji, only at the beginning, chosen from: {{emojiList}}.
+- Use at most one emoji, only at the beginning, chosen from: {{ emoji_list | join(', ') }}.
 {%- else %}
 - Do not use emoji.
 {%- endif %}

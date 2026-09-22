@@ -33,7 +33,7 @@ from config.logger import setup_logging, build_module_string, create_connection_
 from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
-from core.utils import textUtils
+from core.utils import text_utils
 
 
 TAG = __name__
@@ -1046,7 +1046,7 @@ class ConnectionHandler:
                 if emotion_flag and content is not None and content.strip():
                     if (self.features or {}).get("emoji", True):
                         asyncio.run_coroutine_threadsafe(
-                            textUtils.get_emotion(self, content),
+                            text_utils.send_emotion_message(self, content),
                             self.loop,
                         )
                     emotion_flag = False

@@ -11,34 +11,10 @@ from typing import Dict, Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from config.logger import setup_logging
+from core.utils.text_utils import SUPPORTED_EMOTION_EMOJIS
 from jinja2 import Template
 
 TAG = __name__
-
-EMOJI_List = [
-    "😶",
-    "🙂",
-    "😆",
-    "😂",
-    "😔",
-    "😠",
-    "😭",
-    "😍",
-    "😳",
-    "😲",
-    "😱",
-    "🤔",
-    "😉",
-    "😎",
-    "😌",
-    "🤤",
-    "😘",
-    "😏",
-    "😴",
-    "😜",
-    "🙄",
-]
-
 
 class PromptManager:
     """系统提示词管理器，负责管理和更新系统提示词"""
@@ -293,7 +269,7 @@ class PromptManager:
                 today_weekday=today_weekday,
                 local_address=local_address,
                 weather_info=weather_info,
-                emojiList=EMOJI_List,
+                emoji_list=SUPPORTED_EMOTION_EMOJIS,
                 device_id=device_id,
                 client_ip=client_ip,
                 dynamic_context=self.context_data,
