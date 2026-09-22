@@ -7,6 +7,8 @@ import statistics
 import time
 import wave
 
+import numpy as np
+
 from config.settings import load_config
 from core.utils.tts import create_instance as create_tts_instance
 from performance_testers.resource_usage import (
@@ -44,13 +46,40 @@ def summarize(values):
     }
 
 
-def wav_duration(audio):
+def amplitude_dbfs(amplitude):
+    if amplitude <= 0:
+        return float("-inf")
+    return 20.0 * math.log10(amplitude)
+
+
+def wav_metrics(audio):
     try:
         with wave.open(io.BytesIO(audio), "rb") as wav_file:
             frame_rate = wav_file.getframerate()
             if frame_rate <= 0:
                 return None
-            return wav_file.getnframes() / frame_rate
+            duration = wav_file.getnframes() / frame_rate
+            if wav_file.getsampwidth() != 2:
+                return {"duration": duration}
+            samples = np.frombuffer(
+                wav_file.readframes(wav_file.getnframes()), dtype="<i2"
+            ).astype(np.float32)
+            if samples.size == 0:
+                return {"duration": duration}
+
+            samples /= 32768.0
+            peak = float(np.max(np.abs(samples)))
+            active = samples[np.abs(samples) >= 10 ** (-50.0 / 20.0)]
+            active_rms = (
+                float(np.sqrt(np.mean(np.square(active), dtype=np.float64)))
+                if active.size
+                else 0.0
+            )
+            return {
+                "duration": duration,
+                "peak_dbfs": amplitude_dbfs(peak),
+                "active_rms_dbfs": amplitude_dbfs(active_rms),
+            }
     except (EOFError, wave.Error):
         return None
 
@@ -103,6 +132,8 @@ async def run_benchmark(config):
     audio_durations = []
     realtime_factors = []
     audio_sizes = []
+    peak_levels = []
+    active_rms_levels = []
     failures = []
 
     print(f"TTS provider: {provider_name} ({provider_type})")
@@ -127,7 +158,10 @@ async def run_benchmark(config):
                     raise RuntimeError("Provider returned no audio")
 
                 audio_size = len(audio)
-                generated_audio_duration = wav_duration(audio)
+                metrics = wav_metrics(audio)
+                generated_audio_duration = (
+                    metrics.get("duration") if metrics else None
+                )
                 durations.append(duration)
                 audio_sizes.append(audio_size)
                 details = f"{audio_size} bytes"
@@ -138,6 +172,13 @@ async def run_benchmark(config):
                     details += (
                         f", {generated_audio_duration:.3f}s audio, "
                         f"RTF {realtime_factor:.3f}"
+                    )
+                if metrics and "peak_dbfs" in metrics:
+                    peak_levels.append(metrics["peak_dbfs"])
+                    active_rms_levels.append(metrics["active_rms_dbfs"])
+                    details += (
+                        f", peak {metrics['peak_dbfs']:.1f} dBFS, "
+                        f"active RMS {metrics['active_rms_dbfs']:.1f} dBFS"
                     )
                 print(
                     f"Run {run_number}/{runs}: success in {duration:.3f}s "
@@ -180,6 +221,13 @@ async def run_benchmark(config):
             print(
                 "Mean audio duration: "
                 f"{statistics.mean(audio_durations):.3f}s"
+            )
+        if peak_levels:
+            print(
+                "Loudness: "
+                f"median peak {statistics.median(peak_levels):.1f} dBFS, "
+                "median active RMS "
+                f"{statistics.median(active_rms_levels):.1f} dBFS"
             )
     print_benchmark_usage((loaded_peak_rss, loaded_cpu_time))
     if failures:
