@@ -284,12 +284,12 @@ class PromptManager:
                         or ""
                     )
 
-            # 获取TTS选择的语言，默认值为中文
+            # Use the selected TTS language, with English as the safe default.
             language = (
                 self.config.get("TTS", {})
                 .get(self.config.get("selected_module", {}).get("TTS", ""), {})
                 .get("language")
-                or "中文"
+                or "English"
             )
             self.logger.bind(tag=TAG).debug(f"Selected language: {language}")
 
