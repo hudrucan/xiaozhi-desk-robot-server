@@ -12,6 +12,9 @@ class VLLMProvider(VLLMProviderBase):
     def __init__(self, config):
         self.model_name = config.get("model_name")
         self.api_key = config.get("api_key")
+        self.response_language = str(
+            config.get("response_language", "English")
+        ).strip() or "English"
         if "base_url" in config:
             self.base_url = config.get("base_url")
         else:
@@ -40,7 +43,7 @@ class VLLMProvider(VLLMProviderBase):
         self.client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def response(self, question, base64_image):
-        question = question + "\nReply in the same language as the question."
+        question = question + f"\nReply in {self.response_language}."
         try:
             messages = [
                 {

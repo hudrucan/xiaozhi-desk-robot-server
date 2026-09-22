@@ -107,6 +107,9 @@ xiaozhi:
 # Example sentences for manual module checks.
 module_test:
   tts_text: "This is a speech synthesis latency test."
+  # Set a path relative to the repository root, or use PERF_VLLM_IMAGE.
+  vllm_image: "docs/images/demo.jpg"
+  vllm_question: "Describe this image briefly."
   test_sentences:
     - "Hello, please introduce yourself."
     - "Explain why leaves look green in two short sentences."
@@ -276,11 +279,13 @@ VLLM:
     api_key: your_api_key
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     model_name: your_gemini_vision_model
+    response_language: English
   OpenAIVLLM:
     type: openai
     api_key: your_api_key
     base_url: https://api.openai.com/v1
     model_name: gpt-4o-mini
+    response_language: English
 
 TTS:
   GeminiTTS:

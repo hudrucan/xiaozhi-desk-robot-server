@@ -1,192 +1,160 @@
-import time
 import asyncio
-import logging
-import statistics
 import base64
-from typing import Dict
-from tabulate import tabulate
-from core.utils.vllm import create_instance
-from config.settings import load_config
+import logging
+import math
+import os
+import statistics
+import time
+from pathlib import Path
 
-# 设置全局日志级别为WARNING，抑制INFO级别日志
+from config.settings import load_config
+from core.utils.vllm import create_instance as create_vllm_instance
+from performance_testers.resource_usage import (
+    print_benchmark_usage,
+    print_initialization_usage,
+    process_usage,
+)
+
+
 logging.basicConfig(level=logging.WARNING)
 
-description = "视觉识别模型性能测试"
+description = "Benchmark the selected VLLM provider"
 
 
-class AsyncVisionPerformanceTester:
-    def __init__(self, config):
-        self.config = config
+def positive_int_from_env(name, default):
+    value = int(os.getenv(name, default))
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return value
 
-        self.test_images = [
-            "../../docs/images/demo1.png",
-            "../../docs/images/demo2.png",
-        ]
-        self.test_questions = [
-            "这张图片里有什么？",
-            "请详细描述这张图片的内容",
-        ]
 
-        # 加载测试图片
-        self.results = {"vllm": {}}
+def format_stats(label, values):
+    ordered = sorted(values)
+    p95_index = max(0, math.ceil(len(ordered) * 0.95) - 1)
+    return (
+        f"{label}: min {min(values):.3f}s, "
+        f"median {statistics.median(values):.3f}s, "
+        f"mean {statistics.mean(values):.3f}s, "
+        f"p95 {ordered[p95_index]:.3f}s, max {max(values):.3f}s"
+    )
 
-    async def _test_vllm(self, vllm_name: str, config: Dict) -> Dict:
-        """异步测试单个视觉大模型性能"""
+
+def selected_provider(config):
+    provider_name = config.get("selected_module", {}).get("VLLM")
+    if not provider_name:
+        raise ValueError("No VLLM provider is selected")
+
+    provider_config = config.get("VLLM", {}).get(provider_name)
+    if provider_config is None:
+        raise ValueError(f"Missing configuration for VLLM provider: {provider_name}")
+    return provider_name, provider_config
+
+
+def test_image_path(config):
+    configured_path = os.getenv("PERF_VLLM_IMAGE") or config.get(
+        "module_test", {}
+    ).get("vllm_image") or "docs/images/demo.jpg"
+
+    image_path = Path(configured_path).expanduser()
+    if not image_path.is_absolute():
+        repository_root = Path(__file__).resolve().parents[3]
+        image_path = repository_root / image_path
+    if not image_path.is_file():
+        raise ValueError(f"VLLM test image does not exist: {image_path}")
+    if image_path.stat().st_size == 0:
+        raise ValueError(f"VLLM test image is empty: {image_path}")
+    return image_path
+
+
+def test_question(config):
+    question = os.getenv("PERF_VLLM_QUESTION") or config.get(
+        "module_test", {}
+    ).get("vllm_question")
+    question = str(question or "Describe this image briefly.").strip()
+    if not question:
+        raise ValueError("The VLLM test question must not be empty")
+    return question
+
+
+async def run_benchmark(config):
+    provider_name, provider_config = selected_provider(config)
+    provider_type = provider_config.get("type", provider_name)
+    image_path = test_image_path(config)
+    image_base64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    question = test_question(config)
+    runs = positive_int_from_env("PERF_RUNS", 5)
+    timeout = positive_int_from_env("PERF_TIMEOUT_SECONDS", 60)
+
+    initial_usage = process_usage()
+    initialization_started_at = time.perf_counter()
+    provider = create_vllm_instance(provider_type, provider_config)
+    initialization_duration = time.perf_counter() - initialization_started_at
+    initialized_usage = process_usage()
+
+    durations = []
+    response_lengths = []
+    failures = []
+    model_name = provider_config.get("model_name", "default")
+
+    print(f"VLLM provider: {provider_name} ({provider_type}, {model_name})")
+    print_initialization_usage(
+        initialization_duration,
+        initial_usage,
+        initialized_usage,
+    )
+    print(f"Runs: {runs}; timeout per run: {timeout}s")
+    print(f"Image: {image_path} ({image_path.stat().st_size} bytes)")
+    print(f"Question: {question}")
+
+    for run_number in range(1, runs + 1):
+        started_at = time.perf_counter()
         try:
-            # 检查API密钥配置
-            if "api_key" in config and any(
-                x in config["api_key"] for x in ["你的", "placeholder", "sk-xxx"]
-            ):
-                print(f"⏭️  VLLM {vllm_name} 未配置api_key，已跳过")
-                return {"name": vllm_name, "type": "vllm", "errors": 1}
-
-            # 获取实际类型（兼容旧配置）
-            module_type = config.get("type", vllm_name)
-            vllm = create_instance(module_type, config)
-
-            print(f"🖼️ 测试 VLLM: {vllm_name}")
-
-            # 创建所有测试任务
-            test_tasks = []
-            for question in self.test_questions:
-                for image in self.test_images:
-                    test_tasks.append(
-                        self._test_single_vision(vllm_name, vllm, question, image)
-                    )
-
-            # 并发执行所有测试
-            test_results = await asyncio.gather(*test_tasks)
-
-            # 处理结果
-            valid_results = [r for r in test_results if r is not None]
-            if not valid_results:
-                print(f"⚠️  {vllm_name} 无有效数据，可能配置错误")
-                return {"name": vllm_name, "type": "vllm", "errors": 1}
-
-            response_times = [r["response_time"] for r in valid_results]
-
-            # 过滤异常数据
-            mean = statistics.mean(response_times)
-            stdev = statistics.stdev(response_times) if len(response_times) > 1 else 0
-            filtered_times = [t for t in response_times if t <= mean + 3 * stdev]
-
-            if len(filtered_times) < len(test_tasks) * 0.5:
-                print(f"⚠️  {vllm_name} 有效数据不足，可能网络不稳定")
-                return {"name": vllm_name, "type": "vllm", "errors": 1}
-
-            return {
-                "name": vllm_name,
-                "type": "vllm",
-                "avg_response": sum(response_times) / len(response_times),
-                "std_response": (
-                    statistics.stdev(response_times) if len(response_times) > 1 else 0
-                ),
-                "errors": 0,
-            }
-
-        except Exception as e:
-            print(f"⚠️ VLLM {vllm_name} 测试失败: {str(e)}")
-            return {"name": vllm_name, "type": "vllm", "errors": 1}
-
-    async def _test_single_vision(
-        self, vllm_name: str, vllm, question: str, image: str
-    ) -> Dict:
-        """测试单个视觉问题的性能"""
-        try:
-            print(f"📝 {vllm_name} 开始测试: {question[:20]}...")
-            start_time = time.time()
-
-            # 读取图片并转换为base64
-            with open(image, "rb") as image_file:
-                image_data = image_file.read()
-                image_base64 = base64.b64encode(image_data).decode("utf-8")
-
-            # 直接获取响应
-            response = vllm.response(question, image_base64)
-            response_time = time.time() - start_time
-            print(f"✓ {vllm_name} 完成响应: {response_time:.3f}s")
-
-            return {
-                "name": vllm_name,
-                "type": "vllm",
-                "response_time": response_time,
-            }
-        except Exception as e:
-            print(f"⚠️ {vllm_name} 测试失败: {str(e)}")
-            return None
-
-    def _print_results(self):
-        """打印测试结果"""
-        vllm_table = []
-        for name, data in self.results["vllm"].items():
-            if data["errors"] == 0:
-                stability = data["std_response"] / data["avg_response"]
-                vllm_table.append(
-                    [
-                        name,
-                        f"{data['avg_response']:.3f}秒",
-                        f"{stability:.3f}",
-                    ]
-                )
-
-        if vllm_table:
-            print("\n视觉大模型性能排行:\n")
-            print(
-                tabulate(
-                    vllm_table,
-                    headers=["模型名称", "响应耗时", "稳定性"],
-                    tablefmt="github",
-                    colalign=("left", "right", "right"),
-                    disable_numparse=True,
-                )
+            response = await asyncio.wait_for(
+                asyncio.to_thread(provider.response, question, image_base64),
+                timeout=timeout,
             )
-        else:
-            print("\n⚠️ 没有可用的视觉大模型进行测试。")
+            duration = time.perf_counter() - started_at
+            response = str(response or "").strip()
+            if not response:
+                raise RuntimeError("Provider returned no response")
 
-    async def run(self):
-        """执行全量异步测试"""
-        print("🔍 开始筛选可用视觉大模型...")
+            durations.append(duration)
+            response_lengths.append(len(response))
+            print(
+                f"Run {run_number}/{runs}: success in {duration:.3f}s - "
+                f"{response[:100]}"
+            )
+        except asyncio.TimeoutError:
+            duration = time.perf_counter() - started_at
+            message = f"timed out after {duration:.3f}s"
+            failures.append(message)
+            print(f"Run {run_number}/{runs}: failed - {message}")
+            print("Stopping to avoid overlapping requests from a timed-out call.")
+            break
+        except Exception as error:
+            duration = time.perf_counter() - started_at
+            message = f"{type(error).__name__}: {error} ({duration:.3f}s)"
+            failures.append(message)
+            print(f"Run {run_number}/{runs}: failed - {message}")
 
-        if not self.test_images:
-            print(f"\n⚠️  {self.image_root} 路径下没有图片文件，无法进行测试")
-            return
-
-        # 创建所有测试任务
-        all_tasks = []
-
-        # VLLM测试任务
-        if self.config.get("VLLM") is not None:
-            for vllm_name, config in self.config.get("VLLM", {}).items():
-                if "api_key" in config and any(
-                    x in config["api_key"] for x in ["你的", "placeholder", "sk-xxx"]
-                ):
-                    print(f"⏭️  VLLM {vllm_name} 未配置api_key，已跳过")
-                    continue
-                print(f"🖼️ 添加VLLM测试任务: {vllm_name}")
-                all_tasks.append(self._test_vllm(vllm_name, config))
-
-        print(f"\n✅ 找到 {len(all_tasks)} 个可用视觉大模型")
-        print(f"✅ 使用 {len(self.test_images)} 张测试图片")
-        print(f"✅ 使用 {len(self.test_questions)} 个测试问题")
-        print("\n⏳ 开始并发测试所有模型...\n")
-
-        # 并发执行所有测试任务
-        all_results = await asyncio.gather(*all_tasks, return_exceptions=True)
-
-        # 处理结果
-        for result in all_results:
-            if isinstance(result, dict) and result["errors"] == 0:
-                self.results["vllm"][result["name"]] = result
-
-        # 打印结果
-        print("\n📊 生成测试报告...")
-        self._print_results()
+    print("\nVLLM benchmark summary")
+    print(f"Success rate: {len(durations)}/{runs} ({len(durations) / runs:.0%})")
+    if durations:
+        print(format_stats("Latency", durations))
+        print(
+            "Mean response length: "
+            f"{statistics.mean(response_lengths):.0f} characters"
+        )
+    print_benchmark_usage(initialized_usage)
+    if failures:
+        print("Failures:")
+        for failure in failures:
+            print(f"- {failure}")
 
 
 async def main():
     config = await load_config()
-    tester = AsyncVisionPerformanceTester(config)
-    await tester.run()
+    await run_benchmark(config)
 
 
 if __name__ == "__main__":
