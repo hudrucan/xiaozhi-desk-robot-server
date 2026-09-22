@@ -324,6 +324,11 @@ function discardChanges() {
 }
 
 async function restartServer() {
+  if (Object.keys(state.patch).length > 0) {
+    toast("Save or discard changes before restarting.", true);
+    return;
+  }
+
   $("#restartOverlay").classList.remove("hidden");
   try {
     const response = await fetch("/api/settings/restart", {
@@ -366,5 +371,6 @@ function trackNavigation() {
 $("#saveButton").addEventListener("click", saveSettings);
 $("#discardButton").addEventListener("click", discardChanges);
 $("#restartButton").addEventListener("click", restartServer);
+$("#restartNowButton").addEventListener("click", restartServer);
 trackNavigation();
 loadSettings();
