@@ -64,6 +64,10 @@ tool_call_timeout: 30
 enable_direct_answer_tool: true
 # Emit one structured timing summary after each turn.
 enable_turn_metrics: true
+# Dump canonical messages and tool schemas as one JSON object per line.
+# This may contain private conversation and tool data, so keep it disabled by default.
+dump_full_llm_request: false
+llm_request_dump_file: tmp/llm_requests.jsonl
 # Ignore only extremely short audio bursts before invoking non-streaming ASR.
 asr_min_audio_ms: 300
 # Bound decoded input audio to about twelve seconds of 60 ms frames.
@@ -141,6 +145,8 @@ plugins:
     api_host: ""
     api_key: ""
     default_location: ""
+    # Language code requested from the weather provider.
+    language: en
   web_search:
     # Supported providers: metaso, tavily. The tool is not registered without a valid key.
     provider: ""

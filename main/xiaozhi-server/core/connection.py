@@ -37,6 +37,7 @@ from core.utils import textUtils
 
 
 TAG = __name__
+_LLM_REQUEST_DUMP_LOCK = threading.Lock()
 
 auto_import_modules("plugins_func.functions")
 
@@ -50,13 +51,17 @@ DIRECT_ANSWER_TOOL = {
     "type": "function",
     "function": {
         "name": "direct_answer",
-        "description": "当用户的请求不匹配其他任何工具时，可用此选项直接回复。将回复内容写在response参数里。",
+        "description": (
+            "Use this for conversation, reactions, opinions, jokes, general knowledge, "
+            "and statements that do not request a device action or current-state lookup. "
+            "Put the complete user-facing reply in the response argument."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "response": {
                     "type": "string",
-                    "description": "你回复用户的完整内容",
+                    "description": "The complete user-facing response.",
                 },
             },
             "required": ["response"],
@@ -98,6 +103,7 @@ class ConnectionHandler:
         self.loop = None  # 在 handle_connection 中获取运行中的事件循环
         self.stop_event = threading.Event()
         self.executor = ThreadPoolExecutor(max_workers=5)
+        self.chat_executor = ThreadPoolExecutor(max_workers=1)
         self._turn_metrics_lock = threading.Lock()
         self._turn_metrics = None
 
@@ -541,8 +547,16 @@ class ConnectionHandler:
             """初始化组件"""
             if self.config.get("prompt") is not None:
                 user_prompt = self.config["prompt"]
-                # 使用快速提示词进行初始化
-                prompt = self.prompt_manager.get_quick_prompt(user_prompt)
+                # Render the complete template immediately so an early wake-word
+                # turn follows the same policies as later turns. Dynamic context
+                # is refreshed after the remaining components initialize.
+                prompt = self.prompt_manager.build_enhanced_prompt(
+                    user_prompt,
+                    self.device_id,
+                    emoji_enabled=(self.features or {}).get("emoji", True),
+                )
+                if not prompt:
+                    prompt = self.prompt_manager.get_quick_prompt(user_prompt)
                 self.change_system_prompt(prompt)
                 self.logger.bind(tag=TAG).info(
                     f"Fast component initialization: prompt loaded successfully: {prompt[:50]}..."
@@ -612,12 +626,12 @@ class ConnectionHandler:
         if self.config.get("enable_direct_answer_tool", True):
             # Example 1: direct_answer returns its response without another LLM pass.
             da_tc_id = "fewshot_da_001"
-            self.dialogue.put(Message(role="user", content="Tell me a story", is_temporary=True))
+            self.dialogue.put(Message(role="user", content="What is 2 + 2?", is_temporary=True))
             self.dialogue.put(Message(
                 role="assistant",
                 tool_calls=[{
                     "id": da_tc_id,
-                    "function": {"arguments": '{"response": "Sure. What kind of story would you like?"}', "name": "direct_answer"},
+                    "function": {"arguments": '{"response": "4."}', "name": "direct_answer"},
                     "type": "function", "index": 0,
                 }],
                 is_temporary=True,
@@ -800,7 +814,56 @@ class ConnectionHandler:
         # 更新系统prompt至上下文
         self.dialogue.update_system_message(self.prompt)
 
+    def _dump_full_llm_request(self, dialogue, functions, depth):
+        dump_enabled = self.config.get(
+            "dump_full_llm_request",
+            self.config.get("log_full_llm_request", False),
+        )
+        if not dump_enabled:
+            return
+
+        provider_name = self.config.get("selected_module", {}).get("LLM")
+        provider_config = self.config.get("LLM", {}).get(provider_name, {})
+        request_payload = {
+            "timestamp": time.time(),
+            "provider": provider_name,
+            "model": provider_config.get("model_name"),
+            "session_id": self.session_id,
+            "sentence_id": self.sentence_id,
+            "tool_call_depth": depth,
+            "messages": dialogue,
+            "tools": functions,
+        }
+        dump_path = str(
+            self.config.get("llm_request_dump_file", "tmp/llm_requests.jsonl")
+        ).strip()
+        if not dump_path:
+            dump_path = "tmp/llm_requests.jsonl"
+
+        try:
+            dump_dir = os.path.dirname(dump_path)
+            if dump_dir:
+                os.makedirs(dump_dir, exist_ok=True)
+            serialized_request = json.dumps(
+                request_payload,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                default=str,
+            )
+            with _LLM_REQUEST_DUMP_LOCK:
+                with open(dump_path, "a", encoding="utf-8") as dump_file:
+                    dump_file.write(serialized_request + "\n")
+        except OSError as error:
+            self.logger.bind(tag=TAG).error(
+                f"Failed to dump full LLM request to {dump_path}: {error}"
+            )
+
     def chat(self, query, depth=0):
+        if depth == 0:
+            self.client_abort = False
+        return self._chat(query, depth)
+
+    def _chat(self, query, depth=0):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
         llm_started_at = time.monotonic()
@@ -838,7 +901,7 @@ class ConnectionHandler:
             self.dialogue.put(
                 Message(
                     role="user",
-                    content="[系统提示] 已达到最大工具调用次数限制，请你基于目前已经获取的所有信息，直接给出最终答案。不要再尝试调用任何工具。",
+                    content="The tool-call limit has been reached. Answer directly using the information already available and do not call another tool.",
                 )
             )
 
@@ -883,21 +946,22 @@ class ConnectionHandler:
                 self.system_introduced_speakers.add(cs)
                 speaker_for_system = cs
 
+            llm_dialogue = self.dialogue.get_llm_dialogue_with_memory(
+                memory_str, self.config.get("voiceprint", {}), speaker_for_system
+            )
+            self._dump_full_llm_request(llm_dialogue, functions, depth)
+
             if self.intent_type == "function_call" and functions is not None:
                 # 使用支持functions的streaming接口
                 llm_responses = self.llm.response_with_functions(
                     self.session_id,
-                    self.dialogue.get_llm_dialogue_with_memory(
-                        memory_str, self.config.get("voiceprint", {}), speaker_for_system
-                    ),
+                    llm_dialogue,
                     functions=functions,
                 )
             else:
                 llm_responses = self.llm.response(
                     self.session_id,
-                    self.dialogue.get_llm_dialogue_with_memory(
-                        memory_str, self.config.get("voiceprint", {}), speaker_for_system
-                    ),
+                    llm_dialogue,
                 )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM processing failed for {query}: {e}")
@@ -1138,7 +1202,10 @@ class ConnectionHandler:
                             f"Tool call timed out: {tool_call_data['name']}"
                         )
                         tool_results.append((
-                            ActionResponse(action=Action.ERROR, result="哎呀，网络遇到点问题，请稍后再试下！"),
+                            ActionResponse(
+                                action=Action.ERROR,
+                                result=get_system_error_response(self.config),
+                            ),
                             tool_call_data,
                         ))
                         continue
@@ -1153,7 +1220,10 @@ class ConnectionHandler:
                         )
                         # 超时时返回错误响应，避免整个流程卡死
                         tool_results.append((
-                            ActionResponse(action=Action.ERROR, result="哎呀，网络遇到点问题，请稍后再试下！"),
+                            ActionResponse(
+                                action=Action.ERROR,
+                                result=get_system_error_response(self.config),
+                            ),
                             tool_call_data
                         ))
                 # 统一处理工具调用结果
@@ -1253,7 +1323,7 @@ class ConnectionHandler:
                 if resp:
                     response_parts.append(resp)
             if response_parts:
-                self.dialogue.put(Message(role="assistant", content="，".join(response_parts)))
+                self.dialogue.put(Message(role="assistant", content=", ".join(response_parts)))
 
         if need_llm_tools:
             all_tool_calls = [
@@ -1511,6 +1581,14 @@ class ConnectionHandler:
                         f"Error shutting down thread pool: {executor_error}"
                     )
                 self.executor = None
+            if self.chat_executor:
+                try:
+                    self.chat_executor.shutdown(wait=False)
+                except Exception as executor_error:
+                    self.logger.bind(tag=TAG).error(
+                        f"Error shutting down chat thread pool: {executor_error}"
+                    )
+                self.chat_executor = None
             self.logger.bind(tag=TAG).info("Connection resources released")
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"Error closing connection: {e}")

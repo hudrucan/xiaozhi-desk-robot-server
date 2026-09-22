@@ -130,6 +130,40 @@ def remove_punctuation_and_length(text):
     return len(result), result
 
 
+def matches_wakeup_word(text, configured_wake_words):
+    """Match firmware wake labels, including legacy `A or B` forms."""
+    if not isinstance(text, str):
+        return False
+
+    if isinstance(configured_wake_words, str):
+        configured_wake_words = [configured_wake_words]
+    if not isinstance(configured_wake_words, (list, tuple, set)):
+        return False
+
+    def normalized_variants(value):
+        if not isinstance(value, str):
+            return set()
+        variants = [value]
+        variants.extend(
+            re.split(r"\s+(?:or|hoặc)\s+", value, flags=re.IGNORECASE)
+        )
+        return {
+            normalized.casefold()
+            for _, normalized in (
+                remove_punctuation_and_length(variant.strip())
+                for variant in variants
+                if variant.strip()
+            )
+            if normalized
+        }
+
+    configured_variants = set()
+    for wake_word in configured_wake_words:
+        configured_variants.update(normalized_variants(wake_word))
+
+    return bool(normalized_variants(text) & configured_variants)
+
+
 def check_model_key(modelType, modelKey):
     if "你" in modelKey:
         return f"配置错误: {modelType} 的 API key 未设置,当前值为: {modelKey}"

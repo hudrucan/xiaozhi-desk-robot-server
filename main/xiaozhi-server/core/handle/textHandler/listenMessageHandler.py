@@ -10,7 +10,7 @@ from core.handle.receiveAudioHandle import startToChat
 from core.handle.sendAudioHandle import send_stt_message, send_tts_message
 from core.handle.textMessageHandler import TextMessageHandler
 from core.handle.textMessageType import TextMessageType
-from core.utils.util import remove_punctuation_and_length
+from core.utils.util import matches_wakeup_word
 
 
 TAG = __name__
@@ -97,17 +97,10 @@ class ListenTextMessageHandler(TextMessageHandler):
                     )
                     return
 
-                filtered_len, filtered_text = remove_punctuation_and_length(
-                    original_text
-                )
-
                 configured_wake_words = conn.config.get("wakeup_words", [])
-                normalized_wake_words = {
-                    remove_punctuation_and_length(wake_word)[1].casefold()
-                    for wake_word in configured_wake_words
-                    if isinstance(wake_word, str)
-                }
-                is_wakeup_words = filtered_text.casefold() in normalized_wake_words
+                is_wakeup_words = matches_wakeup_word(
+                    original_text, configured_wake_words
+                )
                 # 是否开启唤醒词回复
                 enable_greeting = conn.config.get("enable_greeting", True)
 
@@ -117,6 +110,9 @@ class ListenTextMessageHandler(TextMessageHandler):
                     await send_tts_message(conn, "stop", None)
                     conn.client_is_speaking = False
                 elif is_wakeup_words:
+                    conn.logger.bind(tag=TAG).info(
+                        f"Wake word detected: {original_text}"
+                    )
                     conn.just_woken_up = True
                     await startToChat(
                         conn, conn.config.get("wakeup_greeting", "Hello")

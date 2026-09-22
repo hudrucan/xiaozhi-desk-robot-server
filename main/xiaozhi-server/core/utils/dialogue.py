@@ -84,7 +84,7 @@ class Dialogue:
         for missing_id in pending_tool_calls:
             dummy_tool_msg = Message(
                 role="tool",
-                content='{"status": "interrupted", "message": "动作已取消/被打断"}',
+                content='{"status": "interrupted", "message": "The action was cancelled or interrupted."}',
                 tool_call_id=missing_id
             )
             result.append(dummy_tool_msg)
@@ -128,7 +128,7 @@ class Dialogue:
                 if current_speaker_name and current_speaker_name != "未知说话人":
                     speakers = voiceprint_config.get("speakers", [])
                     speakers_info = "\n<speakers_info>"
-                    speakers_info += f"\n当前说话人：{current_speaker_name}"
+                    speakers_info += f"\nCurrent speaker: {current_speaker_name}"
                     for speaker_str in speakers:
                         try:
                             parts = speaker_str.split(",", 2)
@@ -137,7 +137,7 @@ class Dialogue:
                                 description = (
                                     parts[2].strip() if len(parts) >= 3 else ""
                                 )
-                                speakers_info += f"\n- {name}：{description}"
+                                speakers_info += f"\n- {name}: {description}"
                         except:
                             pass
                     speakers_info += "\n</speakers_info>"

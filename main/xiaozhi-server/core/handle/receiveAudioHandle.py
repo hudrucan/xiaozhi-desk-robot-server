@@ -90,9 +90,7 @@ async def startToChat(conn: "ConnectionHandler", text, check_wakeup_word=True):
     await send_stt_message(conn, actual_text)
 
     # 准备开始新会话
-    conn.client_abort = False
-
-    conn.executor.submit(conn.chat, actual_text)
+    conn.chat_executor.submit(conn.chat, actual_text)
 
 
 async def process_pending_typed_input_if_ready(conn: "ConnectionHandler") -> bool:

@@ -16,7 +16,10 @@ from core.handle.sendAudioHandle import (
     send_status_message,
     send_tts_message,
 )
-from core.utils.util import remove_punctuation_and_length, opus_datas_to_wav_bytes
+from core.utils.util import (
+    matches_wakeup_word,
+    opus_datas_to_wav_bytes,
+)
 from core.providers.tools.device_mcp import MCPClient, send_mcp_initialize_message
 
 TAG = __name__
@@ -91,14 +94,8 @@ async def checkWakeupWords(conn: "ConnectionHandler", text):
     if not enable_wakeup_words_response_cache:
         return False
 
-    _, filtered_text = remove_punctuation_and_length(text)
     configured_wake_words = conn.config.get("wakeup_words", [])
-    normalized_wake_words = {
-        remove_punctuation_and_length(wake_word)[1].casefold()
-        for wake_word in configured_wake_words
-        if isinstance(wake_word, str)
-    }
-    if filtered_text.casefold() not in normalized_wake_words:
+    if not matches_wakeup_word(text, configured_wake_words):
         return False
 
     conn.just_woken_up = True

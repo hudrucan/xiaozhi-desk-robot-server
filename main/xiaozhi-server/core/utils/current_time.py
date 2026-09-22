@@ -5,17 +5,6 @@
 
 from datetime import datetime
 
-WEEKDAY_MAP = {
-    "Monday": "星期一",
-    "Tuesday": "星期二", 
-    "Wednesday": "星期三",
-    "Thursday": "星期四",
-    "Friday": "星期五",
-    "Saturday": "星期六",
-    "Sunday": "星期日",
-}
-
-
 def get_current_time() -> str:
     """
     获取当前时间字符串 (格式: HH:MM)
@@ -34,8 +23,7 @@ def get_current_weekday() -> str:
     """
     获取今天星期几
     """
-    now = datetime.now()
-    return WEEKDAY_MAP[now.strftime("%A")]
+    return datetime.now().strftime("%A")
 
 
 def get_current_time_info() -> tuple:

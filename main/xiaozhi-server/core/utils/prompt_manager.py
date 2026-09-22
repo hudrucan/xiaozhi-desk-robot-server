@@ -15,16 +15,6 @@ from jinja2 import Template
 
 TAG = __name__
 
-WEEKDAY_MAP = {
-    "Monday": "星期一",
-    "Tuesday": "星期二",
-    "Wednesday": "星期三",
-    "Thursday": "星期四",
-    "Friday": "星期五",
-    "Saturday": "星期六",
-    "Sunday": "星期日",
-}
-
 EMOJI_List = [
     "😶",
     "🙂",
@@ -69,7 +59,7 @@ class PromptManager:
         from core.utils.context_provider import ContextDataProvider
 
         self.context_provider = ContextDataProvider(config, self.logger)
-        self.context_data = {}
+        self.context_data = ""
 
         self._load_base_template()
 
@@ -151,7 +141,7 @@ class PromptManager:
             from core.utils.util import get_ip_info
 
             ip_info = get_ip_info(client_ip, self.logger)
-            city = ip_info.get("city", "未知位置")
+            city = ip_info.get("city", "Unknown location")
             location = f"{city}"
 
             # 存入缓存
@@ -159,7 +149,7 @@ class PromptManager:
             return location
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"Failed to get location information: {e}")
-            return "未知位置"
+            return "Unknown location"
 
     def _get_weather_info(self, conn: "ConnectionHandler", location: str) -> str:
         """获取天气信息"""
@@ -167,6 +157,7 @@ class PromptManager:
             weather_config = conn.config.get("plugins", {}).get("get_weather", {})
             api_host = str(weather_config.get("api_host", "")).strip()
             api_key = str(weather_config.get("api_key", "")).strip()
+            language = str(weather_config.get("language", "en")).strip() or "en"
             invalid_markers = ("your_", "your ", "placeholder", "xxx", "你的")
             if (
                 not api_host
@@ -194,7 +185,7 @@ class PromptManager:
             async def _call():
                 try:
                     result_holder.append(
-                        await get_weather(conn, location=location, lang="zh_CN")
+                        await get_weather(conn, location=location, lang=language)
                     )
                 except Exception as e:
                     exception_holder.append(e)
