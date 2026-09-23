@@ -57,9 +57,6 @@ env/
 /main/xiaozhi-server/config/assets/*.m4a
 /main/xiaozhi-server/config/assets/*.flac
 /main/xiaozhi-server/config/assets/*.opus
-!/main/xiaozhi-server/config/assets/tts_notify.mp3
-!/main/xiaozhi-server/config/assets/wakeup_words.wav
-!/main/xiaozhi-server/config/assets/wakeup_words_short.wav
 
 # Additional local model downloads. Keep the bundled defaults versioned.
 /main/xiaozhi-server/models/asr/sherpa/*/
