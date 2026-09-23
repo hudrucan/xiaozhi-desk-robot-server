@@ -109,6 +109,11 @@ class ServerPluginExecutor(ToolExecutor):
                 str(plugin_config.get("provider", "")).strip().lower()
                 == "open_meteo"
             )
+        if func_name == "get_air_quality":
+            return (
+                str(plugin_config.get("provider", "")).strip().lower()
+                == "open_meteo"
+            )
         return True
 
     def get_tools(self) -> Dict[str, ToolDefinition]:

@@ -132,6 +132,10 @@ module_test:
     - "Ho Chi Minh City"
     - "Hanoi"
     - "Da Nang"
+  air_quality_locations:
+    - "Ho Chi Minh City"
+    - "Hanoi"
+    - "Da Nang"
 
 # Wake words used to distinguish activation from regular speech.
 wakeup_words:
@@ -149,6 +153,15 @@ context_providers:
 
 # Server plugin configuration.
 plugins:
+  get_air_quality:
+    # Supported providers: open_meteo. Leave empty to disable the tool.
+    provider: ""
+    description: "Get current air quality, particle pollution, UV index, and a short forecast for a requested location."
+    default_location: ""
+    language: en
+    preferred_country_code: ""
+    forecast_hours: 24
+    cache_ttl_seconds: 1800
   get_weather:
     # Supported providers: open_meteo. Leave empty to disable the tool.
     provider: ""
@@ -224,11 +237,13 @@ Intent:
     functions:
       - web_search
       - get_weather
+      - get_air_quality
   function_call:
     type: function_call
     functions:
       - web_search
       - get_weather
+      - get_air_quality
 
 Memory:
   mem0ai:

@@ -371,10 +371,11 @@ The current server plugins include:
 
 - `web_search`, using Tavily or Metaso with a configured API key.
 - `get_weather`, using Open-Meteo without an API key.
+- `get_air_quality`, using Open-Meteo for AQI, particle pollution, and UV data.
 
-They are enabled by setting `plugins.web_search.provider` or
-`plugins.get_weather.provider` in the local configuration. Gemini 3 models may
-instead use native Google Search grounding through
+They are enabled by setting the corresponding provider under `plugins` in the
+local configuration. Gemini 3 models may instead use native Google Search
+grounding through
 `LLM.GeminiLLM.native_google_search`; the custom `web_search` plugin can remain
 configured as the search path for non-Gemini LLM providers.
 
@@ -384,6 +385,7 @@ Provider benchmarks are run directly, while plugin benchmarks are grouped:
 python performance_tester.py asr       # or llm, tts, vllm
 python performance_tester.py plugins web_search
 python performance_tester.py plugins get_weather
+python performance_tester.py plugins get_air_quality
 ```
 
 Plugin benchmarks measure the external provider lookup only. They do not run

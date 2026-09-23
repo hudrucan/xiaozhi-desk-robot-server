@@ -199,6 +199,13 @@ plugins:
     preferred_country_code: VN
     forecast_days: 7
     cache_ttl_seconds: 1800
+  get_air_quality:
+    provider: open_meteo
+    default_location: Ho Chi Minh City
+    language: vi
+    preferred_country_code: VN
+    forecast_hours: 24
+    cache_ttl_seconds: 1800
 ```
 
 Open-Meteo does not require an API key. `web_search` supports Tavily and Metaso;
@@ -292,6 +299,7 @@ python performance_tester.py asr  # or llm, tts, vllm
 # Benchmark a server plugin without running the LLM.
 python performance_tester.py plugins web_search
 python performance_tester.py plugins get_weather
+python performance_tester.py plugins get_air_quality
 ```
 
 ASR, LLM, TTS, and VLLM benchmarks run the provider selected in the merged
@@ -306,12 +314,11 @@ reproducible shuffle. Set `PERF_LLM_SEED` for a different order or
 `PERF_LLM_PROMPT` for one fixed prompt. The selected provider and model always
 come from the merged server configuration.
 
-For plugin benchmarks, use `PERF_WEB_SEARCH_QUERY` or
-`PERF_WEATHER_LOCATION` to run one fixed input. Result logging defaults to a
-500-character preview; set `PERF_WEB_SEARCH_PREVIEW_CHARS=0` or
-`PERF_WEATHER_PREVIEW_CHARS=0` for the complete provider response. The
-`PERF_WEB_SEARCH_SEED` and `PERF_WEATHER_SEED` control reproducible sampling from
-`module_test.web_search_queries` and `module_test.weather_locations`.
+For plugin benchmarks, use `PERF_WEB_SEARCH_QUERY`, `PERF_WEATHER_LOCATION`, or
+`PERF_AIR_QUALITY_LOCATION` to run one fixed input. Result logging defaults to a
+500-character preview; set the corresponding `*_PREVIEW_CHARS=0` variable for
+the complete provider response. The corresponding `*_SEED` variables control
+reproducible sampling from the query or location lists under `module_test`.
 
 ## MCP and Desk Robot behavior
 

@@ -13,6 +13,7 @@ class CacheType(Enum):
 
     LOCATION = "location"
     WEATHER = "weather"
+    AIR_QUALITY = "air_quality"
     INTENT = "intent"
     CONFIG = "config"
     DEVICE_PROMPT = "device_prompt"
@@ -38,6 +39,9 @@ class CacheConfig:
             ),
             CacheType.WEATHER: cls(
                 strategy=CacheStrategy.TTL, ttl=28800, max_size=1000  # 8小时
+            ),
+            CacheType.AIR_QUALITY: cls(
+                strategy=CacheStrategy.TTL, ttl=1800, max_size=1000
             ),
             CacheType.INTENT: cls(
                 strategy=CacheStrategy.TTL_LRU, ttl=600, max_size=1000  # 10分钟
