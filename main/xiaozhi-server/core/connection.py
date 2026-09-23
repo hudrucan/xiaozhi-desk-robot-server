@@ -1476,7 +1476,7 @@ class ConnectionHandler:
                 )
                 metric["outcome"] = "incomplete"
         metrics["tools"] = list(tools.values())
-        self.logger.bind(tag=TAG).info(
+        self.logger.bind(tag=TAG).debug(
             f"Turn metrics: {json.dumps(metrics, ensure_ascii=False)}"
         )
 
