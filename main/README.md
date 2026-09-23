@@ -49,7 +49,7 @@ xiaozhi-desk-robot-server
       ├─ TTS providers
       ├─ MCP / tools
       ├─ vision / camera support
-      ├─ HTTP / OTA support
+      ├─ HTTP / OTA / settings support
       └─ local configuration
 ```
 
@@ -162,6 +162,7 @@ Typical responsibilities include:
 - OTA / bootstrap responses.
 - Firmware download support.
 - Vision / camera upload endpoints.
+- A lightweight settings UI and API under `/settings/` and `/api/settings`.
 - Other lightweight runtime HTTP functions.
 
 These endpoints are part of the core server and are independent from any removed management application.
@@ -305,7 +306,8 @@ python app.py
 
 ### 6.2. Configuration files
 
-The runtime uses the main configuration and an optional local override.
+The runtime merges the committed reference configuration with a required local
+override file. The local file may be empty, but it must exist before startup.
 
 Typical layout:
 
@@ -318,7 +320,7 @@ main/xiaozhi-server/
 
 `config.yaml` contains the available/default configuration.
 
-`data/.config.yaml` can be used for local overrides such as:
+`data/.config.yaml` is used for local overrides such as:
 
 - selected providers
 - model names
@@ -331,6 +333,18 @@ main/xiaozhi-server/
 
 Keeping local overrides separate makes it easier to update the core configuration without losing machine-specific settings.
 
+Create the required file before starting the server:
+
+```bash
+mkdir -p data
+touch data/.config.yaml
+```
+
+The local Settings UI is available at `http://127.0.0.1:8003/settings/` by
+default. It writes to `data/.config.yaml`, requires a restart after changes,
+and rejects non-loopback requests unless `server.settings.allow_remote` is
+explicitly enabled.
+
 ### 6.3. Provider selection
 
 A typical configuration selects one implementation from each provider family:
@@ -338,16 +352,44 @@ A typical configuration selects one implementation from each provider family:
 ```yaml
 selected_module:
   VAD: SileroVAD
-  ASR: <provider>
-  LLM: <provider>
-  TTS: <provider>
+  ASR: OpenAIASR
+  LLM: OpenAILLM
+  VLLM: OpenAIVLLM
+  TTS: EdgeTTS
   Memory: nomem
   Intent: function_call
 ```
 
-The exact provider configuration is defined in the corresponding provider section of the YAML file.
+The exact provider configuration is defined in the corresponding provider
+section of the YAML file. Values committed in `config.yaml` are safe reference
+defaults and placeholders; credentials and active model choices belong only in
+`data/.config.yaml`.
 
-### 6.4. Runtime priorities for the Desk Robot
+### 6.4. Server plugins and benchmarks
+
+The current server plugins include:
+
+- `web_search`, using Tavily or Metaso with a configured API key.
+- `get_weather`, using Open-Meteo without an API key.
+
+They are enabled by setting `plugins.web_search.provider` or
+`plugins.get_weather.provider` in the local configuration. Gemini 3 models may
+instead use native Google Search grounding through
+`LLM.GeminiLLM.native_google_search`; the custom `web_search` plugin can remain
+configured as the search path for non-Gemini LLM providers.
+
+Provider benchmarks are run directly, while plugin benchmarks are grouped:
+
+```bash
+python performance_tester.py asr       # or llm, tts, vllm
+python performance_tester.py plugins web_search
+python performance_tester.py plugins get_weather
+```
+
+Plugin benchmarks measure the external provider lookup only. They do not run
+an LLM continuation and do not exercise the plugin cache.
+
+### 6.5. Runtime priorities for the Desk Robot
 
 The current optimization priorities are:
 

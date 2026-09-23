@@ -71,6 +71,7 @@ main/xiaozhi-server/
 ├─ config.yaml
 ├─ requirements.txt
 ├─ performance_tester.py
+├─ performance_testers/
 ├─ config/
 ├─ core/
 │  ├─ api/
@@ -81,6 +82,8 @@ main/xiaozhi-server/
 │  ├─ http_server.py
 │  └─ websocket_server.py
 ├─ plugins_func/
+├─ web/
+│  └─ settings/           # lightweight local settings UI
 └─ data/                 # local runtime config/data; gitignored
 ```
 
@@ -88,12 +91,13 @@ Key entry points:
 
 - `app.py` — starts the core runtime.
 - `core/websocket_server.py` — Xiaozhi WebSocket server and session creation.
-- `core/http_server.py` — local HTTP server for OTA/bootstrap and vision.
+- `core/http_server.py` — local HTTP server for OTA/bootstrap, vision, and settings.
 - `core/connection.py` — per-device session/orchestration.
 - `core/handle/` — protocol and turn handlers.
 - `core/providers/` — VAD, ASR, LLM, TTS, memory, intent, and vision providers.
 - `plugins_func/` — server-side function/tool plugins.
 - `performance_tester.py` — provider latency/response testing.
+- `performance_testers/` — provider and grouped plugin benchmark implementations.
 
 ## Transport
 
@@ -107,6 +111,7 @@ The HTTP server includes the lightweight local endpoints used for:
 - `/xiaozhi/ota/`
 - `/xiaozhi/ota/download/{filename}`
 - `/mcp/vision/explain`
+- `/settings/` (local requests only by default)
 
 MQTT + UDP remains a supported Xiaozhi deployment path through the external Xiaozhi MQTT gateway. The gateway is **not bundled in this repository**.
 
@@ -160,17 +165,57 @@ Typical selections:
 ```yaml
 selected_module:
   VAD: SileroVAD
-  ASR: FunASR
-  LLM: ChatGLMLLM
-  VLLM: ChatGLMVLLM
+  ASR: OpenAIASR
+  LLM: OpenAILLM
+  VLLM: OpenAIVLLM
   TTS: EdgeTTS
   Memory: nomem
   Intent: function_call
 ```
 
-Override those names with the providers you actually want to use.
+These are the safe reference selections in committed `config.yaml`. Their API
+keys, model names, voices, and endpoints are placeholders; override them in
+`data/.config.yaml` before starting the server. Local Sherpa ASR/TTS providers
+are also available when their optional runtime and model files are installed.
 
-The default local ASR is FunASR and expects its configured model files to exist. Cloud ASR can be selected instead.
+### Search and weather tools
+
+Server plugins are disabled until their provider-specific configuration is set
+in `data/.config.yaml`. A typical Vietnamese deployment can use:
+
+```yaml
+plugins:
+  web_search:
+    provider: tavily
+    api_key: your_tavily_api_key
+    max_results: 5
+    search_depth: advanced
+    include_answer: advanced
+    country: vietnam
+  get_weather:
+    provider: open_meteo
+    default_location: Ho Chi Minh City
+    language: vi
+    preferred_country_code: VN
+    forecast_days: 7
+    cache_ttl_seconds: 1800
+```
+
+Open-Meteo does not require an API key. `web_search` supports Tavily and Metaso;
+only configure options accepted by the selected provider.
+
+Gemini 3 models can use Google's native search grounding instead of the
+`web_search` plugin:
+
+```yaml
+LLM:
+  GeminiLLM:
+    native_google_search: true
+```
+
+Native Google Search applies only to Gemini. Keep `plugins.web_search`
+configured when other LLM providers need a search tool; Gemini excludes the
+custom `web_search` tool while native grounding is enabled.
 
 ## Run
 
@@ -187,9 +232,13 @@ WebSocket  ws://<host>:8000/xiaozhi/v1/
 HTTP       http://<host>:8003/
 OTA        http://<host>:8003/xiaozhi/ota/
 Vision     http://<host>:8003/mcp/vision/explain
+Settings   http://127.0.0.1:8003/settings/
 ```
 
 Point the firmware OTA/bootstrap URL at the local HTTP endpoint when testing the standalone server.
+The Settings UI writes local overrides to `data/.config.yaml` and requires a
+restart after changes. It accepts loopback requests only unless
+`server.settings.allow_remote` is explicitly enabled.
 
 ## Provider strategy
 
@@ -239,9 +288,16 @@ python performance_tester.py
 
 # Or run one active provider directly.
 python performance_tester.py asr  # or llm, tts, vllm
+
+# Benchmark a server plugin without running the LLM.
+python performance_tester.py plugins web_search
+python performance_tester.py plugins get_weather
 ```
 
-Each benchmark runs the provider selected in the merged configuration. Set
+ASR, LLM, TTS, and VLLM benchmarks run the provider selected in the merged
+configuration. Plugin benchmarks call the provider configured under `plugins`
+directly, so they measure the external lookup without LLM continuation or the
+plugin result cache. Set
 `PERF_RUNS`, `PERF_TIMEOUT_SECONDS`, `PERF_ASR_AUDIO`, `PERF_LLM_PROMPT`, or
 `PERF_TTS_TEXT` to override its small default workload.
 
@@ -249,6 +305,13 @@ The LLM benchmark samples prompts from `module_test.test_sentences` using a
 reproducible shuffle. Set `PERF_LLM_SEED` for a different order or
 `PERF_LLM_PROMPT` for one fixed prompt. The selected provider and model always
 come from the merged server configuration.
+
+For plugin benchmarks, use `PERF_WEB_SEARCH_QUERY` or
+`PERF_WEATHER_LOCATION` to run one fixed input. Result logging defaults to a
+500-character preview; set `PERF_WEB_SEARCH_PREVIEW_CHARS=0` or
+`PERF_WEATHER_PREVIEW_CHARS=0` for the complete provider response. The
+`PERF_WEB_SEARCH_SEED` and `PERF_WEATHER_SEED` control reproducible sampling from
+`module_test.web_search_queries` and `module_test.weather_locations`.
 
 ## MCP and Desk Robot behavior
 
