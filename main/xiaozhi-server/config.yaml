@@ -246,9 +246,6 @@ Intent:
       - get_air_quality
 
 Memory:
-  mem0ai:
-    type: mem0ai
-    api_key: your_mem0_api_key
   nomem:
     type: nomem
   mem_local_short:
