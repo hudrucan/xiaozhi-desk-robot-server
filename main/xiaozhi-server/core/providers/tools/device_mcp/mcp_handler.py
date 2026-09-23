@@ -187,35 +187,82 @@ async def handle_mcp_message(
                         "description": description,
                         "inputSchema": input_schema,
                     }
-                    await mcp_client.add_tool(new_tool)
+                    mcp_client.pending_tools.append(new_tool)
                     logger.bind(tag=TAG).debug(f"Client tool #{i+1}: {name}")
-
-                # 替换所有工具描述中的工具名称
-                for tool_data in mcp_client.tools.values():
-                    if "description" in tool_data:
-                        description = tool_data["description"]
-                        # 遍历所有工具名称进行替换
-                        for (
-                            sanitized_name,
-                            original_name,
-                        ) in mcp_client.name_mapping.items():
-                            description = description.replace(
-                                original_name, sanitized_name
-                            )
-                        tool_data["description"] = description
 
                 next_cursor = result.get("nextCursor", "")
                 if next_cursor:
                     logger.bind(tag=TAG).debug(f"More tools are available, nextCursor: {next_cursor}")
                     await send_mcp_tools_list_continue_request(conn, next_cursor)
                 else:
+                    from .tool_cache import (
+                        device_mcp_cache_enabled,
+                        inventory_fingerprint,
+                        normalize_inventory,
+                        save_cached_inventory,
+                    )
+
+                    raw_tools = mcp_client.pending_tools
+                    mcp_client.pending_tools = []
+                    original_names = {
+                        tool.get("name", "") for tool in raw_tools
+                    }
+                    # Match the server's runtime sanitization inside descriptions.
+                    for tool in raw_tools:
+                        description = tool.get("description", "")
+                        for original_name in original_names:
+                            if original_name:
+                                description = description.replace(
+                                    original_name, sanitize_tool_name(original_name)
+                                )
+                        tool["description"] = description
+
+                    normalized_tools = normalize_inventory(raw_tools)
+
+                    actual_fingerprint = inventory_fingerprint(normalized_tools)
+                    cache_enabled = device_mcp_cache_enabled(conn.config)
+                    cache_matches = (
+                        cache_enabled
+                        and mcp_client.cached_fingerprint == actual_fingerprint
+                    )
+                    await mcp_client.replace_tools(
+                        raw_tools,
+                        preserve_cached_order=cache_matches,
+                    )
+                    if cache_matches:
+                        logger.bind(tag=TAG).info(
+                            "Device MCP tool schemas match the preloaded inventory"
+                        )
+                    elif cache_enabled:
+                        try:
+                            save_cached_inventory(conn.config, normalized_tools)
+                            logger.bind(tag=TAG).info(
+                                "Device MCP tool schemas changed; updated the local cache"
+                            )
+                        except (OSError, ValueError) as e:
+                            # The live firmware inventory remains usable even if
+                            # its next-start optimization cannot be persisted.
+                            logger.bind(tag=TAG).warning(
+                                f"Unable to update the device MCP tool cache: {e}"
+                            )
+                        mcp_client.cached_fingerprint = actual_fingerprint
+
                     await mcp_client.set_ready(True)
                     logger.bind(tag=TAG).debug("All tools retrieved; MCP client is ready")
 
-                    # 刷新工具缓存，确保MCP工具被包含在函数列表中
-                    if hasattr(conn, "func_handler") and conn.func_handler:
-                        conn.func_handler.tool_manager.refresh_tools()
-                        conn.func_handler.current_support_functions()
+                    if getattr(conn, "func_handler", None):
+                        # Initialization and hello run concurrently. Even when
+                        # schemas match, refresh if the handler cached its tool
+                        # list before hello installed the cached inventory.
+                        needs_refresh = not cache_matches
+                        if cache_matches and normalized_tools:
+                            expected_tool = normalized_tools[0]["function"]["name"]
+                            needs_refresh = not conn.func_handler.has_tool(
+                                expected_tool
+                            )
+                        if needs_refresh:
+                            conn.func_handler.tool_manager.refresh_tools()
+                            conn.func_handler.current_support_functions()
 
                     pending_typed_input = getattr(
                         conn, "pending_typed_input", None

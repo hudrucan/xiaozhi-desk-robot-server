@@ -62,6 +62,16 @@ tts_timeout: 15
 tool_call_timeout: 30
 # Keep the virtual direct-answer tool configurable for latency A/B comparisons.
 enable_direct_answer_tool: true
+
+# Cache the single Desk Robot's MCP schemas only while llama.cpp is selected, so
+# it can prefill them before accepting a connection. Cloud LLMs always use the
+# live firmware inventory. Runtime updates stay under data/ and are not committed.
+device_mcp_tool_cache:
+  enabled: true
+  prewarm: true
+  seed_path: config/device_mcp_tools.json
+  path: data/.device_mcp_tools.json
+
 # Emit one structured timing summary after each turn.
 enable_turn_metrics: true
 # Dump canonical messages and tool schemas as one JSON object per line.
@@ -327,6 +337,48 @@ LLM:
       connect: 3
       write: 5
       read: 60
+  LlamaCppLLM:
+    type: llama_cpp
+    api_key: local
+    base_url: http://127.0.0.1:8080/v1
+    model_name: qwen3:4b
+    # Keep local voice responses stable while retaining some personality.
+    temperature: 0.6
+    top_p: 0.95
+    # Bound recent context because tool schemas already consume a substantial
+    # part of a local model's context window.
+    max_history_messages: 8
+    process:
+      # When enabled, llama-server starts and stops with this application.
+      managed: true
+      executable: llama-server
+      hf_model: Qwen/Qwen3-4B-GGUF:Q4_K_M
+      # Use model_path instead of hf_model for an existing local GGUF file.
+      # model_path: /absolute/path/to/model.gguf
+      host: 127.0.0.1
+      port: 8080
+      context_size: 8192
+      gpu_layers: all
+      # This deployment serves one Desk Robot, so one slot maximizes prompt reuse.
+      parallel: 1
+      # Reuse unchanged tool-schema chunks when conversation history shifts.
+      cache_reuse: 64
+      # Qwen3 thinking is unnecessary for low-latency spoken turns.
+      chat_template_kwargs:
+        enable_thinking: false
+      reasoning: "off"
+      # The first start may also download the 4-bit model.
+      startup_timeout: 900
+      shutdown_timeout: 10
+      log_file: tmp/llama-server.log
+      # Set a positive value to unload the model from RAM while the server is idle.
+      # sleep_idle_seconds: 900
+      extra_args: []
+    timeout:
+      pool: 2
+      connect: 3
+      write: 5
+      read: 120
 
 # Vision-language provider using an OpenAI-compatible API.
 VLLM:

@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 
 import websockets
@@ -70,6 +71,8 @@ class WebSocketServer:
         host = server_config.get("ip", "0.0.0.0")
         port = int(server_config.get("port", 8000))
 
+        await self._prewarm_local_llm()
+
         async with websockets.serve(
             self._handle_connection,
             host,
@@ -78,6 +81,41 @@ class WebSocketServer:
             ping_interval=None,
         ):
             await asyncio.Future()
+
+    async def _prewarm_local_llm(self):
+        """Warm the stable local prompt prefix before accepting a connection."""
+        prewarm = getattr(self._llm, "prewarm", None)
+        if not callable(prewarm):
+            return
+
+        try:
+            from core.providers.llm.llama_cpp.prewarm import build_prewarm_request
+
+            request = build_prewarm_request(self.config, logger=self.logger)
+            if request is None:
+                self.logger.bind(tag=TAG).info(
+                    "Skipping local LLM prewarm because it is disabled or no "
+                    "cached device tools are available"
+                )
+                return
+            system_prompt, functions = request
+            self.logger.bind(tag=TAG).info(
+                f"Prewarming local LLM with {len(functions)} tool schemas"
+            )
+            await asyncio.to_thread(prewarm, system_prompt, functions)
+            self.logger.bind(tag=TAG).info("Local LLM prompt cache is ready")
+        except Exception as e:
+            # Prewarming is an optimization; startup remains usable if it fails.
+            self.logger.bind(tag=TAG).warning(f"Local LLM prewarm failed: {e}")
+
+    async def shutdown(self):
+        """Release providers owned for the lifetime of this server."""
+        close = getattr(self._llm, "close", None)
+        if not callable(close):
+            return
+        result = close()
+        if inspect.isawaitable(result):
+            await result
 
     async def _handle_connection(self, websocket: websockets.ServerConnection):
         headers = dict(websocket.request.headers)

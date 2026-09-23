@@ -160,6 +160,7 @@ async def main():
             timeout=3.0,
             return_when=asyncio.ALL_COMPLETED,
         )
+        await ws_server.shutdown()
         print("Server shut down successfully.")
 
     if should_restart:

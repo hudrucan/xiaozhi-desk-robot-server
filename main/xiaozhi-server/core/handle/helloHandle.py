@@ -21,6 +21,7 @@ from core.utils.util import (
     opus_datas_to_wav_bytes,
 )
 from core.providers.tools.device_mcp import MCPClient, send_mcp_initialize_message
+from core.providers.tools.device_mcp.tool_cache import load_cached_inventory
 
 TAG = __name__
 
@@ -64,7 +65,17 @@ async def handleHelloMessage(conn: "ConnectionHandler", msg_json):
         conn.features = features
         if features.get("mcp"):
             conn.logger.bind(tag=TAG).debug("Client supports MCP")
-            conn.mcp_client = MCPClient()
+            cached_tools = load_cached_inventory(conn.config)
+            conn.mcp_client = MCPClient(cached_tools=cached_tools)
+            if cached_tools:
+                conn.logger.bind(tag=TAG).info(
+                    f"Loaded {len(cached_tools)} cached device MCP tool schemas"
+                )
+                # Component initialization runs alongside the hello exchange.
+                # If the handler won that race, make its cached declarations
+                # observe the newly seeded device inventory immediately.
+                if getattr(conn, "func_handler", None):
+                    conn.func_handler.tool_manager.refresh_tools()
         if features.get("aec"):
             conn.logger.bind(tag=TAG).debug("Client enabled server-side AEC")
             conn.client_aec = True

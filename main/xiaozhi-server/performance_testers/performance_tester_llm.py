@@ -46,25 +46,30 @@ def select_prompts(config, count, seed):
     return prompts, selected[:count]
 
 
-def collect_response(provider, messages, use_function_path=False):
+def collect_response(provider, messages, functions=None):
     started_at = time.perf_counter()
     first_output = None
     response_parts = []
+    tool_names = []
 
-    if use_function_path:
+    if functions is not None:
         chunks = provider.response_with_functions(
-            "performance-test", messages, functions=[]
+            "performance-test", messages, functions=functions
         )
     else:
         chunks = provider.response("performance-test", messages)
 
     for chunk in chunks:
-        if use_function_path:
+        if functions is not None:
             content, tool_calls = chunk
             if tool_calls:
-                raise RuntimeError(
-                    "The search-only benchmark received an unexpected custom tool call"
-                )
+                if first_output is None:
+                    first_output = time.perf_counter() - started_at
+                for tool_call in tool_calls:
+                    function = getattr(tool_call, "function", None)
+                    name = getattr(function, "name", None)
+                    if name and name not in tool_names:
+                        tool_names.append(name)
             chunk = content
         if not chunk:
             continue
@@ -74,11 +79,13 @@ def collect_response(provider, messages, use_function_path=False):
 
     total = time.perf_counter() - started_at
     response = "".join(response_parts).strip()
+    if not response and tool_names:
+        response = f"Tool call: {', '.join(tool_names)}"
     if first_output is None or not response:
         raise RuntimeError("Provider returned no response")
     search_used = (
         getattr(provider, "last_native_google_search_used", None)
-        if use_function_path
+        if functions is not None
         else None
     )
     return first_output, total, response, search_used
@@ -109,10 +116,30 @@ async def main():
     provider = create_llm_instance(provider_type, provider_config)
     initialization_duration = time.perf_counter() - initialization_started_at
     initialized_usage = process_usage()
-    system_prompt = PromptManager(config).build_enhanced_prompt(
-        config.get("prompt", ""),
-        "performance-test",
-    )
+    system_prompt = None
+    functions = [] if use_native_search else None
+    prewarm_duration = None
+    prewarm_tool_count = 0
+    prewarm = getattr(provider, "prewarm", None)
+    if callable(prewarm):
+        from core.providers.llm.llama_cpp.prewarm import build_prewarm_request
+
+        prewarm_request = build_prewarm_request(
+            config,
+            device_id="performance-test",
+        )
+        if prewarm_request is not None:
+            system_prompt, functions = prewarm_request
+            prewarm_tool_count = len(functions)
+            prewarm_started_at = time.perf_counter()
+            await asyncio.to_thread(prewarm, system_prompt, functions)
+            prewarm_duration = time.perf_counter() - prewarm_started_at
+    if system_prompt is None:
+        system_prompt = PromptManager(config).build_enhanced_prompt(
+            config.get("prompt", ""),
+            "performance-test",
+            emoji_enabled=True,
+        )
     runs = get_setting("PERF_RUNS", 5)
     timeout = get_setting("PERF_TIMEOUT_SECONDS", 60)
     seed = int(os.getenv("PERF_LLM_SEED", 42))
@@ -131,6 +158,13 @@ async def main():
     print(f"Samples: {runs}; timeout per sample: {timeout}s")
     print(f"Prompt set: {len(prompt_set)}; seed: {seed}")
     print(f"System prompt: {len(system_prompt)} characters")
+    if prewarm_duration is not None:
+        print(
+            f"Prompt prewarm: {prewarm_duration:.3f}s "
+            f"({prewarm_tool_count} tool schemas)"
+        )
+    elif callable(prewarm):
+        print("Prompt prewarm: disabled or no cached device tools")
     print(
         "Native Google Search path: "
         f"{'enabled' if use_native_search else 'disabled'}"
@@ -147,7 +181,7 @@ async def main():
                     collect_response,
                     provider,
                     messages,
-                    use_native_search,
+                    functions,
                 ),
                 timeout=timeout,
             )

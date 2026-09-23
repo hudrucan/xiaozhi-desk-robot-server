@@ -231,6 +231,65 @@ Native Google Search applies only to Gemini. Keep `plugins.web_search`
 configured when other LLM providers need a search tool; Gemini excludes the
 custom `web_search` tool while native grounding is enabled.
 
+### Local LLM with llama.cpp
+
+The dedicated llama.cpp provider runs a local OpenAI-compatible server,
+including streaming and function calls. Install the lightweight runtime:
+
+```bash
+brew install llama.cpp
+```
+
+Then select it in `data/.config.yaml`:
+
+```yaml
+selected_module:
+  LLM: LlamaCppLLM
+
+LLM:
+  LlamaCppLLM:
+    type: llama_cpp
+    api_key: local
+    base_url: http://127.0.0.1:8080/v1
+    model_name: qwen3:4b
+    temperature: 0.6
+    top_p: 0.95
+    max_history_messages: 8
+    process:
+      managed: true
+      executable: llama-server
+      hf_model: Qwen/Qwen3-4B-GGUF:Q4_K_M
+      host: 127.0.0.1
+      port: 8080
+      context_size: 8192
+      gpu_layers: all
+      parallel: 1
+      cache_reuse: 64
+      chat_template_kwargs:
+        enable_thinking: false
+      reasoning: "off"
+      startup_timeout: 900
+      shutdown_timeout: 10
+      log_file: tmp/llama-server.log
+```
+
+With `managed: true`, `llama-server` starts only when this provider is selected
+and stops during normal application shutdown or configuration restart. Set
+`managed: false` to connect to an externally managed llama.cpp endpoint instead.
+The bounded history and cache reuse settings keep the repeated MCP/tool schemas
+from forcing a full prompt prefill on every conversational turn.
+For the single-device deployment, `config/device_mcp_tools.json` seeds the known
+firmware tool inventory. llama.cpp prewarms that stable prefix before opening the
+WebSocket listener. The live `tools/list` response is still authoritative: an
+order-independent schema fingerprint keeps the warm cache when it matches and
+writes changed schemas to `data/.device_mcp_tools.json` for the next startup.
+This cache is inactive for cloud LLM providers; they continue to use only the
+inventory reported by the connected firmware.
+Use `model_path` instead of `hf_model` to avoid network access and load an
+existing GGUF file. Keep the `web_search` plugin configured if this provider
+should be able to search the web; native Google Search grounding remains
+Gemini-only.
+
 ## Run
 
 ```bash
@@ -319,7 +378,9 @@ plugin result cache. Set
 The LLM benchmark samples prompts from `module_test.test_sentences` using a
 reproducible shuffle. Set `PERF_LLM_SEED` for a different order or
 `PERF_LLM_PROMPT` for one fixed prompt. The selected provider and model always
-come from the merged server configuration.
+come from the merged server configuration. When llama.cpp prewarming is enabled,
+the benchmark reports prewarm time separately, then sends the same cached device
+and server-plugin tool schemas during each measured sample.
 
 For plugin benchmarks, use `PERF_WEB_SEARCH_QUERY`, `PERF_WEATHER_LOCATION`, or
 `PERF_AIR_QUALITY_LOCATION` to run one fixed input. Result logging defaults to a

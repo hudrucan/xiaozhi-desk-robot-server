@@ -603,7 +603,10 @@ class ConnectionHandler:
         # === few-shot 示例（is_temporary）===
         # 展示 direct_answer 携带 response 参数的用法，一次调用完成回复
 
-        if self.config.get("enable_direct_answer_tool", True):
+        if (
+            self.config.get("enable_direct_answer_tool", True)
+            and getattr(self.llm, "supports_direct_answer_tool", True)
+        ):
             # Example 1: direct_answer returns its response without another LLM pass.
             da_tc_id = "fewshot_da_001"
             self.dialogue.put(Message(role="user", content="What is 2 + 2?", is_temporary=True))
@@ -900,6 +903,7 @@ class ConnectionHandler:
                 functions is not None
                 and depth == 0
                 and self.config.get("enable_direct_answer_tool", True)
+                and getattr(self.llm, "supports_direct_answer_tool", True)
             ):
                 functions.append(DIRECT_ANSWER_TOOL)
 

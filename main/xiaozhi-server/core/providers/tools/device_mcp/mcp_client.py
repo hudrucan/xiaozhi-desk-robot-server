@@ -1,6 +1,7 @@
 """设备端MCP客户端定义"""
 
 import asyncio
+import copy
 from concurrent.futures import Future
 from core.utils.util import sanitize_tool_name
 from config.logger import setup_logging
@@ -12,7 +13,7 @@ logger = setup_logging()
 class MCPClient:
     """设备端MCP客户端，用于管理MCP状态和工具"""
 
-    def __init__(self):
+    def __init__(self, cached_tools=None):
         self.tools = {}  # sanitized_name -> tool_data
         self.name_mapping = {}
         self.ready = False
@@ -20,6 +21,53 @@ class MCPClient:
         self.next_id = 1
         self.lock = asyncio.Lock()
         self._cached_available_tools = None  # Cache for get_available_tools
+        self.cached_fingerprint = None
+        self.pending_tools = []
+        if cached_tools:
+            self.seed_cached_tools(cached_tools)
+
+    def seed_cached_tools(self, tools):
+        """Expose cached schemas for prompt construction, never execution."""
+        from .tool_cache import inventory_fingerprint, normalize_inventory
+
+        normalized = normalize_inventory(tools)
+        self._cached_available_tools = normalized
+        self.cached_fingerprint = inventory_fingerprint(normalized)
+        self.tools = {
+            tool["function"]["name"]: {
+                "name": tool["function"]["name"],
+                "description": tool["function"]["description"],
+                "inputSchema": copy.deepcopy(tool["function"]["parameters"]),
+            }
+            for tool in normalized
+        }
+        self.name_mapping = {
+            name: name for name in self.tools
+        }
+
+    async def replace_tools(self, raw_tools, preserve_cached_order=False):
+        """Atomically install the firmware-confirmed inventory."""
+        from .tool_cache import normalize_inventory
+
+        normalized = normalize_inventory(raw_tools)
+        actual_by_name = {}
+        original_names = {}
+        for raw_tool, llm_tool in zip(raw_tools, normalized):
+            function = llm_tool["function"]
+            sanitized_name = function["name"]
+            original_name = raw_tool.get("name", sanitized_name)
+            actual_by_name[sanitized_name] = {
+                "name": original_name,
+                "description": function["description"],
+                "inputSchema": copy.deepcopy(function["parameters"]),
+            }
+            original_names[sanitized_name] = original_name
+
+        async with self.lock:
+            self.tools = actual_by_name
+            self.name_mapping = original_names
+            if not preserve_cached_order or self._cached_available_tools is None:
+                self._cached_available_tools = normalized
 
     def has_tool(self, name: str) -> bool:
         return name in self.tools
