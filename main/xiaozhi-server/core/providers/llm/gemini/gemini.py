@@ -132,6 +132,7 @@ class LLMProvider(LLMProviderBase):
             tools,
             function_mode=True,
             combined_tool_mode=self.native_google_search and has_custom_tools,
+            validated_tool_mode=has_custom_tools,
             event_loop=kwargs.get("event_loop"),
         )
 
@@ -142,6 +143,7 @@ class LLMProvider(LLMProviderBase):
         tools,
         function_mode,
         combined_tool_mode=False,
+        validated_tool_mode=False,
         event_loop=None,
     ):
         self.last_native_google_search_used = False
@@ -205,9 +207,11 @@ class LLMProvider(LLMProviderBase):
             )
 
         tool_config = None
-        if combined_tool_mode:
+        if validated_tool_mode:
             tool_config = types.ToolConfig(
-                include_server_side_tool_invocations=True,
+                include_server_side_tool_invocations=(
+                    True if combined_tool_mode else None
+                ),
                 function_calling_config=types.FunctionCallingConfig(
                     mode=types.FunctionCallingConfigMode.VALIDATED
                 ),
@@ -280,9 +284,6 @@ class LLMProvider(LLMProviderBase):
                     pending_tool_calls, response_parts
                 )
             yield None, pending_tool_calls
-
-        if function_mode:
-            yield None, None
 
     def _iter_stream(self, session_id, contents, config, event_loop):
         if event_loop is None:

@@ -1,7 +1,6 @@
 import os
 import copy
 import json
-import re
 import uuid
 import time
 import queue
@@ -25,6 +24,11 @@ from core.utils.dialogue import Message, Dialogue
 from core.providers.asr.dto.dto import InterfaceType
 from core.handle.textHandle import handleTextMessage
 from core.providers.tools.unified_tool_handler import UnifiedToolHandler
+from core.providers.tools.direct_answer import (
+    DIRECT_ANSWER_TOOL,
+    clean_response_text,
+    extract_response as extract_direct_answer_response,
+)
 from plugins_func.loadplugins import auto_import_modules
 from plugins_func.register import Action, ActionResponse
 from core.auth import AuthenticationError
@@ -44,30 +48,6 @@ auto_import_modules("plugins_func.functions")
 
 class TTSException(RuntimeError):
     pass
-
-# direct_answer 虚拟工具定义
-# 不是真实工具，是路由机制：将"调不调工具"的二选一变为"调哪个"的多选，防止小模型误触发真实工具
-DIRECT_ANSWER_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "direct_answer",
-        "description": (
-            "Use this for conversation, reactions, opinions, jokes, general knowledge, "
-            "and statements that do not request a device action or current-state lookup. "
-            "Put the complete user-facing reply in the response argument."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "response": {
-                    "type": "string",
-                    "description": "The complete user-facing response.",
-                },
-            },
-            "required": ["response"],
-        },
-    },
-}
 
 
 class ConnectionHandler:
@@ -1026,14 +1006,14 @@ class ConnectionHandler:
                     _DA_STREAM_BUFFER = 5
                     for tc in tool_calls_list:
                         if tc["name"] == "direct_answer" and tc.get("arguments"):
-                            da_text = self._extract_direct_answer_response(tc["arguments"])
+                            da_text = extract_direct_answer_response(tc["arguments"])
                             sent_len = tc.get("_da_sent", 0)
                             if da_text and len(da_text) > sent_len:
                                 safe_end = max(sent_len, len(da_text) - _DA_STREAM_BUFFER)
                                 if safe_end > sent_len:
                                     new_part = da_text[sent_len:safe_end]
                                     # 清理 delta 中可能泄漏的 JSON 闭合垃圾
-                                    new_part = self._clean_response_garbage(new_part)
+                                    new_part = clean_response_text(new_part)
                                     if new_part:
                                         tc["_da_sent"] = safe_end
                                         self.tts.tts_text_queue.put(
@@ -1132,29 +1112,44 @@ class ConnectionHandler:
                     self.logger.bind(tag=TAG).debug(
                         "Model selected direct_answer; streamed response was played and added to dialogue history"
                     )
+                    has_direct_answer_output = False
                     for tc in direct_answer_calls:
-                        da_response = self._extract_direct_answer_response(tc.get("arguments", "{}"))
+                        da_response = clean_response_text(
+                            extract_direct_answer_response(
+                                tc.get("arguments", "{}")
+                            )
+                        )
                         if da_response:
+                            has_direct_answer_output = True
                             # 刷新流式缓冲区中未发送的部分
                             sent_len = tc.get("_da_sent", 0)
                             remaining = da_response[sent_len:]
                             if remaining:
-                                remaining = self._clean_response_garbage(remaining)
-                                if remaining:
-                                    self.tts.tts_text_queue.put(
-                                        TTSMessageDTO(
-                                            sentence_id=current_sentence_id,
-                                            sentence_type=SentenceType.MIDDLE,
-                                            content_type=ContentType.TEXT,
-                                            content_detail=remaining,
-                                        )
+                                self.tts.tts_text_queue.put(
+                                    TTSMessageDTO(
+                                        sentence_id=current_sentence_id,
+                                        sentence_type=SentenceType.MIDDLE,
+                                        content_type=ContentType.TEXT,
+                                        content_detail=remaining,
                                     )
+                                )
                             # 写入对话历史
-                            da_response = self._clean_response_garbage(da_response)
                             self.tts.store_tts_text(current_sentence_id, da_response)
                             self.dialogue.put(Message(role="assistant", content=da_response))
 
                     if not real_tool_calls:
+                        if not has_direct_answer_output:
+                            self.logger.bind(tag=TAG).warning(
+                                "Model returned direct_answer without a usable response"
+                            )
+                            self.tts.tts_text_queue.put(
+                                TTSMessageDTO(
+                                    sentence_id=current_sentence_id,
+                                    sentence_type=SentenceType.MIDDLE,
+                                    content_type=ContentType.TEXT,
+                                    content_detail=get_system_error_response(self.config),
+                                )
+                            )
                         if depth == 0:
                             self.tts.tts_text_queue.put(
                                 TTSMessageDTO(
@@ -1735,61 +1730,6 @@ class ConnectionHandler:
                 await asyncio.sleep(30)
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"AEC cache cleanup task failed: {e}")
-
-    @staticmethod
-    def _extract_direct_answer_response(arguments_str):
-        """从 direct_answer 的参数中提取 response 值。
-        优先使用 json.loads 标准解析，流式阶段 fallback 到字符串提取。
-        """
-        if not arguments_str:
-            return ""
-        # 优先尝试标准 JSON 解析（适用于完整且格式正确的 JSON）
-        try:
-            data = json.loads(arguments_str)
-            if isinstance(data, dict) and "response" in data:
-                return data["response"]
-        except (json.JSONDecodeError, TypeError):
-            pass
-        # Fallback：流式阶段 JSON 可能不完整，使用字符串提取
-        marker = '"response": "'
-        idx = arguments_str.find(marker)
-        if idx < 0:
-            marker = '"response":"'
-            idx = arguments_str.find(marker)
-        if idx < 0:
-            return ""
-        start = idx + len(marker)
-        raw = arguments_str[start:]
-        # 去掉末尾的 JSON 闭合符号（如果已完整）
-        if raw.endswith('"}'):
-            raw = raw[:-2]
-        elif raw.endswith('"'):
-            raw = raw[:-1]
-        # 处理 JSON 转义
-        raw = raw.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
-        return raw
-
-    @staticmethod
-    def _clean_response_garbage(text):
-        """清理 response 中可能泄漏的 JSON 闭合符号。
-        模型有时会在 response 内容中生成 JSON 闭合字符（如 ）"}} 或 '})，
-        这些不是故事内容的一部分，需要去除。
-        """
-        if not text:
-            return text
-        # 清理独立一行的 JSON 闭合垃圾（如 ）"}}  '}}  "}}  }}  } ）
-        _garbage_chars = frozenset('")\'}）')
-        lines = text.split('\n')
-        cleaned = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped and len(stripped) <= 8 and all(c in _garbage_chars for c in stripped):
-                continue
-            cleaned.append(line)
-        result = '\n'.join(cleaned)
-        # 清理末尾残留的 JSON 闭合符号
-        result = re.sub(r'["\'}\]]+$', '', result.rstrip()).rstrip()
-        return result
 
     def _merge_tool_calls(self, tool_calls_list, tools_call):
         """合并工具调用列表
