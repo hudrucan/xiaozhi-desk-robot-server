@@ -1,201 +1,67 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
+# OS and editor files
+.DS_Store
 .idea/
+.vscode/
+.cursor/
+.claude/
+.history/
+*.iml
+*.swp
+*.swo
+
+# Python bytecode, caches, and build output
+__pycache__/
 *.py[cod]
 *$py.class
-.vscode
-.claude
-
-# C extensions
 *.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit testdata / coverage reports
-htmlcov/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.hypothesis/
 .tox/
 .nox/
 .coverage
 .coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-*.pid
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow
+htmlcov/
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+*.egg
 __pypackages__/
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
+# Local Python environments and environment variables
 .env
-.venv
-/.venv-*/
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+.env.*
+!.env.example
 .envrc
+.venv/
+.venv-*/
+venv/
+env/
 
-# Repository-local runtimes and package-manager caches
-/.runtime/
-/main/manager-web/.npm-cache/
+# Local server configuration, firmware, logs, and generated audio
+/main/xiaozhi-server/data/
+/main/xiaozhi-server/tmp/
+*.log
+*.pid
 
-# Spyder project settings
-.spyderproject
-.spyproject
+# Local ASR recordings and generated wake-word assets
+/main/xiaozhi-server/config/assets/wakeup_words/
+/main/xiaozhi-server/config/assets/*.wav
+/main/xiaozhi-server/config/assets/*.mp3
+/main/xiaozhi-server/config/assets/*.m4a
+/main/xiaozhi-server/config/assets/*.flac
+/main/xiaozhi-server/config/assets/*.opus
+!/main/xiaozhi-server/config/assets/tts_notify.mp3
+!/main/xiaozhi-server/config/assets/wakeup_words.wav
+!/main/xiaozhi-server/config/assets/wakeup_words_short.wav
 
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# music directory
-music/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-*.iml
-tmp
-.history
-.DS_Store
-main/xiaozhi-server/data
-main/xiaozhi-server/.claude
-
-main/manager-web/node_modules
-.config.yaml
-.secrets.yaml
-.private_config.yaml
-.env.development
-
-# model files
-main/xiaozhi-server/models/SenseVoiceSmall/model.pt
-main/xiaozhi-server/models/sherpa-onnx*
-/main/xiaozhi-server/audio_ref/
-/audio_ref/
-/asr-models/iic/SenseVoiceSmall/
-/main/xiaozhi-server/asr-models/iic/SenseVoiceSmall/
-/models/SenseVoiceSmall/model.pt
-my_wakeup_words.mp3
-!main/xiaozhi-server/config/assets/bind_code.wav
-!main/xiaozhi-server/config/assets/wakeup_words.wav
-!main/xiaozhi-server/config/assets/bind_not_found.wav
-!main/xiaozhi-server/config/assets/bind_code/*.wav
-!main/xiaozhi-server/config/assets/max_output_size.wav
-main/manager-api/.vscode
-# Ignore webpack cache directory
-main/manager-web/.webpack_cache/
-main/xiaozhi-server/mysql
-uploadfile
-*.json
-.vscode
-.cursor
- 
-!package.json
-!**/package.json
-
-# Do not ignore env and json files inside manager-mobile
-!main/manager-mobile/**/env/
-!main/manager-mobile/**/.env*
-!main/manager-mobile/**/*.json
-!main/xiaozhi-server/**/*.json
-!main/digital-human/**/*.json
-main/digital-human/wakeword_runtime/models
-main/digital-human/wakeword_runtime/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01
-sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2
-
-.claude/auto-context.md
+# Additional local model downloads. Keep the bundled defaults versioned.
+/main/xiaozhi-server/models/asr/sherpa/*/
+/main/xiaozhi-server/models/tts/sherpa/*/
+/main/xiaozhi-server/models/vad/*
