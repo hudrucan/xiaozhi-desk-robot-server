@@ -105,9 +105,10 @@ class ServerPluginExecutor(ToolExecutor):
                 and self._has_valid_value(plugin_config.get("api_key"))
             )
         if func_name == "get_weather":
-            return self._has_valid_value(
-                plugin_config.get("api_host")
-            ) and self._has_valid_value(plugin_config.get("api_key"))
+            return (
+                str(plugin_config.get("provider", "")).strip().lower()
+                == "open_meteo"
+            )
         return True
 
     def get_tools(self) -> Dict[str, ToolDefinition]:

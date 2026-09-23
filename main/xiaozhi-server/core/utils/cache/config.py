@@ -14,7 +14,6 @@ class CacheType(Enum):
     LOCATION = "location"
     WEATHER = "weather"
     INTENT = "intent"
-    IP_INFO = "ip_info"
     CONFIG = "config"
     DEVICE_PROMPT = "device_prompt"
     VOICEPRINT_HEALTH = "voiceprint_health"  # 声纹识别健康检查
@@ -36,9 +35,6 @@ class CacheConfig:
         configs = {
             CacheType.LOCATION: cls(
                 strategy=CacheStrategy.TTL, ttl=None, max_size=1000  # 手动失效
-            ),
-            CacheType.IP_INFO: cls(
-                strategy=CacheStrategy.TTL, ttl=86400, max_size=1000  # 24小时
             ),
             CacheType.WEATHER: cls(
                 strategy=CacheStrategy.TTL, ttl=28800, max_size=1000  # 8小时

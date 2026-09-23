@@ -5,7 +5,6 @@ import copy
 import wave
 import socket
 import asyncio
-import requests
 import subprocess
 import numpy as np
 import opuslib_next
@@ -27,75 +26,6 @@ def get_local_ip():
         return local_ip
     except Exception as e:
         return "127.0.0.1"
-
-
-def is_private_ip(ip_addr):
-    """
-    Check if an IP address is a private IP address (compatible with IPv4 and IPv6).
-
-    @param {string} ip_addr - The IP address to check.
-    @return {bool} True if the IP address is private, False otherwise.
-    """
-    try:
-        # Validate IPv4 or IPv6 address format
-        if not re.match(
-            r"^(\d{1,3}\.){3}\d{1,3}$|^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$", ip_addr
-        ):
-            return False  # Invalid IP address format
-
-        # IPv4 private address ranges
-        if "." in ip_addr:  # IPv4 address
-            ip_parts = list(map(int, ip_addr.split(".")))
-            if ip_parts[0] == 10:
-                return True  # 10.0.0.0/8 range
-            elif ip_parts[0] == 172 and 16 <= ip_parts[1] <= 31:
-                return True  # 172.16.0.0/12 range
-            elif ip_parts[0] == 192 and ip_parts[1] == 168:
-                return True  # 192.168.0.0/16 range
-            elif ip_addr == "127.0.0.1":
-                return True  # Loopback address
-            elif ip_parts[0] == 169 and ip_parts[1] == 254:
-                return True  # Link-local address 169.254.0.0/16
-            else:
-                return False  # Not a private IPv4 address
-        else:  # IPv6 address
-            ip_addr = ip_addr.lower()
-            if ip_addr.startswith("fc00:") or ip_addr.startswith("fd00:"):
-                return True  # Unique Local Addresses (FC00::/7)
-            elif ip_addr == "::1":
-                return True  # Loopback address
-            elif ip_addr.startswith("fe80:"):
-                return True  # Link-local unicast addresses (FE80::/10)
-            else:
-                return False  # Not a private IPv6 address
-
-    except (ValueError, IndexError):
-        return False  # IP address format error or insufficient segments
-
-
-def get_ip_info(ip_addr, logger):
-    try:
-        # 导入全局缓存管理器
-        from core.utils.cache.manager import cache_manager, CacheType
-
-        # 先从缓存获取
-        cached_ip_info = cache_manager.get(CacheType.IP_INFO, ip_addr)
-        if cached_ip_info is not None:
-            return cached_ip_info
-
-        # 缓存未命中，调用API
-        if is_private_ip(ip_addr):
-            ip_addr = ""
-        url = f"https://whois.pconline.com.cn/ipJson.jsp?json=true&ip={ip_addr}"
-        resp = requests.get(url).json()
-        ip_info = {"city": resp.get("city")}
-
-        # 存入缓存
-        cache_manager.set(CacheType.IP_INFO, ip_addr, ip_info)
-        return ip_info
-    except Exception as e:
-        logger.bind(tag=TAG).error(f"Error getting client ip info: {e}")
-        return {}
 
 
 def write_json_file(file_path, data):

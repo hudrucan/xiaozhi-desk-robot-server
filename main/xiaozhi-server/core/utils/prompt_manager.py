@@ -106,41 +106,31 @@ class PromptManager:
         return today_date, today_weekday
 
     def _get_location_info(self, client_ip: str) -> str:
-        """获取位置信息"""
+        """Return the configured location for this single-device server."""
         try:
-            # 先从缓存获取
-            cached_location = self.cache_manager.get(self.CacheType.LOCATION, client_ip)
-            if cached_location is not None:
-                return cached_location
+            default_location = str(
+                self.config.get("plugins", {})
+                .get("get_weather", {})
+                .get("default_location", "")
+            ).strip()
+            if default_location:
+                self.cache_manager.set(
+                    self.CacheType.LOCATION, client_ip, default_location
+                )
+                return default_location
 
-            # 缓存未命中，调用API获取
-            from core.utils.util import get_ip_info
-
-            ip_info = get_ip_info(client_ip, self.logger)
-            city = ip_info.get("city", "Unknown location")
-            location = f"{city}"
-
-            # 存入缓存
-            self.cache_manager.set(self.CacheType.LOCATION, client_ip, location)
-            return location
+            return ""
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"Failed to get location information: {e}")
-            return "Unknown location"
+            return ""
 
     def _get_weather_info(self, conn: "ConnectionHandler", location: str) -> str:
         """获取天气信息"""
         try:
             weather_config = conn.config.get("plugins", {}).get("get_weather", {})
-            api_host = str(weather_config.get("api_host", "")).strip()
-            api_key = str(weather_config.get("api_key", "")).strip()
+            provider = str(weather_config.get("provider", "")).strip().lower()
             language = str(weather_config.get("language", "en")).strip() or "en"
-            invalid_markers = ("your_", "your ", "placeholder", "xxx", "你的")
-            if (
-                not api_host
-                or not api_key
-                or any(marker in api_host.lower() for marker in invalid_markers)
-                or any(marker in api_key.lower() for marker in invalid_markers)
-            ):
+            if provider != "open_meteo":
                 return ""
 
             # 先从缓存获取
@@ -177,7 +167,17 @@ class PromptManager:
             result = result_holder[0]
             if isinstance(result, ActionResponse):
                 weather_report = result.result
-                self.cache_manager.set(self.CacheType.WEATHER, location, weather_report)
+                if weather_report:
+                    cache_ttl_seconds = max(
+                        60,
+                        int(weather_config.get("cache_ttl_seconds", 1800)),
+                    )
+                    self.cache_manager.set(
+                        self.CacheType.WEATHER,
+                        location,
+                        weather_report,
+                        ttl=cache_ttl_seconds,
+                    )
                 return weather_report
             return "Weather information is unavailable"
 
