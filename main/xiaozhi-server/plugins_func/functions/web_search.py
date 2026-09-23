@@ -77,7 +77,15 @@ async def _search_metaso(api_key: str, query: str, max_results: int) -> str:
     return "\n".join(lines)
 
 
-async def _search_tavily(api_key: str, query: str, max_results: int) -> str:
+async def _search_tavily(
+    api_key: str,
+    query: str,
+    max_results: int,
+    search_depth: str = "advanced",
+    include_answer: str | bool = "advanced",
+    country: str = "",
+    language: str = "",
+) -> str:
     """Call the Tavily search API."""
     url = "https://api.tavily.com/search"
     headers = {
@@ -87,12 +95,17 @@ async def _search_tavily(api_key: str, query: str, max_results: int) -> str:
     payload = {
         "query": query,
         "max_results": max_results,
-        "search_depth": "advanced",
-        "include_answer": "advanced",
+        "search_depth": search_depth,
+        "include_answer": include_answer,
     }
+    if country:
+        payload["country"] = country
+    if language:
+        payload["language"] = language
     logger.bind(tag=TAG).debug(f"Tavily request | URL: {url} | payload: {payload}")
     async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=3.0)) as client:
         response = await client.post(url, json=payload, headers=headers)
+    response.raise_for_status()
     data = response.json()
     logger.bind(tag=TAG).debug(f"Tavily response | status: {response.status_code} | data: {data}")
 
@@ -101,13 +114,18 @@ async def _search_tavily(api_key: str, query: str, max_results: int) -> str:
         return "No relevant search results were found."
 
     answer = data.get("answer", "")
-    lines = [f"【联网搜索结果】\n总结：{answer}"]
-    # for i, item in enumerate(results, 1):
-    #     title = item.get("title", "无标题")
-    #     summary = item.get("content", "")
-    #     lines.append(f"{i}. 标题：{title}")
-    #     if summary:
-    #         lines.append(f"   摘要：{summary}")
+    lines = ["【Web search results】"]
+    if answer:
+        lines.append(f"Summary: {answer}")
+    for i, item in enumerate(results, 1):
+        title = item.get("title", "Untitled")
+        url = item.get("url", "")
+        summary = item.get("content", "")
+        lines.append(f"{i}. {title}")
+        if url:
+            lines.append(f"   URL: {url}")
+        if summary:
+            lines.append(f"   Snippet: {summary}")
 
     return "\n".join(lines)
 
@@ -137,7 +155,15 @@ async def web_search(conn: "ConnectionHandler", query: str = None):
         if provider == "metaso":
             result_text = await _search_metaso(api_key, query, max_results)
         elif provider == "tavily":
-            result_text = await _search_tavily(api_key, query, max_results)
+            result_text = await _search_tavily(
+                api_key,
+                query,
+                max_results,
+                search_depth=str(web_search_config.get("search_depth", "advanced")),
+                include_answer=web_search_config.get("include_answer", "advanced"),
+                country=str(web_search_config.get("country", "") or ""),
+                language=str(web_search_config.get("language", "") or ""),
+            )
         else:
             return ActionResponse(
                 Action.REQLLM,

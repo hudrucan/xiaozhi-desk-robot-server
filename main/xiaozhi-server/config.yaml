@@ -123,6 +123,11 @@ module_test:
     - "Tell me a short joke."
     - "Briefly compare tea and coffee."
     - "Describe a calm evening scene in one sentence."
+  # Search-only prompts used by the web_search benchmark.
+  web_search_queries:
+    - "What are today's major technology news stories?"
+    - "What is the current weather in Ho Chi Minh City?"
+    - "What is the latest USD to VND exchange rate?"
 
 # Wake words used to distinguish activation from regular speech.
 wakeup_words:
@@ -153,6 +158,11 @@ plugins:
     description: "Search the web when the user explicitly asks for current online information."
     max_results: 5
     api_key: ""
+    # Tavily-specific options. Leave country/language empty for automatic selection.
+    search_depth: advanced
+    include_answer: advanced
+    country: ""
+    language: ""
 # Optional voiceprint recognition configuration.
 voiceprint:
   # Voiceprint service endpoint.
