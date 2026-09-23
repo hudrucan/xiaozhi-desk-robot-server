@@ -46,12 +46,26 @@ def select_prompts(config, count, seed):
     return prompts, selected[:count]
 
 
-def collect_response(provider, messages):
+def collect_response(provider, messages, use_function_path=False):
     started_at = time.perf_counter()
     first_output = None
     response_parts = []
 
-    for chunk in provider.response("performance-test", messages):
+    if use_function_path:
+        chunks = provider.response_with_functions(
+            "performance-test", messages, functions=[]
+        )
+    else:
+        chunks = provider.response("performance-test", messages)
+
+    for chunk in chunks:
+        if use_function_path:
+            content, tool_calls = chunk
+            if tool_calls:
+                raise RuntimeError(
+                    "The search-only benchmark received an unexpected custom tool call"
+                )
+            chunk = content
         if not chunk:
             continue
         if first_output is None:
@@ -62,7 +76,12 @@ def collect_response(provider, messages):
     response = "".join(response_parts).strip()
     if first_output is None or not response:
         raise RuntimeError("Provider returned no response")
-    return first_output, total, response
+    search_used = (
+        getattr(provider, "last_native_google_search_used", None)
+        if use_function_path
+        else None
+    )
+    return first_output, total, response, search_used
 
 
 def format_stats(label, values):
@@ -84,6 +103,7 @@ async def main():
         raise ValueError("The selected LLM provider is not configured")
 
     provider_type = provider_config.get("type", provider_name)
+    use_native_search = bool(provider_config.get("native_google_search", False))
     initial_usage = process_usage()
     initialization_started_at = time.perf_counter()
     provider = create_llm_instance(provider_type, provider_config)
@@ -99,6 +119,7 @@ async def main():
     prompt_set, prompts = select_prompts(config, runs, seed)
     first_output_times = []
     total_times = []
+    search_usage = []
 
     model_name = provider_config.get("model_name", "default")
     print(f"LLM provider: {provider_name} ({provider_type}, {model_name})")
@@ -110,6 +131,10 @@ async def main():
     print(f"Samples: {runs}; timeout per sample: {timeout}s")
     print(f"Prompt set: {len(prompt_set)}; seed: {seed}")
     print(f"System prompt: {len(system_prompt)} characters")
+    print(
+        "Native Google Search path: "
+        f"{'enabled' if use_native_search else 'disabled'}"
+    )
 
     for sample_number, prompt in enumerate(prompts, 1):
         messages = [
@@ -117,17 +142,26 @@ async def main():
             {"role": "user", "content": prompt},
         ]
         try:
-            first_output, total, response = await asyncio.wait_for(
-                asyncio.to_thread(collect_response, provider, messages),
+            first_output, total, response, search_used = await asyncio.wait_for(
+                asyncio.to_thread(
+                    collect_response,
+                    provider,
+                    messages,
+                    use_native_search,
+                ),
                 timeout=timeout,
             )
             first_output_times.append(first_output)
             total_times.append(total)
+            if search_used is not None:
+                search_usage.append(search_used)
             print(f"\nSample {sample_number}/{runs}: {prompt}")
             print(
                 f"First output {first_output:.3f}s, total {total:.3f}s - "
                 f"{response[:100]}"
             )
+            if search_used is not None:
+                print(f"Search used: {'yes' if search_used else 'no'}")
         except asyncio.TimeoutError:
             print(f"\nSample {sample_number}/{runs}: timed out after {timeout}s")
             print("Stopping to avoid overlapping requests from a timed-out call.")
@@ -143,6 +177,8 @@ async def main():
     if total_times:
         print(format_stats("First output", first_output_times))
         print(format_stats("Total response", total_times))
+    if search_usage:
+        print(f"Google Search used: {sum(search_usage)}/{len(search_usage)} samples")
     print_benchmark_usage(initialized_usage)
 
 

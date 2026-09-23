@@ -1,6 +1,6 @@
 import os, json, uuid
 from types import SimpleNamespace
-from typing import Any, Dict, Iterator, List
+from typing import Any, Dict, Iterator
 
 import requests
 from google import genai
@@ -10,12 +10,10 @@ from core.providers.llm.base import LLMProviderBase
 from core.utils.util import check_model_key
 from config.logger import setup_logging
 from requests import RequestException
+from .tooling import GeminiTooling
 
 log = setup_logging()
 TAG = __name__
-
-_MISSING_THOUGHT_SIGNATURE = b"skip_thought_signature_validator"
-_MAX_CACHED_THOUGHT_SIGNATURES = 256
 
 
 def test_proxy(proxy_url: str, test_url: str) -> bool:
@@ -83,6 +81,11 @@ class LLMProvider(LLMProviderBase):
                 f"Gemini proxy setup completed - HTTP: {http_proxy}, HTTPS: {https_proxy}"
             )
         self.timeout = cfg.get("timeout", 120)
+        self.native_google_search = bool(cfg.get("native_google_search", False))
+        self.tooling = GeminiTooling(
+            self.native_google_search, self.model_name
+        )
+        self.last_native_google_search_used = False
 
         # Create one provider client and reuse it across turns.
         self.client = genai.Client(api_key=self.api_key)
@@ -93,33 +96,27 @@ class LLMProvider(LLMProviderBase):
             "top_k": 40,
             "max_output_tokens": 2048,
         }
-        self._thought_signatures: Dict[str, bytes] = {}
-
-    @staticmethod
-    def _build_tools(funcs: List[Dict[str, Any]] | None):
-        if not funcs:
-            return None
-        return [
-            types.Tool(
-                function_declarations=[
-                    types.FunctionDeclaration(
-                        name=f["function"]["name"],
-                        description=f["function"]["description"],
-                        parameters_json_schema=f["function"]["parameters"],
-                    )
-                    for f in funcs
-                ]
-            )
-        ]
 
     # Gemini receives the complete dialogue, so no provider session ID is needed.
     def response(self, session_id, dialogue, **kwargs):
-        yield from self._generate(dialogue, None)
+        # Native search follows the existing server-tool behavior and is only
+        # exposed in function-call mode. The same Gemini config may also be
+        # reused by memory or intent providers, where search is not appropriate.
+        yield from self._generate(dialogue, None, function_mode=False)
 
     def response_with_functions(self, session_id, dialogue, functions=None):
-        yield from self._generate(dialogue, self._build_tools(functions))
+        tools, has_custom_tools = self.tooling.build_tools(functions)
+        yield from self._generate(
+            dialogue,
+            tools,
+            function_mode=True,
+            combined_tool_mode=self.native_google_search and has_custom_tools,
+        )
 
-    def _generate(self, dialogue, tools):
+    def _generate(
+        self, dialogue, tools, function_mode, combined_tool_mode=False
+    ):
+        self.last_native_google_search_used = False
         role_map = {"assistant": "model", "user": "user"}
         contents: list = []
         tool_call_names = {}
@@ -128,34 +125,10 @@ class LLMProvider(LLMProviderBase):
             r = m["role"]
 
             if r == "assistant" and "tool_calls" in m:
-                parts = []
-                for tc in m["tool_calls"]:
-                    tool_call_id = tc.get("id")
-                    tool_name = tc["function"]["name"]
-                    if tool_call_id:
-                        tool_call_names[tool_call_id] = tool_name
-
-                    function_call = {
-                        "name": tool_name,
-                        "args": json.loads(tc["function"]["arguments"]),
-                    }
-                    if tool_call_id:
-                        function_call["id"] = tool_call_id
-
-                    parts.append(
-                        {
-                            "function_call": function_call,
-                            "thought_signature": self._thought_signatures.get(
-                                tool_call_id, _MISSING_THOUGHT_SIGNATURE
-                            ),
-                        }
+                tool_call_names.update(
+                    self.tooling.append_model_tool_calls(
+                        contents, m["tool_calls"]
                     )
-
-                contents.append(
-                    {
-                        "role": "model",
-                        "parts": parts,
-                    }
                 )
                 continue
 
@@ -203,9 +176,19 @@ class LLMProvider(LLMProviderBase):
                 }
             )
 
+        tool_config = None
+        if combined_tool_mode:
+            tool_config = types.ToolConfig(
+                include_server_side_tool_invocations=True,
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=types.FunctionCallingConfigMode.VALIDATED
+                ),
+            )
+
         config = types.GenerateContentConfig(
             **self.gen_cfg,
             tools=tools,
+            tool_config=tool_config,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                 disable=True
             ),
@@ -218,27 +201,36 @@ class LLMProvider(LLMProviderBase):
         )
 
         try:
+            response_parts = []
+            pending_tool_calls = []
             for chunk in stream:
+                if not chunk.candidates:
+                    continue
                 cand = chunk.candidates[0]
-                tool_calls = []
+                if getattr(cand, "grounding_metadata", None):
+                    self.last_native_google_search_used = True
+                if not cand.content or not cand.content.parts:
+                    continue
                 for part in cand.content.parts:
+                    response_parts.append(part.model_copy(deep=True))
+                    server_tool_call = getattr(part, "tool_call", None)
+                    server_tool_response = getattr(part, "tool_response", None)
+                    server_tool = server_tool_call or server_tool_response
+                    if server_tool and "GOOGLE_SEARCH" in str(
+                        getattr(server_tool, "tool_type", "")
+                    ):
+                        self.last_native_google_search_used = True
                     # Function call.
                     if getattr(part, "function_call", None):
                         fc = part.function_call
                         tool_call_id = getattr(fc, "id", None) or uuid.uuid4().hex
                         if part.thought_signature:
-                            self._thought_signatures[tool_call_id] = (
-                                part.thought_signature
+                            self.tooling.remember_thought_signature(
+                                tool_call_id, part.thought_signature
                             )
-                            if (
-                                len(self._thought_signatures)
-                                > _MAX_CACHED_THOUGHT_SIGNATURES
-                            ):
-                                oldest_id = next(iter(self._thought_signatures))
-                                self._thought_signatures.pop(oldest_id, None)
-                        tool_calls.append(
+                        pending_tool_calls.append(
                             SimpleNamespace(
-                                index=len(tool_calls),
+                                index=len(pending_tool_calls),
                                 id=tool_call_id,
                                 type="function",
                                 function=SimpleNamespace(
@@ -252,14 +244,21 @@ class LLMProvider(LLMProviderBase):
                         continue
                     # Regular text output.
                     if getattr(part, "text", None):
-                        yield part.text if tools is None else (part.text, None)
+                        yield (
+                            (part.text, None)
+                            if function_mode
+                            else part.text
+                        )
 
-                if tool_calls:
-                    yield None, tool_calls
-                    return
+            if pending_tool_calls:
+                if combined_tool_mode:
+                    self.tooling.remember_combined_context(
+                        pending_tool_calls, response_parts
+                    )
+                yield None, pending_tool_calls
 
         finally:
-            if tools is not None:
+            if function_mode:
                 yield None, None  # Mark the end of function-call mode.
 
     # Close a stream on abort to stop quota and resource consumption promptly.

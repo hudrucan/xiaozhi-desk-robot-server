@@ -263,6 +263,9 @@ LLM:
     type: gemini
     api_key: your_api_key
     model_name: your_gemini_model
+    # Gemini 3 only. Uses managed Google Search while keeping web_search as a
+    # custom-tool fallback for non-Gemini providers.
+    native_google_search: false
     timeout: 120
     http_proxy: ""
     https_proxy: ""
