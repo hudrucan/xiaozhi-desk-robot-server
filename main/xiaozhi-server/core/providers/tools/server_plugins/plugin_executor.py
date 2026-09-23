@@ -1,6 +1,7 @@
 """Server plugin tool executor."""
 
 import asyncio
+import copy
 from typing import Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -83,6 +84,44 @@ class ServerPluginExecutor(ToolExecutor):
                 return plugins[module_name].get("description", "")
         return ""
 
+    def _build_function_description(self, func_name, func_item):
+        description = copy.deepcopy(func_item.description)
+        configured_description = self._get_plugin_description(func_name)
+        function = description.get("function", {})
+
+        if configured_description and isinstance(function, dict):
+            function["description"] = configured_description
+
+        if func_name == "manage_memory" and isinstance(function, dict):
+            memory_config = self.config.get("Memory", {}).get(
+                "mem_local_explicit", {}
+            )
+            recall_enabled = memory_config.get("recall_enabled", True)
+            if isinstance(recall_enabled, str):
+                recall_enabled = recall_enabled.strip().lower() not in {
+                    "0",
+                    "false",
+                    "no",
+                    "off",
+                }
+            if not recall_enabled:
+                action_schema = (
+                    function.get("parameters", {})
+                    .get("properties", {})
+                    .get("action", {})
+                )
+                actions = action_schema.get("enum", [])
+                action_schema["enum"] = [
+                    action for action in actions if action != "recall"
+                ]
+                function["description"] = (
+                    "Manage durable local memory only when the user explicitly "
+                    "asks to remember, forget, or list saved information. Never "
+                    "save ordinary conversation automatically."
+                )
+
+        return description
+
     @staticmethod
     def _has_valid_value(value):
         if value is None:
@@ -142,18 +181,11 @@ class ServerPluginExecutor(ToolExecutor):
         for func_name in all_required_functions:
             func_item = all_function_registry.get(func_name)
             if func_item and self._is_configured(func_name):
-                fun_description = self._get_plugin_description(func_name)
-                if fun_description is not None and len(fun_description) > 0:
-                    if "function" in func_item.description and isinstance(
-                        func_item.description["function"], dict
-                    ):
-                        func_item.description["function"][
-                            "description"
-                        ] = fun_description
-
                 tools[func_name] = ToolDefinition(
                     name=func_name,
-                    description=func_item.description,
+                    description=self._build_function_description(
+                        func_name, func_item
+                    ),
                     tool_type=ToolType.SERVER_PLUGIN,
                 )
 

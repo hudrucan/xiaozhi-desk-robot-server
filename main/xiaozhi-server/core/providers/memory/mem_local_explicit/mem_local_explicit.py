@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import threading
 import uuid
@@ -12,6 +13,23 @@ from ..base import MemoryProviderBase, logger
 
 TAG = __name__
 _FILE_LOCK = threading.RLock()
+_RECALL_STOP_WORDS = {
+    "about",
+    "and",
+    "của",
+    "cho",
+    "gì",
+    "hãy",
+    "là",
+    "memory",
+    "nhớ",
+    "the",
+    "tôi",
+    "ta",
+    "tao",
+    "về",
+    "what",
+}
 
 
 class MemoryProvider(MemoryProviderBase):
@@ -25,9 +43,13 @@ class MemoryProvider(MemoryProviderBase):
             if os.path.isabs(configured_path)
             else os.path.join(get_project_dir(), configured_path)
         )
-        self.max_entries = max(1, int(config.get("max_entries", 50)))
+        self.max_entries = max(1, int(config.get("max_entries", 200)))
         self.entry_max_chars = max(50, int(config.get("entry_max_chars", 300)))
         self.inject_max_chars = max(0, int(config.get("inject_max_chars", 1200)))
+        self.recall_enabled = self._as_bool(config.get("recall_enabled", True))
+        self.recall_max_chars = max(
+            0, int(config.get("recall_max_chars", self.inject_max_chars))
+        )
         self.entries = []
 
     def init_memory(self, role_id, llm, summary_memory=None, **kwargs):
@@ -39,24 +61,75 @@ class MemoryProvider(MemoryProviderBase):
         return None
 
     async def query_memory(self, query: str) -> str:
-        if self.inject_max_chars == 0:
+        if self.recall_enabled:
+            return ""
+
+        return self._render_entries(reversed(self.entries), self.inject_max_chars)
+
+    def recall(self, query: str):
+        if not self.recall_enabled or self.recall_max_chars == 0:
+            return ""
+
+        candidates = list(reversed(self.entries))
+        normalized_query = self._normalize_for_search(query)
+        query_terms = self._search_terms(normalized_query)
+
+        if query_terms:
+            ranked = []
+            for recency, entry in enumerate(candidates):
+                normalized_content = self._normalize_for_search(
+                    entry.get("content", "")
+                )
+                overlap = sum(term in normalized_content for term in query_terms)
+                phrase_match = bool(
+                    normalized_query and normalized_query in normalized_content
+                )
+                if overlap or phrase_match:
+                    ranked.append((phrase_match, overlap, -recency, entry))
+
+            if ranked:
+                ranked.sort(reverse=True, key=lambda item: item[:3])
+                candidates = [item[3] for item in ranked]
+
+        return self._render_entries(candidates, self.recall_max_chars)
+
+    @staticmethod
+    def _render_entries(entries, max_chars):
+        if max_chars == 0:
             return ""
 
         rendered = []
         used_chars = 0
-        for entry in reversed(self.entries):
+        for entry in entries:
             line = f"- {entry['content']}"
             added_chars = len(line) + (1 if rendered else 0)
-            if rendered and used_chars + added_chars > self.inject_max_chars:
+            if rendered and used_chars + added_chars > max_chars:
                 break
-            if not rendered and len(line) > self.inject_max_chars:
-                line = line[: self.inject_max_chars].rstrip()
+            if not rendered and len(line) > max_chars:
+                line = line[:max_chars].rstrip()
                 added_chars = len(line)
             rendered.append(line)
             used_chars += added_chars
 
-        rendered.reverse()
         return "\n".join(rendered)
+
+    @staticmethod
+    def _normalize_for_search(value):
+        return " ".join(str(value or "").casefold().split())
+
+    @staticmethod
+    def _search_terms(value):
+        return {
+            term
+            for term in re.findall(r"\w+", value, flags=re.UNICODE)
+            if len(term) > 1 and term not in _RECALL_STOP_WORDS
+        }
+
+    @staticmethod
+    def _as_bool(value):
+        if isinstance(value, str):
+            return value.strip().lower() not in {"0", "false", "no", "off"}
+        return bool(value)
 
     def remember(self, content: str):
         normalized = " ".join(str(content or "").split()).strip()

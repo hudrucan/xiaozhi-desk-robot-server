@@ -12,21 +12,23 @@ MANAGE_MEMORY_FUNCTION_DESC = {
         "name": "manage_memory",
         "description": (
             "Manage durable local memory only when the user explicitly asks to "
-            "remember, forget, or list saved information. Never save ordinary "
-            "conversation automatically."
+            "remember or forget information, asks what is saved, or asks a "
+            "question that depends on a previously saved personal fact. Use "
+            "recall before answering questions about saved facts. Never save "
+            "ordinary conversation automatically."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["remember", "forget", "list"],
+                    "enum": ["remember", "recall", "forget", "list"],
                 },
                 "content": {
                     "type": "string",
                     "description": (
-                        "A concise fact to save, or a short phrase identifying "
-                        "memories to delete. Omit for list."
+                        "A concise fact to save, or a short search phrase for "
+                        "recall or deletion. Omit only for list."
                     ),
                 }
             },
@@ -52,7 +54,7 @@ def _explicit_memory(conn: "ConnectionHandler"):
     memory = getattr(conn, "memory", None)
     if not all(
         callable(getattr(memory, method, None))
-        for method in ("remember", "forget", "list_entries")
+        for method in ("remember", "recall", "forget", "list_entries")
     ):
         return None
     return memory
@@ -79,6 +81,37 @@ async def manage_memory(
                 ),
             )
         response = _response(conn, "remembered", "I will remember that.")
+    elif normalized_action == "recall":
+        if not memory.recall_enabled:
+            return ActionResponse(
+                Action.ERROR,
+                response=_response(
+                    conn, "recall_disabled", "Memory recall is disabled."
+                ),
+            )
+        if not str(content or "").strip():
+            return ActionResponse(
+                Action.ERROR,
+                response=_response(
+                    conn, "missing_content", "No memory content was provided."
+                ),
+            )
+        recalled = memory.recall(content)
+        if not recalled:
+            return ActionResponse(
+                Action.RESPONSE,
+                response=_response(
+                    conn, "not_found", "I could not find a matching memory."
+                ),
+            )
+        return ActionResponse(
+            Action.REQLLM,
+            result=(
+                "Saved local memories relevant to the user's request:\n"
+                f"{recalled}\n"
+                "Answer from these facts and do not call the memory tool again."
+            ),
+        )
     elif normalized_action == "forget":
         removed = memory.forget(content)
         if removed:

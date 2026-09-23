@@ -254,14 +254,17 @@ Memory:
   mem_local_explicit:
     type: mem_local_explicit
     path: data/.memory.yaml
-    max_entries: 50
+    max_entries: 200
     entry_max_chars: 300
+    recall_enabled: true
+    recall_max_chars: 2000
     inject_max_chars: 1200
     responses:
       remembered: I will remember that.
       forgotten: I forgot that.
       not_found: I could not find a matching memory.
       empty: I do not have any saved memories yet.
+      recall_disabled: Memory recall is disabled.
       unavailable: Local memory is not enabled.
       missing_content: No memory content was provided.
       unsupported_action: Unsupported memory action.
