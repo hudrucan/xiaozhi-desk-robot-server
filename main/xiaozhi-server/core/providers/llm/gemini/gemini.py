@@ -1,4 +1,8 @@
+import asyncio
 import os, json, uuid
+import queue
+import threading
+from concurrent.futures import Future
 from types import SimpleNamespace
 from typing import Any, Dict, Iterator
 
@@ -62,6 +66,8 @@ def setup_proxy_env(http_proxy: str | None, https_proxy: str | None):
 
 
 class LLMProvider(LLMProviderBase):
+    supports_request_cancellation = True
+
     def __init__(self, cfg: Dict[str, Any]):
         self.model_name = cfg.get("model_name", "gemini-2.0-flash")
         self.api_key = cfg["api_key"]
@@ -89,6 +95,8 @@ class LLMProvider(LLMProviderBase):
 
         # Create one provider client and reuse it across turns.
         self.client = genai.Client(api_key=self.api_key)
+        self._active_requests: Dict[str, Future] = {}
+        self._active_requests_lock = threading.Lock()
 
         self.gen_cfg = {
             "temperature": 0.7,
@@ -102,19 +110,39 @@ class LLMProvider(LLMProviderBase):
         # Native search follows the existing server-tool behavior and is only
         # exposed in function-call mode. The same Gemini config may also be
         # reused by memory or intent providers, where search is not appropriate.
-        yield from self._generate(dialogue, None, function_mode=False)
+        yield from self._generate(
+            session_id,
+            dialogue,
+            None,
+            function_mode=False,
+            event_loop=kwargs.get("event_loop"),
+        )
 
-    def response_with_functions(self, session_id, dialogue, functions=None):
+    def response_with_functions(
+        self,
+        session_id,
+        dialogue,
+        functions=None,
+        **kwargs,
+    ):
         tools, has_custom_tools = self.tooling.build_tools(functions)
         yield from self._generate(
+            session_id,
             dialogue,
             tools,
             function_mode=True,
             combined_tool_mode=self.native_google_search and has_custom_tools,
+            event_loop=kwargs.get("event_loop"),
         )
 
     def _generate(
-        self, dialogue, tools, function_mode, combined_tool_mode=False
+        self,
+        session_id,
+        dialogue,
+        tools,
+        function_mode,
+        combined_tool_mode=False,
+        event_loop=None,
     ):
         self.last_native_google_search_used = False
         role_map = {"assistant": "model", "user": "user"}
@@ -194,78 +222,151 @@ class LLMProvider(LLMProviderBase):
             ),
             http_options=types.HttpOptions(timeout=int(self.timeout * 1000)),
         )
-        stream = self.client.models.generate_content_stream(
-            model=self.model_name,
-            contents=contents,
-            config=config,
+        response_parts = []
+        pending_tool_calls = []
+        for chunk in self._iter_stream(
+            session_id,
+            contents,
+            config,
+            event_loop,
+        ):
+            if not chunk.candidates:
+                continue
+            cand = chunk.candidates[0]
+            if getattr(cand, "grounding_metadata", None):
+                self.last_native_google_search_used = True
+            if not cand.content or not cand.content.parts:
+                continue
+            for part in cand.content.parts:
+                response_parts.append(part.model_copy(deep=True))
+                server_tool_call = getattr(part, "tool_call", None)
+                server_tool_response = getattr(part, "tool_response", None)
+                server_tool = server_tool_call or server_tool_response
+                if server_tool and "GOOGLE_SEARCH" in str(
+                    getattr(server_tool, "tool_type", "")
+                ):
+                    self.last_native_google_search_used = True
+                if getattr(part, "function_call", None):
+                    fc = part.function_call
+                    tool_call_id = getattr(fc, "id", None) or uuid.uuid4().hex
+                    if part.thought_signature:
+                        self.tooling.remember_thought_signature(
+                            tool_call_id, part.thought_signature
+                        )
+                    pending_tool_calls.append(
+                        SimpleNamespace(
+                            index=len(pending_tool_calls),
+                            id=tool_call_id,
+                            type="function",
+                            function=SimpleNamespace(
+                                name=fc.name,
+                                arguments=json.dumps(
+                                    dict(fc.args), ensure_ascii=False
+                                ),
+                            ),
+                        )
+                    )
+                    continue
+                if getattr(part, "text", None):
+                    yield (
+                        (part.text, None)
+                        if function_mode
+                        else part.text
+                    )
+
+        if pending_tool_calls:
+            if combined_tool_mode:
+                self.tooling.remember_combined_context(
+                    pending_tool_calls, response_parts
+                )
+            yield None, pending_tool_calls
+
+        if function_mode:
+            yield None, None
+
+    def _iter_stream(self, session_id, contents, config, event_loop):
+        if event_loop is None:
+            stream = self.client.models.generate_content_stream(
+                model=self.model_name,
+                contents=contents,
+                config=config,
+            )
+            try:
+                yield from stream
+            finally:
+                self._safe_finish_stream(stream)
+            return
+
+        output = queue.Queue()
+        request = asyncio.run_coroutine_threadsafe(
+            self._produce_stream(contents, config, output),
+            event_loop,
         )
+        request.add_done_callback(lambda _: output.put(("done", None)))
+        self._register_request(session_id, request)
 
         try:
-            response_parts = []
-            pending_tool_calls = []
-            for chunk in stream:
-                if not chunk.candidates:
-                    continue
-                cand = chunk.candidates[0]
-                if getattr(cand, "grounding_metadata", None):
-                    self.last_native_google_search_used = True
-                if not cand.content or not cand.content.parts:
-                    continue
-                for part in cand.content.parts:
-                    response_parts.append(part.model_copy(deep=True))
-                    server_tool_call = getattr(part, "tool_call", None)
-                    server_tool_response = getattr(part, "tool_response", None)
-                    server_tool = server_tool_call or server_tool_response
-                    if server_tool and "GOOGLE_SEARCH" in str(
-                        getattr(server_tool, "tool_type", "")
-                    ):
-                        self.last_native_google_search_used = True
-                    # Function call.
-                    if getattr(part, "function_call", None):
-                        fc = part.function_call
-                        tool_call_id = getattr(fc, "id", None) or uuid.uuid4().hex
-                        if part.thought_signature:
-                            self.tooling.remember_thought_signature(
-                                tool_call_id, part.thought_signature
-                            )
-                        pending_tool_calls.append(
-                            SimpleNamespace(
-                                index=len(pending_tool_calls),
-                                id=tool_call_id,
-                                type="function",
-                                function=SimpleNamespace(
-                                    name=fc.name,
-                                    arguments=json.dumps(
-                                        dict(fc.args), ensure_ascii=False
-                                    ),
-                                ),
-                            )
-                        )
-                        continue
-                    # Regular text output.
-                    if getattr(part, "text", None):
-                        yield (
-                            (part.text, None)
-                            if function_mode
-                            else part.text
-                        )
-
-            if pending_tool_calls:
-                if combined_tool_mode:
-                    self.tooling.remember_combined_context(
-                        pending_tool_calls, response_parts
-                    )
-                yield None, pending_tool_calls
-
+            while True:
+                kind, payload = output.get()
+                if kind == "chunk":
+                    yield payload
+                elif kind == "error":
+                    raise payload
+                elif kind in {"cancelled", "done"}:
+                    return
         finally:
-            if function_mode:
-                yield None, None  # Mark the end of function-call mode.
+            self._unregister_request(session_id, request)
+            if not request.done():
+                request.cancel()
+
+    async def _produce_stream(self, contents, config, output):
+        stream = None
+        outcome = None
+        try:
+            stream = await self.client.aio.models.generate_content_stream(
+                model=self.model_name,
+                contents=contents,
+                config=config,
+            )
+            async for chunk in stream:
+                output.put(("chunk", chunk))
+        except asyncio.CancelledError:
+            outcome = ("cancelled", None)
+        except Exception as error:
+            outcome = ("error", error)
+        finally:
+            if stream is not None and hasattr(stream, "aclose"):
+                await stream.aclose()
+            if outcome is not None:
+                output.put(outcome)
+
+    def _register_request(self, session_id, request):
+        if not session_id:
+            return
+        with self._active_requests_lock:
+            previous = self._active_requests.get(session_id)
+            self._active_requests[session_id] = request
+        if previous is not None and not previous.done():
+            previous.cancel()
+
+    def _unregister_request(self, session_id, request):
+        if not session_id:
+            return
+        with self._active_requests_lock:
+            if self._active_requests.get(session_id) is request:
+                self._active_requests.pop(session_id, None)
+
+    def cancel(self, session_id):
+        """Cancel the in-flight request owned by one connection."""
+        with self._active_requests_lock:
+            request = self._active_requests.get(session_id)
+        if request is None or request.done():
+            return False
+        request.cancel()
+        return True
 
     # Close a stream on abort to stop quota and resource consumption promptly.
     @staticmethod
     def _safe_finish_stream(stream: Iterator[types.GenerateContentResponse]):
         if hasattr(stream, "close"):
             stream.close()
-        else:
-            for _ in stream:  # Exhaust streams that do not expose close().
-                pass

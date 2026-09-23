@@ -950,6 +950,9 @@ class ConnectionHandler:
                 memory_str, self.config.get("voiceprint", {}), speaker_for_system
             )
             self._dump_full_llm_request(llm_dialogue, functions, depth)
+            provider_kwargs = {}
+            if getattr(self.llm, "supports_request_cancellation", False):
+                provider_kwargs["event_loop"] = self.loop
 
             if self.intent_type == "function_call" and functions is not None:
                 # 使用支持functions的streaming接口
@@ -957,11 +960,13 @@ class ConnectionHandler:
                     self.session_id,
                     llm_dialogue,
                     functions=functions,
+                    **provider_kwargs,
                 )
             else:
                 llm_responses = self.llm.response(
                     self.session_id,
                     llm_dialogue,
+                    **provider_kwargs,
                 )
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"LLM processing failed for {query}: {e}")
@@ -1081,6 +1086,13 @@ class ConnectionHandler:
                     )
                 )
             return
+
+        # The abort path already stopped TTS and cleared the display status.
+        # Do not enqueue stale completion markers or execute tool calls after
+        # cancelling the provider request.
+        if self.client_abort:
+            return None
+
         # 处理function call
         if tool_call_flag:
             bHasError = False
@@ -1365,6 +1377,19 @@ class ConnectionHandler:
         self.client_is_speaking = False
         self.logger.bind(tag=TAG).debug("Cleared server speaking state")
 
+    def cancel_active_llm(self):
+        """Cancel this connection's provider request when supported."""
+        cancel = getattr(self.llm, "cancel", None)
+        if not callable(cancel):
+            return False
+        try:
+            return bool(cancel(self.session_id))
+        except Exception as error:
+            self.logger.bind(tag=TAG).warning(
+                f"Failed to cancel active LLM request: {error}"
+            )
+            return False
+
     def start_turn_metrics(self, source):
         if not self.config.get("enable_turn_metrics", True):
             return
@@ -1464,6 +1489,7 @@ class ConnectionHandler:
         """资源清理方法"""
         try:
             self.complete_turn_metrics("connection_closed")
+            self.cancel_active_llm()
             # 清理 VAD 连接资源
             if (
                     hasattr(self, "vad")
