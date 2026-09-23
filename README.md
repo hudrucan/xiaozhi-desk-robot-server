@@ -178,6 +178,11 @@ keys, model names, voices, and endpoints are placeholders; override them in
 `data/.config.yaml` before starting the server. Local Sherpa ASR/TTS providers
 are also available when their optional runtime and model files are installed.
 
+For opt-in local memory, select `mem_local_explicit`. It stores compact facts in
+`data/.memory.yaml` only when the user explicitly asks the assistant to remember
+or forget something. It does not summarize conversations on disconnect or call
+an additional memory LLM.
+
 ### Search and weather tools
 
 Server plugins are disabled until their provider-specific configuration is set

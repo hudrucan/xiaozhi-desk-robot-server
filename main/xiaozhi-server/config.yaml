@@ -254,6 +254,20 @@ Memory:
   mem_local_short:
     type: mem_local_short
     llm: GeminiLLM
+  mem_local_explicit:
+    type: mem_local_explicit
+    path: data/.memory.yaml
+    max_entries: 50
+    entry_max_chars: 300
+    inject_max_chars: 1200
+    responses:
+      remembered: I will remember that.
+      forgotten: I forgot that.
+      not_found: I could not find a matching memory.
+      empty: I do not have any saved memories yet.
+      unavailable: Local memory is not enabled.
+      missing_content: No memory content was provided.
+      unsupported_action: Unsupported memory action.
 
 ASR:
   GeminiASR:

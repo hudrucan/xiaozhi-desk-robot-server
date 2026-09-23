@@ -98,6 +98,9 @@ class ServerPluginExecutor(ToolExecutor):
     def _is_configured(self, func_name):
         plugins = self.config.get("plugins", {})
         plugin_config = plugins.get(func_name, {})
+        if func_name == "manage_memory":
+            selected_memory = self.config.get("selected_module", {}).get("Memory")
+            return selected_memory == "mem_local_explicit"
         if func_name == "web_search":
             return (
                 str(plugin_config.get("provider", "")).lower()
@@ -121,6 +124,11 @@ class ServerPluginExecutor(ToolExecutor):
         tools = {}
 
         necessary_functions = ["handle_exit_intent"]
+        if (
+            self.config.get("selected_module", {}).get("Memory")
+            == "mem_local_explicit"
+        ):
+            necessary_functions.append("manage_memory")
 
         config_functions = self.config["Intent"][
             self.config["selected_module"]["Intent"]

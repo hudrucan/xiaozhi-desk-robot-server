@@ -365,6 +365,10 @@ section of the YAML file. Values committed in `config.yaml` are safe reference
 defaults and placeholders; credentials and active model choices belong only in
 `data/.config.yaml`.
 
+`mem_local_explicit` is the local, opt-in memory provider for a personal server.
+It writes to `data/.memory.yaml` only after an explicit remember/forget request;
+normal conversation and disconnects do not create memories or extra LLM calls.
+
 ### 6.4. Server plugins and benchmarks
 
 The current server plugins include:
