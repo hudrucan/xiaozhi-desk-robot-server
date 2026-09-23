@@ -13,23 +13,6 @@ from ..base import MemoryProviderBase, logger
 
 TAG = __name__
 _FILE_LOCK = threading.RLock()
-_RECALL_STOP_WORDS = {
-    "about",
-    "and",
-    "của",
-    "cho",
-    "gì",
-    "hãy",
-    "là",
-    "memory",
-    "nhớ",
-    "the",
-    "tôi",
-    "ta",
-    "tao",
-    "về",
-    "what",
-}
 
 
 class MemoryProvider(MemoryProviderBase):
@@ -50,6 +33,14 @@ class MemoryProvider(MemoryProviderBase):
         self.recall_max_chars = max(
             0, int(config.get("recall_max_chars", self.inject_max_chars))
         )
+        configured_stop_words = config.get("recall_stop_words", [])
+        if not isinstance(configured_stop_words, list):
+            configured_stop_words = []
+        self.recall_stop_words = {
+            str(word).strip().casefold()
+            for word in configured_stop_words
+            if str(word).strip()
+        }
         self.entries = []
 
     def init_memory(self, role_id, llm, summary_memory=None, **kwargs):
@@ -61,10 +52,14 @@ class MemoryProvider(MemoryProviderBase):
         return None
 
     async def query_memory(self, query: str) -> str:
-        if self.recall_enabled:
+        if not self.recall_enabled:
             return ""
 
-        return self._render_entries(reversed(self.entries), self.inject_max_chars)
+        recalled = self.recall(query)
+        logger.bind(tag=TAG).debug(
+            f"Automatic local memory recall: {'hit' if recalled else 'miss'}"
+        )
+        return recalled
 
     def recall(self, query: str):
         if not self.recall_enabled or self.recall_max_chars == 0:
@@ -73,25 +68,31 @@ class MemoryProvider(MemoryProviderBase):
         candidates = list(reversed(self.entries))
         normalized_query = self._normalize_for_search(query)
         query_terms = self._search_terms(normalized_query)
+        if not query_terms:
+            return ""
 
-        if query_terms:
-            ranked = []
-            for recency, entry in enumerate(candidates):
-                normalized_content = self._normalize_for_search(
-                    entry.get("content", "")
-                )
-                overlap = sum(term in normalized_content for term in query_terms)
-                phrase_match = bool(
-                    normalized_query and normalized_query in normalized_content
-                )
-                if overlap or phrase_match:
-                    ranked.append((phrase_match, overlap, -recency, entry))
+        ranked = []
+        for recency, entry in enumerate(candidates):
+            normalized_content = self._normalize_for_search(
+                entry.get("content", "")
+            )
+            content_terms = set(
+                re.findall(r"\w+", normalized_content, flags=re.UNICODE)
+            )
+            overlap = len(query_terms & content_terms)
+            phrase_match = bool(
+                normalized_query and normalized_query in normalized_content
+            )
+            if overlap or phrase_match:
+                ranked.append((phrase_match, overlap, -recency, entry))
 
-            if ranked:
-                ranked.sort(reverse=True, key=lambda item: item[:3])
-                candidates = [item[3] for item in ranked]
+        if not ranked:
+            return ""
 
-        return self._render_entries(candidates, self.recall_max_chars)
+        ranked.sort(reverse=True, key=lambda item: item[:3])
+        return self._render_entries(
+            (item[3] for item in ranked), self.recall_max_chars
+        )
 
     @staticmethod
     def _render_entries(entries, max_chars):
@@ -117,12 +118,11 @@ class MemoryProvider(MemoryProviderBase):
     def _normalize_for_search(value):
         return " ".join(str(value or "").casefold().split())
 
-    @staticmethod
-    def _search_terms(value):
+    def _search_terms(self, value):
         return {
             term
             for term in re.findall(r"\w+", value, flags=re.UNICODE)
-            if len(term) > 1 and term not in _RECALL_STOP_WORDS
+            if term not in self.recall_stop_words
         }
 
     @staticmethod

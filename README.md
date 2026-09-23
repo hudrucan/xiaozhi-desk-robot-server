@@ -181,9 +181,9 @@ are also available when their optional runtime and model files are installed.
 For opt-in local memory, select `mem_local_explicit`. It stores compact facts in
 `data/.memory.yaml` only when the user explicitly asks the assistant to remember
 or forget something. It does not summarize conversations on disconnect or call
-an additional memory LLM. With `recall_enabled: true`, saved facts are retrieved
-through the memory tool only when needed instead of being added to every LLM
-request. Set it to `false` to use bounded prompt injection instead.
+an additional memory LLM. With `recall_enabled: true`, a bounded lexical lookup
+automatically supplies only facts relevant to the current request. Set it to
+`false` to disable recall while keeping explicitly saved facts on disk.
 
 ### Search and weather tools
 

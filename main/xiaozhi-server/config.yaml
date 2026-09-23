@@ -269,6 +269,16 @@ Memory:
     recall_enabled: true
     recall_max_chars: 2000
     inject_max_chars: 1200
+    # Override this list in data/.config.yaml for the deployment language.
+    recall_stop_words:
+      - about
+      - and
+      - is
+      - memory
+      - remember
+      - the
+      - what
+      - who
     responses:
       remembered: I will remember that.
       forgotten: I forgot that.

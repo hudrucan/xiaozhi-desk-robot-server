@@ -368,9 +368,9 @@ defaults and placeholders; credentials and active model choices belong only in
 `mem_local_explicit` is the local, opt-in memory provider for a personal server.
 It writes to `data/.memory.yaml` only after an explicit remember/forget request;
 normal conversation and disconnects do not create memories or extra LLM calls.
-Enable `recall_enabled` to retrieve saved facts through the tool only when a turn
-needs them. Disable it to inject a bounded set of recent memories into each LLM
-request.
+Enable `recall_enabled` to automatically inject a bounded set of saved facts
+that match the current request. Disable it to stop recall without deleting the
+facts already stored on disk.
 
 ### 6.4. Server plugins and benchmarks
 

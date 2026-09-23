@@ -93,32 +93,21 @@ class ServerPluginExecutor(ToolExecutor):
             function["description"] = configured_description
 
         if func_name == "manage_memory" and isinstance(function, dict):
-            memory_config = self.config.get("Memory", {}).get(
-                "mem_local_explicit", {}
+            action_schema = (
+                function.get("parameters", {})
+                .get("properties", {})
+                .get("action", {})
             )
-            recall_enabled = memory_config.get("recall_enabled", True)
-            if isinstance(recall_enabled, str):
-                recall_enabled = recall_enabled.strip().lower() not in {
-                    "0",
-                    "false",
-                    "no",
-                    "off",
-                }
-            if not recall_enabled:
-                action_schema = (
-                    function.get("parameters", {})
-                    .get("properties", {})
-                    .get("action", {})
-                )
-                actions = action_schema.get("enum", [])
-                action_schema["enum"] = [
-                    action for action in actions if action != "recall"
-                ]
-                function["description"] = (
-                    "Manage durable local memory only when the user explicitly "
-                    "asks to remember, forget, or list saved information. Never "
-                    "save ordinary conversation automatically."
-                )
+            actions = action_schema.get("enum", [])
+            action_schema["enum"] = [
+                action for action in actions if action != "recall"
+            ]
+            function["description"] = (
+                "Use durable local memory only when the current user message "
+                "explicitly asks to remember, forget, or list saved information. "
+                "Never call remember in response to a question. Relevant saved "
+                "facts are supplied automatically when recall is enabled."
+            )
 
         return description
 
