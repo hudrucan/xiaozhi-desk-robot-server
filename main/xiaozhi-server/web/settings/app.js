@@ -269,8 +269,12 @@ function renderResources() {
   const processMemoryDetail = total.unique_memory_bytes === null || total.unique_memory_bytes === undefined
     ? `RSS · ${total.process_count || 0} process(es)`
     : `${formatBytes(total.unique_memory_bytes)} unique · ${total.process_count || 0} process(es)`;
+  const systemMemoryInUse = Number.isFinite(Number(system.memory_total_bytes))
+    && Number.isFinite(Number(system.memory_available_bytes))
+    ? Math.max(0, Number(system.memory_total_bytes) - Number(system.memory_available_bytes))
+    : system.memory_used_bytes;
   const systemMemoryValue = system.memory_total_bytes
-    ? `${formatBytes(system.memory_used_bytes)} / ${formatBytes(system.memory_total_bytes)}`
+    ? `${formatBytes(systemMemoryInUse)} / ${formatBytes(system.memory_total_bytes)}`
     : "Unavailable";
 
   $("#resourceSummary").innerHTML = [
