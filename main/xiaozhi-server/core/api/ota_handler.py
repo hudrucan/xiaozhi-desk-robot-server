@@ -44,21 +44,30 @@ def _is_higher_version(a: str, b: str) -> bool:
     return False
 
 
-def _read_reset_reason(payload: dict):
-    if not isinstance(payload, dict):
-        return None
-    containers = [payload]
-    containers.extend(
-        value
-        for key in ("application", "board", "system")
-        if isinstance((value := payload.get(key)), dict)
-    )
-    for container in containers:
-        for key in ("reset_reason", "reset-reason", "boot_reason", "boot-reason"):
-            value = container.get(key)
-            if value not in (None, ""):
-                return str(value)[:160]
-    return None
+def _resolve_reset_reason(headers, payload: dict):
+    candidates = [
+        (headers.get("reset-reason"), "header.reset-reason"),
+        (headers.get("boot-reason"), "header.boot-reason"),
+    ]
+    if isinstance(payload, dict):
+        system = payload.get("system")
+        if isinstance(system, dict):
+            candidates.append(
+                (system.get("reset_reason"), "json.system.reset_reason")
+            )
+        candidates.extend(
+            [
+                (payload.get("reset_reason"), "json.reset_reason"),
+                (payload.get("boot_reason"), "json.boot_reason"),
+            ]
+        )
+    for value, source in candidates:
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized[:160], source
+    return None, None
 
 
 class OTAHandler(BaseHandler):
@@ -238,10 +247,9 @@ class OTAHandler(BaseHandler):
             if not device_version:
                 device_version = "0.0.0"
 
-            reset_reason = (
-                request.headers.get("reset-reason")
-                or request.headers.get("boot-reason")
-                or _read_reset_reason(data_json)
+            reset_reason, reset_reason_source = _resolve_reset_reason(
+                request.headers,
+                data_json,
             )
             restart_event = runtime_diagnostics.record_bootstrap(
                 device_id,
@@ -249,12 +257,16 @@ class OTAHandler(BaseHandler):
                 firmware_version=device_version,
                 device_model=device_model,
                 reset_reason=reset_reason,
+                reset_reason_source=reset_reason_source,
             )
             if restart_event is not None:
                 reason = reset_reason or "not reported by firmware"
+                detection = restart_event.get("detection", "unknown")
                 self.logger.bind(tag=TAG).warning(
-                    "Device sent OTA bootstrap while its previous WebSocket "
-                    f"was still active; suspected firmware restart, reason: {reason}"
+                    "Device bootstrap matched recent connection activity; "
+                    f"suspected firmware restart, reason: {reason}, "
+                    f"source: {reset_reason_source or 'unavailable'}, "
+                    f"detection: {detection}"
                 )
 
             return_json = {

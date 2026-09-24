@@ -337,12 +337,14 @@ restart after changes. It accepts loopback requests only unless
 server process tree, so CPU, RSS, and unique memory include managed llama.cpp
 children. It also shows host memory pressure, recent turn timings, tool outcomes,
 active robot connections, and possible device restarts detected when OTA
-bootstrap arrives before the previous WebSocket has closed. These diagnostics
-are bounded and kept in memory only. Firmware may include `reset-reason` or
-`boot-reason` in its OTA request headers or JSON payload to make restart events
-actionable. NVIDIA VRAM is reported when `nvidia-smi` is available; per-process
-Metal usage is shown as unavailable because macOS does not expose it through an
-unprivileged, lightweight interface.
+bootstrap arrives while the previous WebSocket is active or within 30 seconds
+of its disconnect. Duplicate restart events for the same device and reason are
+suppressed for 45 seconds. These diagnostics are bounded and kept in memory
+only. The reset reason is resolved from the `Reset-Reason` header, then the
+`Boot-Reason` header, then JSON `system.reset_reason`, `reset_reason`, or
+`boot_reason`. NVIDIA VRAM is reported when `nvidia-smi` is available;
+per-process Metal usage is shown as unavailable because macOS does not expose
+it through an unprivileged, lightweight interface.
 
 Vision responses include `X-Xiaozhi-Request-Id`, `X-Xiaozhi-Vision-Outcome`,
 and `Server-Timing` headers so firmware logs can correlate a camera request with

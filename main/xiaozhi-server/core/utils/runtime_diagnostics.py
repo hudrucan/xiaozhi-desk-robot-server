@@ -20,9 +20,20 @@ def _percentile(values, percentile):
 class RuntimeDiagnostics:
     """Keep a bounded, process-local view of connections and completed turns."""
 
-    def __init__(self, turn_limit=50):
+    def __init__(
+        self,
+        turn_limit=50,
+        recent_disconnect_seconds=30,
+        reboot_dedupe_seconds=45,
+    ):
         self._lock = threading.Lock()
+        self._recent_disconnect_seconds = max(
+            1, float(recent_disconnect_seconds)
+        )
+        self._reboot_dedupe_seconds = max(1, float(reboot_dedupe_seconds))
         self._connections = {}
+        self._recent_disconnects = {}
+        self._reboot_dedupe = {}
         self._devices = {}
         self._vision_requests = {}
         self._turns = deque(maxlen=max(1, int(turn_limit)))
@@ -40,7 +51,21 @@ class RuntimeDiagnostics:
 
     def unregister_connection(self, session_id):
         with self._lock:
-            self._connections.pop(session_id, None)
+            connection = self._connections.pop(session_id, None)
+            if connection is None or not connection.get("device_id"):
+                return
+            device_id = connection["device_id"]
+            self._recent_disconnects.pop(device_id, None)
+            self._recent_disconnects[device_id] = {
+                "session_id": session_id,
+                "device_id": device_id,
+                "active_turn": copy.deepcopy(connection.get("active_turn")),
+                "disconnected_at": _utc_now(),
+                "_disconnected_monotonic": time.monotonic(),
+            }
+            while len(self._recent_disconnects) > 32:
+                oldest_device_id = next(iter(self._recent_disconnects))
+                self._recent_disconnects.pop(oldest_device_id)
 
     def begin_turn(self, session_id, turn_id, source):
         with self._lock:
@@ -58,7 +83,10 @@ class RuntimeDiagnostics:
         with self._lock:
             self._turns.append(turn)
             connection = self._connections.get(turn.get("session_id"))
-            if connection is not None:
+            if (
+                connection is not None
+                and turn.get("outcome") != "connection_closed"
+            ):
                 connection["active_turn"] = None
 
     def record_vision_request(
@@ -93,9 +121,12 @@ class RuntimeDiagnostics:
         firmware_version=None,
         device_model=None,
         reset_reason=None,
+        reset_reason_source=None,
     ):
-        """Remember device metadata and flag bootstrap over an active socket."""
+        """Remember bootstrap metadata and correlate it with recent connections."""
         with self._lock:
+            now = time.monotonic()
+            received_at = _utc_now()
             if device_id:
                 self._devices.pop(device_id, None)
                 self._devices[device_id] = {
@@ -103,8 +134,9 @@ class RuntimeDiagnostics:
                     "client_id": client_id,
                     "firmware_version": firmware_version,
                     "device_model": device_model,
-                    "reset_reason": reset_reason,
-                    "last_bootstrap_at": _utc_now(),
+                    "last_reset_reason": reset_reason,
+                    "last_reset_reason_source": reset_reason_source,
+                    "last_bootstrap_at": received_at,
                 }
                 while len(self._devices) > 32:
                     self._devices.pop(next(iter(self._devices)))
@@ -116,8 +148,26 @@ class RuntimeDiagnostics:
                 ),
                 None,
             )
-            if existing is None:
+            recent_disconnect = self._recent_disconnects.get(device_id)
+            if recent_disconnect is not None:
+                disconnect_age = (
+                    now - recent_disconnect["_disconnected_monotonic"]
+                )
+                if disconnect_age > self._recent_disconnect_seconds:
+                    self._recent_disconnects.pop(device_id, None)
+                    recent_disconnect = None
+
+            if existing is None and recent_disconnect is None:
                 return None
+
+            dedupe_key = (device_id, reset_reason)
+            previous_event_at = self._reboot_dedupe.get(dedupe_key)
+            if (
+                previous_event_at is not None
+                and now - previous_event_at <= self._reboot_dedupe_seconds
+            ):
+                return None
+
             recent_vision = self._vision_requests.get(device_id)
             if recent_vision is not None:
                 since_vision_ms = round(
@@ -137,17 +187,46 @@ class RuntimeDiagnostics:
             event = {
                 "type": "unexpected_bootstrap",
                 "severity": "warning",
-                "observed_at": _utc_now(),
+                "received_at": received_at,
+                "observed_at": received_at,
                 "device_id": device_id,
                 "client_id": client_id,
                 "firmware_version": firmware_version,
                 "device_model": device_model,
                 "reset_reason": reset_reason,
-                "previous_session_id": existing.get("session_id"),
-                "active_turn": copy.deepcopy(existing.get("active_turn")),
+                "reset_reason_source": reset_reason_source,
+                "detection": (
+                    "active_websocket"
+                    if existing is not None
+                    else "recent_disconnect"
+                ),
+                "previous_session_id": (
+                    existing.get("session_id")
+                    if existing is not None
+                    else recent_disconnect.get("session_id")
+                ),
+                "active_turn": copy.deepcopy(
+                    existing.get("active_turn")
+                    if existing is not None
+                    else recent_disconnect.get("active_turn")
+                ),
                 "recent_vision": copy.deepcopy(recent_vision),
             }
+            if recent_disconnect is not None and existing is None:
+                event["disconnect_before_bootstrap_ms"] = round(
+                    (now - recent_disconnect["_disconnected_monotonic"])
+                    * 1000,
+                    1,
+                )
             self._device_events.append(event)
+            self._reboot_dedupe[dedupe_key] = now
+            stale_dedupe_keys = [
+                key
+                for key, recorded_at in self._reboot_dedupe.items()
+                if now - recorded_at > self._reboot_dedupe_seconds
+            ]
+            for key in stale_dedupe_keys:
+                self._reboot_dedupe.pop(key, None)
             return copy.deepcopy(event)
 
     def snapshot(self):

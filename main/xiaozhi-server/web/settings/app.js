@@ -350,8 +350,11 @@ function renderDiagnostics() {
       ? new Date(event.observed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
       : "—";
     const reason = event.reset_reason
-      ? `Firmware reported: ${event.reset_reason}`
+      ? `Firmware reported ${event.reset_reason}${event.reset_reason_source ? ` via ${event.reset_reason_source}` : ""}.`
       : "Firmware did not report a reset reason.";
+    const evidence = event.detection === "recent_disconnect"
+      ? `OTA bootstrap arrived ${formatDuration(event.disconnect_before_bootstrap_ms)} after the previous WebSocket disconnected.`
+      : "OTA bootstrap arrived while the previous WebSocket was still active.";
     const activeTurn = event.active_turn
       ? ` It happened during an active ${event.active_turn.source || "unknown"} turn.`
       : "";
@@ -364,7 +367,7 @@ function renderDiagnostics() {
         <span>!</span>
         <div>
           <header><strong>Possible device restart</strong><time>${escapeHtml(observedAt)}</time></header>
-          <p>OTA bootstrap arrived while the previous WebSocket was still active. ${escapeHtml(reason + activeTurn + visionDetail)}</p>
+          <p>${escapeHtml(evidence + " " + reason + activeTurn + visionDetail)}</p>
         </div>
       </article>`;
   }).join("");
@@ -424,7 +427,9 @@ function renderSidebarLive() {
   $("#sidebarDevice").textContent = connected ? `${connections.active_count} connected` : "Offline";
   $("#sidebarDevice").title = device?.device_id || "No active device";
   $("#sidebarFirmware").textContent = firmware?.firmware_version || "Unknown";
-  $("#sidebarFirmware").title = firmware?.device_model || "Device model unavailable";
+  $("#sidebarFirmware").title = firmware
+    ? `${firmware.device_model || "Unknown device model"}${firmware.last_reset_reason ? ` · last reset: ${firmware.last_reset_reason}` : ""}`
+    : "Device model unavailable";
   $("#sidebarProcess").textContent = resources?.available
     ? `${formatCpu(resources.total?.cpu_percent)} · ${formatBytes(resources.total?.memory_bytes)}`
     : "Unavailable";
