@@ -78,8 +78,24 @@ class SettingsHandler(BaseHandler):
 
     async def handle_status(self, request):
         self._require_access(request)
-        payload = await asyncio.to_thread(self.resource_monitor.sample)
-        payload["runtime"] = runtime_diagnostics.snapshot()
+        scope = request.query.get("scope", "all")
+        if scope not in {"all", "overview", "diagnostics"}:
+            return self._disable_cache(
+                web.json_response(
+                    {"error": f"Unsupported status scope: {scope}"},
+                    status=400,
+                )
+            )
+        if scope == "diagnostics":
+            payload = {
+                "available": True,
+                "runtime": runtime_diagnostics.snapshot(),
+            }
+        else:
+            payload = await asyncio.to_thread(self.resource_monitor.sample)
+            payload["runtime"] = runtime_diagnostics.snapshot(
+                include_history=scope == "all"
+            )
         return self._disable_cache(web.json_response(payload))
 
     async def handle_put(self, request):

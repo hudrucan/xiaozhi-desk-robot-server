@@ -229,12 +229,24 @@ class RuntimeDiagnostics:
                 self._reboot_dedupe.pop(key, None)
             return copy.deepcopy(event)
 
-    def snapshot(self):
+    def snapshot(self, include_history=True):
         with self._lock:
             connections = copy.deepcopy(list(self._connections.values()))
-            turns = copy.deepcopy(list(reversed(self._turns)))
-            device_events = copy.deepcopy(list(reversed(self._device_events)))
             devices = copy.deepcopy(list(self._devices.values()))
+            if include_history:
+                turns = copy.deepcopy(list(reversed(self._turns)))
+                device_events = copy.deepcopy(list(reversed(self._device_events)))
+
+        payload = {
+            "sampled_at": _utc_now(),
+            "connections": {
+                "active_count": len(connections),
+                "items": connections,
+            },
+            "devices": devices,
+        }
+        if not include_history:
+            return payload
 
         recent = turns[:20]
         durations = [
@@ -243,23 +255,20 @@ class RuntimeDiagnostics:
             if isinstance(turn.get("total_ms"), (int, float))
         ]
         completed = sum(turn.get("outcome") == "completed" for turn in recent)
-        return {
-            "sampled_at": _utc_now(),
-            "connections": {
-                "active_count": len(connections),
-                "items": connections,
-            },
-            "turns": turns,
-            "device_events": device_events,
-            "devices": devices,
-            "summary": {
-                "sample_size": len(recent),
-                "completed": completed,
-                "attention": len(recent) - completed,
-                "median_total_ms": _percentile(durations, 0.5),
-                "p95_total_ms": _percentile(durations, 0.95),
-            },
-        }
+        payload.update(
+            {
+                "turns": turns,
+                "device_events": device_events,
+                "summary": {
+                    "sample_size": len(recent),
+                    "completed": completed,
+                    "attention": len(recent) - completed,
+                    "median_total_ms": _percentile(durations, 0.5),
+                    "p95_total_ms": _percentile(durations, 0.95),
+                },
+            }
+        )
+        return payload
 
 
 runtime_diagnostics = RuntimeDiagnostics()

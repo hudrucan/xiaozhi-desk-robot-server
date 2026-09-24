@@ -343,7 +343,8 @@ touch data/.config.yaml
 The local Settings UI is available at `http://127.0.0.1:8003/settings/` by
 default. It writes to `data/.config.yaml`, requires a restart after changes,
 and rejects non-loopback requests unless `server.settings.allow_remote` is
-explicitly enabled.
+explicitly enabled. Overview and Diagnostics poll only their own runtime data
+while visible; provider and configuration pages do not poll status endpoints.
 
 ### 6.3. Provider selection
 

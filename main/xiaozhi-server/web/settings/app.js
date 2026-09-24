@@ -1,5 +1,7 @@
 const SUMMARY_GROUPS = ["VAD", "ASR", "LLM", "VLLM", "TTS"];
 const PROVIDER_GROUPS = [...SUMMARY_GROUPS, "Memory", "Intent"];
+const PAGE_IDS = ["overview", "diagnostics", "providers", "assistant", "runtime", "integrations", "advanced"];
+const STATUS_SCOPES = { overview: "overview", diagnostics: "diagnostics" };
 const SECRET_NAMES = new Set([
   "access_key", "access_key_secret", "access_token", "api_key", "auth_key",
   "authorization", "client_secret", "mqtt_signature_key", "password",
@@ -14,6 +16,11 @@ const state = {
   configuredSecrets: new Set(),
   restartRequired: false,
   resources: null,
+  activePage: "overview",
+  activeProviderGroup: "LLM",
+  statusTimer: null,
+  statusGeneration: 0,
+  statusController: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -126,6 +133,17 @@ function field(path, label, options = {}) {
       <label for="${id}">${escapeHtml(label)} ${pathHint(path)}</label>
       <input id="${id}" data-path="${escapeHtml(path)}" type="${inputType}" value="${secret ? "" : escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" ${step ? `step="${step}"` : ""} />${help}
     </article>`;
+}
+
+function settingsGroup(title, description, fields) {
+  return `
+    <section class="settings-group panel">
+      <header>
+        <div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p></div>
+        <span>${fields.length}</span>
+      </header>
+      <div class="form-grid">${fields.join("")}</div>
+    </section>`;
 }
 
 function attachFieldListeners(root = document) {
@@ -487,18 +505,27 @@ function renderDiagnostics() {
 function renderSidebarLive() {
   const resources = state.resources;
   const connections = resources?.runtime?.connections || {};
+  const hasRuntimeSample = Boolean(resources?.runtime?.sampled_at);
   const connected = Number(connections.active_count) > 0;
   const device = connections.items?.[0];
   const firmware = resources?.runtime?.devices?.find((item) => item.device_id === device?.device_id);
-  $("#sidebarDevice").textContent = connected ? `${connections.active_count} connected` : "Offline";
+  $("#sidebarLiveLabel").textContent = state.activePage === "overview"
+    ? "Live resources"
+    : (state.activePage === "diagnostics" ? "Live turns" : "Last sample");
+  $("#sidebarDevice").textContent = connected
+    ? `${connections.active_count} connected`
+    : (hasRuntimeSample ? "Offline" : "Not sampled");
   $("#sidebarDevice").title = device?.device_id || "No active device";
   $("#sidebarFirmware").textContent = firmware?.firmware_version || "Unknown";
   $("#sidebarFirmware").title = firmware
     ? `${firmware.device_model || "Unknown device model"}${firmware.last_reset_reason ? ` · last reset: ${firmware.last_reset_reason}` : ""}`
     : "Device model unavailable";
-  $("#sidebarProcess").textContent = resources?.available
+  const processSample = resources?.available
     ? `${formatCpu(resources.total?.cpu_percent)} · ${formatBytes(resources.total?.memory_bytes)}`
-    : "Unavailable";
+    : "Not sampled";
+  $("#sidebarProcess").textContent = state.activePage === "diagnostics"
+    ? "Overview only"
+    : (state.activePage === "overview" && !resources?.available ? "Unavailable" : processSample);
   $("#sidebarLiveDot").classList.toggle("online", connected);
 }
 
@@ -514,97 +541,142 @@ function renderProviders() {
 
   $("#providerSelectors").querySelectorAll("[data-provider-group]").forEach((select) => {
     select.addEventListener("change", () => {
+      state.activeProviderGroup = select.dataset.providerGroup;
       updateValue(`selected_module.${select.dataset.providerGroup}`, select.value);
       renderProviders();
     });
   });
 
-  $("#providerEditors").innerHTML = PROVIDER_GROUPS.map((group, index) => {
-    const provider = selected[group];
-    const config = getPath(state.config, `${group}.${provider}`, {});
-    const fields = Object.keys(config).map((key) =>
-      field(`${group}.${provider}.${key}`, labelFor(key))
-    ).join("");
-    return `
-      <details class="provider-editor panel" ${index === 1 ? "open" : ""}>
-        <summary><div><strong>${group} · ${escapeHtml(provider || "Not selected")}</strong><small>${Object.keys(config).length} configuration values</small></div><span class="badge">Active</span></summary>
-        <div class="provider-fields">${fields || '<p class="field-help">No configurable values.</p>'}</div>
-      </details>`;
-  }).join("");
+  if (!PROVIDER_GROUPS.includes(state.activeProviderGroup)) {
+    state.activeProviderGroup = "LLM";
+  }
+  $("#providerTabs").innerHTML = PROVIDER_GROUPS.map((group) => `
+    <button type="button" role="tab" data-provider-tab="${group}" aria-selected="${group === state.activeProviderGroup}">
+      <span>${group}</span><small>${escapeHtml(selected[group] || "Not selected")}</small>
+    </button>`).join("");
+  $("#providerTabs").querySelectorAll("[data-provider-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeProviderGroup = button.dataset.providerTab;
+      renderProviders();
+    });
+  });
+
+  const group = state.activeProviderGroup;
+  const provider = selected[group];
+  const config = getPath(state.config, `${group}.${provider}`, {});
+  const fields = Object.keys(config).map((key) =>
+    field(`${group}.${provider}.${key}`, labelFor(key))
+  ).join("");
+  $("#providerEditors").innerHTML = `
+    <article class="provider-workspace panel">
+      <header>
+        <div><p class="eyebrow">${escapeHtml(group)} provider</p><h3>${escapeHtml(provider || "Not selected")}</h3></div>
+        <span class="badge">${Object.keys(config).length} values</span>
+      </header>
+      <div class="provider-fields">${fields || '<p class="field-help">No configurable values.</p>'}</div>
+    </article>`;
   attachFieldListeners($("#providerEditors"));
 }
 
 function renderAssistant() {
   $("#assistantFields").innerHTML = [
-    field("prompt", "System prompt", { multiline: true, wide: true, help: "Defines personality, response style, and tool-language behavior." }),
-    field("wakeup_greeting", "Wake-up greeting", { help: "Short acknowledgement sent after wake-word detection." }),
-    field("exit_farewell", "Exit farewell"),
-    field("system_error_response", "Error response", { multiline: true }),
-    field("tool_error_response", "Tool error response", { multiline: true }),
-    field("tool_timeout_response", "Tool timeout response", { multiline: true }),
-    field("prompt_template", "Prompt template path"),
-    field("exit_commands", "Exit commands", { help: "JSON list matched before intent processing." }),
-    field("end_prompt", "Conversation ending", { help: "JSON object controlling idle conversation closure." }),
-    field("wakeup_words", "Wake words", { help: "JSON list used to identify activation phrases." }),
-    field("enable_greeting", "Enable greeting", { type: "boolean" }),
-    field("enable_direct_answer_tool", "Enable direct-answer tool", { type: "boolean" }),
-    field("enable_wakeup_words_response_cache", "Cache wake response", { type: "boolean" }),
-    field("enable_stop_tts_notify", "End-of-speech notification", { type: "boolean" }),
+    settingsGroup("Personality", "The prompt and template that shape every response.", [
+      field("prompt", "System prompt", { multiline: true, wide: true, help: "Defines personality, response style, and tool-language behavior." }),
+      field("prompt_template", "Prompt template path"),
+    ]),
+    settingsGroup("Spoken responses", "Short phrases used around wake, exit, and recoverable errors.", [
+      field("wakeup_greeting", "Wake-up greeting", { help: "Short acknowledgement sent after wake-word detection." }),
+      field("exit_farewell", "Exit farewell"),
+      field("system_error_response", "Error response", { multiline: true }),
+      field("tool_error_response", "Tool error response", { multiline: true }),
+      field("tool_timeout_response", "Tool timeout response", { multiline: true }),
+    ]),
+    settingsGroup("Conversation control", "Wake and exit matching for the turn-based interaction model.", [
+      field("exit_commands", "Exit commands", { help: "JSON list matched before intent processing." }),
+      field("end_prompt", "Conversation ending", { help: "JSON object controlling idle conversation closure." }),
+      field("wakeup_words", "Wake words", { help: "JSON list used to identify activation phrases." }),
+    ]),
+    settingsGroup("Behavior switches", "Optional behavior that can be enabled independently.", [
+      field("enable_greeting", "Enable greeting", { type: "boolean" }),
+      field("enable_direct_answer_tool", "Enable direct-answer tool", { type: "boolean" }),
+      field("enable_wakeup_words_response_cache", "Cache wake response", { type: "boolean" }),
+      field("enable_stop_tts_notify", "End-of-speech notification", { type: "boolean" }),
+    ]),
   ].join("");
   attachFieldListeners($("#assistantFields"));
 }
 
 function renderRuntime() {
   $("#runtimeFields").innerHTML = [
-    field("server.ip", "Listen address"),
-    field("server.port", "WebSocket port"),
-    field("server.http_port", "HTTP port"),
-    field("server.websocket", "Advertised WebSocket URL"),
-    field("server.vision_explain", "Vision endpoint"),
-    field("server.timezone_offset", "OTA timezone offset"),
-    field("server.settings.enabled", "Enable settings UI", { type: "boolean" }),
-    field("server.settings.allow_remote", "Allow settings over LAN", { type: "boolean", help: "Disabled by default. Enable only on a trusted network." }),
-    field("log.log_level", "Log level", { choices: ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"] }),
-    field("close_connection_no_voice_time", "Idle disconnect (seconds)"),
-    field("tts_timeout", "TTS timeout (seconds)"),
-    field("tool_call_timeout", "Tool timeout (seconds)"),
-    field("asr_min_audio_ms", "Minimum ASR audio (ms)"),
-    field("asr_audio_queue_max_frames", "ASR queue limit (frames)"),
-    field("tts_audio_send_delay", "Audio packet delay (ms)"),
-    field("stop_tts_notify_voice", "End-of-speech sound path"),
-    field("delete_audio", "Delete generated audio", { type: "boolean" }),
-    field("enable_websocket_ping", "WebSocket ping", { type: "boolean" }),
-    field("enable_turn_metrics", "Turn metrics", { type: "boolean" }),
-    field("dump_full_llm_request", "Dump full LLM requests", { type: "boolean", help: "May write private conversation and tool data to disk." }),
-    field("llm_request_dump_file", "LLM request dump path"),
+    settingsGroup("Network", "Listeners, advertised endpoints, and local settings access.", [
+      field("server.ip", "Listen address"),
+      field("server.port", "WebSocket port"),
+      field("server.http_port", "HTTP port"),
+      field("server.websocket", "Advertised WebSocket URL"),
+      field("server.vision_explain", "Vision endpoint"),
+      field("server.timezone_offset", "OTA timezone offset"),
+      field("server.settings.enabled", "Enable settings UI", { type: "boolean" }),
+      field("server.settings.allow_remote", "Allow settings over LAN", { type: "boolean", help: "Disabled by default. Enable only on a trusted network." }),
+      field("enable_websocket_ping", "WebSocket ping", { type: "boolean" }),
+    ]),
+    settingsGroup("Turn limits", "Timeouts and queue boundaries for deterministic turn cleanup.", [
+      field("close_connection_no_voice_time", "Idle disconnect (seconds)"),
+      field("tts_timeout", "TTS timeout (seconds)"),
+      field("tool_call_timeout", "Tool timeout (seconds)"),
+      field("asr_min_audio_ms", "Minimum ASR audio (ms)"),
+      field("asr_audio_queue_max_frames", "ASR queue limit (frames)"),
+    ]),
+    settingsGroup("Audio delivery", "TTS packet pacing and generated audio retention.", [
+      field("tts_audio_send_delay", "Audio packet delay (ms)"),
+      field("stop_tts_notify_voice", "End-of-speech sound path"),
+      field("delete_audio", "Delete generated audio", { type: "boolean" }),
+    ]),
+    settingsGroup("Diagnostics", "Logging and optional request inspection.", [
+      field("log.log_level", "Log level", { choices: ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"] }),
+      field("enable_turn_metrics", "Turn metrics", { type: "boolean" }),
+      field("dump_full_llm_request", "Dump full LLM requests", { type: "boolean", help: "May write private conversation and tool data to disk." }),
+      field("llm_request_dump_file", "LLM request dump path"),
+    ]),
   ].join("");
   attachFieldListeners($("#runtimeFields"));
 }
 
 function renderIntegrations() {
   $("#integrationFields").innerHTML = [
-    field("mcp_endpoint", "External MCP endpoint", { placeholder: "ws://host:port/mcp/?token=…" }),
-    field("device_mcp_tool_cache", "Device MCP tool cache", { wide: true, help: "Used only by the managed local llama.cpp provider." }),
-    field("context_providers", "Context providers", { wide: true, help: "JSON list of optional HTTP context sources. Configured authorization values remain masked." }),
-    field("voiceprint", "Voiceprint", { wide: true, help: "Leave the URL empty to keep voiceprint recognition disabled." }),
-    field("plugins", "Server plugins", { wide: true, help: "JSON configuration for optional server-side tools." }),
+    settingsGroup("MCP", "Firmware cache and optional external MCP connectivity.", [
+      field("mcp_endpoint", "External MCP endpoint", { placeholder: "ws://host:port/mcp/?token=…" }),
+      field("device_mcp_tool_cache", "Device MCP tool cache", { wide: true, help: "Used only by the managed local llama.cpp provider." }),
+    ]),
+    settingsGroup("Server context", "Optional data sources available to the assistant.", [
+      field("context_providers", "Context providers", { wide: true, help: "JSON list of optional HTTP context sources. Configured authorization values remain masked." }),
+      field("plugins", "Server plugins", { wide: true, help: "JSON configuration for optional server-side tools." }),
+    ]),
+    settingsGroup("Recognition", "Optional speaker recognition configuration.", [
+      field("voiceprint", "Voiceprint", { wide: true, help: "Leave the URL empty to keep voiceprint recognition disabled." }),
+    ]),
   ].join("");
   attachFieldListeners($("#integrationFields"));
 }
 
 function renderAdvanced() {
   $("#advancedFields").innerHTML = [
-    field("server.auth", "Device authentication", { wide: true }),
-    field("server.mqtt_gateway", "MQTT gateway"),
-    field("server.mqtt_signature_key", "MQTT signing key"),
-    field("server.udp_gateway", "UDP gateway"),
-    field("log.log_format", "Console log format", { multiline: true, wide: true }),
-    field("log.log_format_file", "File log format", { multiline: true, wide: true }),
-    field("log.log_dir", "Log directory"),
-    field("log.log_file", "Log filename"),
-    field("log.data_dir", "Runtime data directory"),
-    field("xiaozhi", "Protocol hello", { wide: true }),
-    field("module_test", "Benchmark defaults", { wide: true }),
+    settingsGroup("Authentication & gateways", "Low-level device access and external transports.", [
+      field("server.auth", "Device authentication", { wide: true }),
+      field("server.mqtt_gateway", "MQTT gateway"),
+      field("server.mqtt_signature_key", "MQTT signing key"),
+      field("server.udp_gateway", "UDP gateway"),
+    ]),
+    settingsGroup("Logging", "Console, file, and runtime data locations.", [
+      field("log.log_format", "Console log format", { multiline: true, wide: true }),
+      field("log.log_format_file", "File log format", { multiline: true, wide: true }),
+      field("log.log_dir", "Log directory"),
+      field("log.log_file", "Log filename"),
+      field("log.data_dir", "Runtime data directory"),
+    ]),
+    settingsGroup("Protocol & benchmarks", "Raw hello payload and performance tester defaults.", [
+      field("xiaozhi", "Protocol hello", { wide: true }),
+      field("module_test", "Benchmark defaults", { wide: true }),
+    ]),
   ].join("");
   attachFieldListeners($("#advancedFields"));
 }
@@ -623,19 +695,67 @@ function renderAll() {
   updateDirtyState();
 }
 
-async function loadResources() {
-  try {
-    const response = await fetch("/api/settings/status", { cache: "no-store" });
-    if (!response.ok) throw new Error(await response.text());
-    state.resources = await response.json();
-  } catch (error) {
-    state.resources = { available: false, reason: error.message };
+function activeStatusScope() {
+  return STATUS_SCOPES[state.activePage] || null;
+}
+
+function stopStatusPolling() {
+  if (state.statusTimer !== null) {
+    window.clearTimeout(state.statusTimer);
+    state.statusTimer = null;
   }
-  renderResources();
-  renderDiagnostics();
+  if (state.statusController) {
+    state.statusController.abort();
+    state.statusController = null;
+  }
+}
+
+function scheduleStatusPoll(generation) {
+  if (generation !== state.statusGeneration || document.hidden) return;
+  const delay = state.activePage === "diagnostics" ? 2000 : 3000;
+  state.statusTimer = window.setTimeout(() => loadStatus(generation), delay);
+}
+
+async function loadStatus(generation = state.statusGeneration) {
+  const scope = activeStatusScope();
+  if (!scope || generation !== state.statusGeneration) return;
+  const controller = new AbortController();
+  state.statusController = controller;
+  try {
+    const response = await fetch(`/api/settings/status?scope=${scope}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const payload = await response.json();
+    if (generation !== state.statusGeneration) return;
+    if (scope === "overview") {
+      state.resources = payload;
+      renderResources();
+    } else {
+      state.resources = { ...(state.resources || {}), runtime: payload.runtime };
+      renderDiagnostics();
+    }
+    renderSidebarLive();
+  } catch (error) {
+    if (error.name !== "AbortError" && generation === state.statusGeneration) {
+      if (scope === "overview") {
+        state.resources = { available: false, reason: error.message };
+        renderResources();
+      }
+    }
+  } finally {
+    if (state.statusController === controller) state.statusController = null;
+    scheduleStatusPoll(generation);
+  }
+}
+
+function restartStatusPolling() {
+  stopStatusPolling();
+  state.statusGeneration += 1;
+  const generation = state.statusGeneration;
   renderSidebarLive();
-  const delay = document.hidden ? 10000 : 2000;
-  window.setTimeout(loadResources, delay);
+  if (activeStatusScope() && !document.hidden) loadStatus(generation);
 }
 
 function updateDirtyState() {
@@ -737,21 +857,51 @@ async function restartServer() {
   setTimeout(poll, 900);
 }
 
-function trackNavigation() {
-  const links = [...document.querySelectorAll(".navigation a")];
-  const sections = links.map((link) => document.querySelector(link.getAttribute("href")));
-  const observer = new IntersectionObserver((entries) => {
-    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-    if (!visible) return;
-    links.forEach((link) => link.classList.toggle("active", link.getAttribute("href") === `#${visible.target.id}`));
-  }, { rootMargin: "-25% 0px -65%", threshold: [0, 0.2, 0.6] });
-  sections.forEach((section) => observer.observe(section));
+function pageFromHash() {
+  const page = window.location.hash.slice(1);
+  return PAGE_IDS.includes(page) ? page : "overview";
+}
+
+function setActivePage(page, options = {}) {
+  const nextPage = PAGE_IDS.includes(page) ? page : "overview";
+  state.activePage = nextPage;
+  document.querySelectorAll(".page-section").forEach((section) => {
+    section.classList.toggle("active", section.id === nextPage);
+  });
+  document.querySelectorAll(".navigation a").forEach((link) => {
+    const active = link.getAttribute("href") === `#${nextPage}`;
+    link.classList.toggle("active", active);
+    if (active) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  if (options.updateHash && window.location.hash !== `#${nextPage}`) {
+    window.history.pushState(null, "", `#${nextPage}`);
+  }
+  document.title = `${labelFor(nextPage)} · Xiaozhi Server`;
+  if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "auto" });
+  restartStatusPolling();
+}
+
+function initializeNavigation() {
+  document.querySelectorAll('.navigation a, .brand[href^="#"]').forEach((link) => {
+    link.addEventListener("click", (event) => {
+      const page = link.getAttribute("href").slice(1);
+      if (!PAGE_IDS.includes(page)) return;
+      event.preventDefault();
+      setActivePage(page, { updateHash: true });
+    });
+  });
+  window.addEventListener("popstate", () => setActivePage(pageFromHash()));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopStatusPolling();
+    else restartStatusPolling();
+  });
+  setActivePage(pageFromHash(), { scroll: false });
 }
 
 $("#saveButton").addEventListener("click", saveSettings);
 $("#discardButton").addEventListener("click", discardChanges);
 $("#restartButton").addEventListener("click", restartServer);
 $("#restartNowButton").addEventListener("click", restartServer);
-trackNavigation();
+initializeNavigation();
 loadSettings();
-loadResources();
