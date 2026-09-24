@@ -44,11 +44,33 @@ class MemoryProvider(MemoryProviderBase):
         }
         self._entries_lock = threading.RLock()
         self.entries = []
+        self.scope_source = None
 
     def init_memory(self, role_id, llm, summary_memory=None, **kwargs):
         with self._entries_lock:
             super().init_memory(role_id, llm, **kwargs)
+            self.scope_source = "connection"
             self.entries = self._load_entries()
+
+    def select_stored_scope(self):
+        """Select the only stored device scope for offline administration."""
+        with self._entries_lock:
+            if self.role_id:
+                return self.role_id
+
+            all_memory = self._read_memory_file()
+            stored_roles = [
+                role_id
+                for role_id, entries in all_memory.items()
+                if isinstance(role_id, str) and isinstance(entries, list)
+            ]
+            if len(stored_roles) != 1:
+                return None
+
+            self.role_id = stored_roles[0]
+            self.scope_source = "storage"
+            self.entries = self._entries_for_role(all_memory, self.role_id)
+            return self.role_id
 
     async def save_memory(self, msgs, session_id=None):
         """Conversation shutdown never writes implicit memories."""
@@ -203,6 +225,7 @@ class MemoryProvider(MemoryProviderBase):
             return {
                 "initialized": bool(self.role_id),
                 "device_id": self.role_id,
+                "scope_source": self.scope_source,
                 "recall_enabled": self.recall_enabled,
                 "max_entries": self.max_entries,
                 "entry_max_chars": self.entry_max_chars,
@@ -252,20 +275,25 @@ class MemoryProvider(MemoryProviderBase):
     def _load_entries(self):
         if not self.role_id:
             return []
+        return self._entries_for_role(self._read_memory_file(), self.role_id)
+
+    def _read_memory_file(self):
         with _FILE_LOCK:
             if not os.path.exists(self.memory_path):
-                return []
+                return {}
             try:
                 with open(self.memory_path, "r", encoding="utf-8") as memory_file:
                     all_memory = yaml.safe_load(memory_file) or {}
             except (OSError, yaml.YAMLError) as error:
                 logger.bind(tag=TAG).error(f"Failed to load local memory: {error}")
-                return []
+                return {}
 
         if not isinstance(all_memory, dict):
-            return []
+            return {}
+        return all_memory
 
-        stored = all_memory.get(self.role_id, [])
+    def _entries_for_role(self, all_memory, role_id):
+        stored = all_memory.get(role_id, [])
         if not isinstance(stored, list):
             return []
         return [

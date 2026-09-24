@@ -15,6 +15,15 @@ server:
     enabled: true
     # Keep configuration writes on this machine unless LAN access is explicit.
     allow_remote: false
+    diagnostics:
+      # Highlight thresholds only; these do not change provider timeouts.
+      thresholds_ms:
+        llm_first: 5000
+        resumed_llm_first: 5000
+        tool: 5000
+        tts_first: 2500
+        first_audio: 8000
+        total: 30000
   # WebSocket URL returned to the device by the OTA endpoint.
   # Replace this generic local URL in data/.config.yaml with the address reachable
   # by the device.

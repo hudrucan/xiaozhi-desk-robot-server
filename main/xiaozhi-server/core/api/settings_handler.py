@@ -51,6 +51,24 @@ class SettingsHandler(BaseHandler):
         if request.content_type != "application/json":
             raise web.HTTPUnsupportedMediaType(text="Expected application/json")
 
+    @staticmethod
+    def _patch_requires_restart(patch):
+        if not isinstance(patch, dict) or set(patch) != {"server"}:
+            return True
+        server_patch = patch.get("server")
+        if not isinstance(server_patch, dict) or set(server_patch) != {"settings"}:
+            return True
+        settings_patch = server_patch.get("settings")
+        if not isinstance(settings_patch, dict) or set(settings_patch) != {
+            "diagnostics"
+        }:
+            return True
+        diagnostics_patch = settings_patch.get("diagnostics")
+        return not (
+            isinstance(diagnostics_patch, dict)
+            and set(diagnostics_patch) == {"thresholds_ms"}
+        )
+
     async def handle_index(self, request):
         self._require_access(request)
         return self._disable_cache(
@@ -64,7 +82,16 @@ class SettingsHandler(BaseHandler):
     async def handle_asset(self, request):
         self._require_access(request)
         filename = request.match_info["filename"]
-        if filename not in {"app.js", "favicon.svg", "styles.css"}:
+        if filename not in {
+            "app.js",
+            "configuration.js",
+            "diagnostics.js",
+            "favicon.svg",
+            "memory.js",
+            "resources.js",
+            "shared.js",
+            "styles.css",
+        }:
             raise web.HTTPNotFound()
         return self._disable_cache(
             web.FileResponse(os.path.join(self.web_dir, filename))
@@ -105,12 +132,15 @@ class SettingsHandler(BaseHandler):
             body = await request.json()
             if not isinstance(body, dict):
                 raise ValueError("Request body must be an object")
-            payload = self.editor.update(body.get("config"))
+            patch = body.get("config")
+            payload = self.editor.update(patch)
         except (ValueError, TypeError) as error:
             return web.json_response({"error": str(error)}, status=400)
 
-        self.restart_required = True
-        payload["restart_required"] = True
+        self.restart_required = (
+            self.restart_required or self._patch_requires_restart(patch)
+        )
+        payload["restart_required"] = self.restart_required
         return self._disable_cache(web.json_response(payload))
 
     async def handle_restart(self, request):

@@ -76,6 +76,10 @@ class MemoryHandler(BaseHandler):
                 ),
                 "entries": [],
             }
+        if not getattr(provider, "role_id", None):
+            select_stored_scope = getattr(provider, "select_stored_scope", None)
+            if callable(select_stored_scope):
+                await asyncio.to_thread(select_stored_scope)
         snapshot = await asyncio.to_thread(provider.inspect_entries)
         snapshot["available"] = True
         snapshot["selected_provider"] = selected

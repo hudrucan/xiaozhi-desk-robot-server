@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=12" />
+    <link rel="stylesheet" href="/settings/styles.css?v=13" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -192,22 +192,26 @@
               <span class="badge" id="memoryStatus"><i></i>Not loaded</span>
             </div>
             <div class="memory-layout">
-              <article class="panel memory-compose">
-                <div class="panel-heading">
-                  <div><p class="eyebrow">Remember</p><h3>Add a memory</h3></div>
-                </div>
-                <form id="memoryCreateForm">
-                  <textarea id="memoryContent" placeholder="A durable fact the assistant should remember"></textarea>
-                  <button class="button primary" id="memoryCreateButton" type="submit">Add memory</button>
-                </form>
-                <p class="field-help" id="memoryContext">Connect the robot once to initialize its memory scope.</p>
-              </article>
-              <article class="panel memory-browser">
+              <article class="panel memory-workspace">
                 <header>
-                  <div><p class="eyebrow">Stored facts</p><h3 id="memoryCount">0 memories</h3></div>
+                  <div>
+                    <p class="eyebrow">Stored facts</p>
+                    <h3 id="memoryCount">0 memories</h3>
+                    <p class="field-help" id="memoryContext">Connect the robot once to initialize its memory scope.</p>
+                  </div>
                   <button class="button secondary" id="memoryRefreshButton" type="button">Refresh</button>
                 </header>
-                <input id="memorySearch" type="search" placeholder="Filter memories" aria-label="Filter memories" />
+                <form class="memory-compose" id="memoryCreateForm">
+                  <label for="memoryContent">Add a durable fact</label>
+                  <div>
+                    <textarea id="memoryContent" placeholder="What should the assistant remember?"></textarea>
+                    <button class="button primary" id="memoryCreateButton" type="submit">Add memory</button>
+                  </div>
+                </form>
+                <div class="memory-filter">
+                  <label for="memorySearch">Find a memory</label>
+                  <input id="memorySearch" type="search" placeholder="Filter stored facts" />
+                </div>
                 <div class="memory-entries" id="memoryEntries"></div>
               </article>
             </div>
@@ -259,6 +263,6 @@
       </div>
     </div>
 
-    <script src="/settings/app.js?v=12" defer></script>
+    <script type="module" src="/settings/app.js?v=13"></script>
   </body>
 </html>

@@ -74,6 +74,14 @@ SECRET_NAMES = {
 }
 
 PROVIDER_GROUPS = ("VAD", "ASR", "LLM", "VLLM", "TTS", "Memory", "Intent")
+DIAGNOSTIC_THRESHOLD_KEYS = {
+    "first_audio",
+    "llm_first",
+    "resumed_llm_first",
+    "tool",
+    "total",
+    "tts_first",
+}
 
 
 def _is_secret(key):
@@ -224,6 +232,35 @@ class ConfigEditor:
             value = int(server.get(key, 0))
             if not 1 <= value <= 65535:
                 raise ValueError(f"server.{key} must be between 1 and 65535")
+
+        settings_config = server.get("settings", {})
+        if not isinstance(settings_config, Mapping):
+            raise ValueError("server.settings must be an object")
+        diagnostics_config = settings_config.get("diagnostics", {})
+        if not isinstance(diagnostics_config, Mapping):
+            raise ValueError("server.settings.diagnostics must be an object")
+        diagnostic_thresholds = diagnostics_config.get("thresholds_ms", {})
+        if not isinstance(diagnostic_thresholds, Mapping):
+            raise ValueError(
+                "server.settings.diagnostics.thresholds_ms must be an object"
+            )
+        unsupported_thresholds = sorted(
+            set(diagnostic_thresholds) - DIAGNOSTIC_THRESHOLD_KEYS
+        )
+        if unsupported_thresholds:
+            raise ValueError(
+                "Unsupported diagnostic threshold: "
+                f"{unsupported_thresholds[0]}"
+            )
+        for key, value in diagnostic_thresholds.items():
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    f"Diagnostic threshold {key} must be an integer"
+                )
+            if value < 1:
+                raise ValueError(
+                    f"Diagnostic threshold {key} must be at least 1 ms"
+                )
 
         log_level = str(config.get("log", {}).get("log_level", "INFO")).upper()
         if log_level not in {"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"}:
