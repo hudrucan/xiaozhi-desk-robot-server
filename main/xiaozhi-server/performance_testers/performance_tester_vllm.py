@@ -8,7 +8,10 @@ import time
 from pathlib import Path
 
 from config.settings import load_config
-from core.utils.vllm import create_instance as create_vllm_instance
+from core.utils.vllm import (
+    create_instance as create_vllm_instance,
+    resolve_provider_config,
+)
 from performance_testers.resource_usage import (
     print_benchmark_usage,
     print_initialization_usage,
@@ -44,10 +47,10 @@ def selected_provider(config):
     if not provider_name:
         raise ValueError("No VLLM provider is selected")
 
-    provider_config = config.get("VLLM", {}).get(provider_name)
-    if provider_config is None:
+    if config.get("VLLM", {}).get(provider_name) is None:
         raise ValueError(f"Missing configuration for VLLM provider: {provider_name}")
-    return provider_name, provider_config
+    provider_type, provider_config = resolve_provider_config(config, provider_name)
+    return provider_name, provider_type, provider_config
 
 
 def test_image_path(config):
@@ -77,8 +80,7 @@ def test_question(config):
 
 
 async def run_benchmark(config):
-    provider_name, provider_config = selected_provider(config)
-    provider_type = provider_config.get("type", provider_name)
+    provider_name, provider_type, provider_config = selected_provider(config)
     image_path = test_image_path(config)
     image_base64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
     question = test_question(config)
@@ -87,14 +89,26 @@ async def run_benchmark(config):
 
     initial_usage = process_usage()
     initialization_started_at = time.perf_counter()
-    provider = create_vllm_instance(provider_type, provider_config)
+    provider = None
+    try:
+        provider = create_vllm_instance(provider_type, provider_config)
+        start = getattr(provider, "start", None)
+        if callable(start):
+            start()
+    except BaseException:
+        close = getattr(provider, "close", None)
+        if callable(close):
+            close()
+        raise
     initialization_duration = time.perf_counter() - initialization_started_at
     initialized_usage = process_usage()
 
     durations = []
     response_lengths = []
     failures = []
-    model_name = provider_config.get("model_name", "default")
+    model_name = getattr(
+        provider, "model_name", provider_config.get("model_name", "default")
+    )
 
     print(f"VLLM provider: {provider_name} ({provider_type}, {model_name})")
     print_initialization_usage(
@@ -106,36 +120,41 @@ async def run_benchmark(config):
     print(f"Image: {image_path} ({image_path.stat().st_size} bytes)")
     print(f"Question: {question}")
 
-    for run_number in range(1, runs + 1):
-        started_at = time.perf_counter()
-        try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(provider.response, question, image_base64),
-                timeout=timeout,
-            )
-            duration = time.perf_counter() - started_at
-            response = str(response or "").strip()
-            if not response:
-                raise RuntimeError("Provider returned no response")
+    try:
+        for run_number in range(1, runs + 1):
+            started_at = time.perf_counter()
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(provider.response, question, image_base64),
+                    timeout=timeout,
+                )
+                duration = time.perf_counter() - started_at
+                response = str(response or "").strip()
+                if not response:
+                    raise RuntimeError("Provider returned no response")
 
-            durations.append(duration)
-            response_lengths.append(len(response))
-            print(
-                f"Run {run_number}/{runs}: success in {duration:.3f}s - "
-                f"{response[:100]}"
-            )
-        except asyncio.TimeoutError:
-            duration = time.perf_counter() - started_at
-            message = f"timed out after {duration:.3f}s"
-            failures.append(message)
-            print(f"Run {run_number}/{runs}: failed - {message}")
-            print("Stopping to avoid overlapping requests from a timed-out call.")
-            break
-        except Exception as error:
-            duration = time.perf_counter() - started_at
-            message = f"{type(error).__name__}: {error} ({duration:.3f}s)"
-            failures.append(message)
-            print(f"Run {run_number}/{runs}: failed - {message}")
+                durations.append(duration)
+                response_lengths.append(len(response))
+                print(
+                    f"Run {run_number}/{runs}: success in {duration:.3f}s - "
+                    f"{response[:100]}"
+                )
+            except asyncio.TimeoutError:
+                duration = time.perf_counter() - started_at
+                message = f"timed out after {duration:.3f}s"
+                failures.append(message)
+                print(f"Run {run_number}/{runs}: failed - {message}")
+                print("Stopping to avoid overlapping requests from a timed-out call.")
+                break
+            except Exception as error:
+                duration = time.perf_counter() - started_at
+                message = f"{type(error).__name__}: {error} ({duration:.3f}s)"
+                failures.append(message)
+                print(f"Run {run_number}/{runs}: failed - {message}")
+    finally:
+        close = getattr(provider, "close", None)
+        if callable(close):
+            close()
 
     print("\nVLLM benchmark summary")
     print(f"Success rate: {len(durations)}/{runs} ({len(durations) / runs:.0%})")

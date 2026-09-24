@@ -178,6 +178,14 @@ keys, model names, voices, and endpoints are placeholders; override them in
 `data/.config.yaml` before starting the server. Local Sherpa ASR/TTS providers
 are also available when their optional runtime and model files are installed.
 
+For local vision, select `LlamaCppVLLM`. Its managed Qwen2.5-VL process uses a
+separate port from the text LLM, starts lazily on the first camera request, is
+reused by later image requests, and stops with the HTTP server. The first image
+request therefore includes model loading time. Override `response_language` in
+`data/.config.yaml` for the deployment language. If the selected local LLM uses
+the same model source and a compatible context/projector configuration, vision
+reuses that live llama.cpp endpoint instead of loading a second model process.
+
 For opt-in local memory, select `mem_local_explicit`. It stores compact facts in
 `data/.memory.yaml` only when the user explicitly asks the assistant to remember
 or forget something. It does not summarize conversations on disconnect or call
@@ -250,7 +258,7 @@ LLM:
   LlamaCppLLM:
     type: llama_cpp
     api_key: local
-    base_url: http://127.0.0.1:8080/v1
+    base_url: http://127.0.0.1:6000/v1
     model_name: qwen3:4b
     temperature: 0.6
     top_p: 0.95
@@ -260,7 +268,7 @@ LLM:
       executable: llama-server
       hf_model: Qwen/Qwen3-4B-GGUF:Q4_K_M
       host: 127.0.0.1
-      port: 8080
+      port: 6000
       context_size: 8192
       gpu_layers: all
       parallel: 1

@@ -40,7 +40,7 @@ class LLMProvider(OpenAICompatibleProvider):
         )
 
         host = str(process_config.get("host", "127.0.0.1"))
-        port = int(process_config.get("port", 8080))
+        port = int(process_config.get("port", 6000))
         base_url = llama_config.get("base_url") or f"http://{host}:{port}/v1"
         llama_config["base_url"] = base_url.rstrip("/")
         llama_config.setdefault("api_key", "local")
@@ -123,6 +123,16 @@ class LLMProvider(OpenAICompatibleProvider):
                     f"llama.cpp model file not found: {resolved_model_path}"
                 )
             command.extend(["--model", str(resolved_model_path)])
+
+        mmproj_path = process_config.get("mmproj_path")
+        if mmproj_path:
+            resolved_mmproj_path = Path(mmproj_path).expanduser().resolve()
+            if not resolved_mmproj_path.is_file():
+                raise FileNotFoundError(
+                    f"llama.cpp multimodal projector not found: "
+                    f"{resolved_mmproj_path}"
+                )
+            command.extend(["--mmproj", str(resolved_mmproj_path)])
 
         sleep_idle_seconds = process_config.get("sleep_idle_seconds")
         if sleep_idle_seconds is not None:

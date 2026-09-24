@@ -61,7 +61,12 @@ class VLLMProvider(VLLMProviderBase):
             ]
 
             response = self.client.chat.completions.create(
-                model=self.model_name, messages=messages, stream=False
+                model=self.model_name,
+                messages=messages,
+                stream=False,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                top_p=self.top_p,
             )
 
             return response.choices[0].message.content

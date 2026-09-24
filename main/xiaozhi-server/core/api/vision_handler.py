@@ -1,9 +1,10 @@
+import asyncio
 import json
 from aiohttp import web
 from config.logger import setup_logging
 from core.api.base_handler import BaseHandler
 from core.utils.util import get_vision_url, is_valid_image_file
-from core.utils.vllm import create_instance
+from core.utils.vllm import create_instance, resolve_provider_config
 from core.utils.auth import AuthToken
 import base64
 from typing import Tuple, Optional
@@ -20,6 +21,36 @@ class VisionHandler(BaseHandler):
         super().__init__(config)
         # 初始化认证工具
         self.auth = AuthToken(config["server"]["auth_key"])
+        self._vllm = None
+        self._vllm_provider_name = None
+
+    def _get_vllm(self):
+        provider_name = self.config["selected_module"].get("VLLM")
+        if not provider_name:
+            raise ValueError("您还未设置默认的视觉分析模块")
+
+        provider_type, provider_config = resolve_provider_config(
+            self.config, provider_name
+        )
+        if not provider_type:
+            raise ValueError(f"无法找到VLLM模块对应的供应器{provider_type}")
+
+        if self._vllm is None or self._vllm_provider_name != provider_name:
+            self.close()
+            self.logger.bind(tag=TAG).info(
+                f"Initializing VLLM provider: {provider_name} ({provider_type})"
+            )
+            self._vllm = create_instance(provider_type, provider_config)
+            self._vllm_provider_name = provider_name
+        return self._vllm
+
+    def close(self):
+        provider = self._vllm
+        self._vllm = None
+        self._vllm_provider_name = None
+        close = getattr(provider, "close", None)
+        if callable(close):
+            close()
 
     def _create_error_response(self, message: str) -> dict:
         """创建统一的错误响应格式"""
@@ -97,26 +128,8 @@ class VisionHandler(BaseHandler):
             # 将图片转换为base64编码
             image_base64 = base64.b64encode(image_data).decode("utf-8")
 
-            current_config = self.config
-
-            select_vllm_module = current_config["selected_module"].get("VLLM")
-            if not select_vllm_module:
-                raise ValueError("您还未设置默认的视觉分析模块")
-
-            vllm_type = (
-                select_vllm_module
-                if "type" not in current_config["VLLM"][select_vllm_module]
-                else current_config["VLLM"][select_vllm_module]["type"]
-            )
-
-            if not vllm_type:
-                raise ValueError(f"无法找到VLLM模块对应的供应器{vllm_type}")
-
-            vllm = create_instance(
-                vllm_type, current_config["VLLM"][select_vllm_module]
-            )
-
-            result = vllm.response(question, image_base64)
+            vllm = self._get_vllm()
+            result = await asyncio.to_thread(vllm.response, question, image_base64)
 
             return_json = {
                 "success": True,

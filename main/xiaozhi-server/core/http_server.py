@@ -114,5 +114,6 @@ class SimpleHttpServer:
             self.logger.bind(tag=TAG).error(f"Stack trace: {traceback.format_exc()}")
             raise
         finally:
+            self.vision_handler.close()
             if runner is not None:
                 await runner.cleanup()
