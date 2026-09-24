@@ -1,9 +1,12 @@
 import asyncio
 import json
+import time
+import uuid
 from aiohttp import web
 from config.logger import setup_logging
 from core.api.base_handler import BaseHandler
 from core.utils.util import get_vision_url, is_valid_image_file
+from core.utils.runtime_diagnostics import runtime_diagnostics
 from core.utils.vllm import create_instance, resolve_provider_config
 from core.utils.auth import AuthToken
 import base64
@@ -76,10 +79,16 @@ class VisionHandler(BaseHandler):
     async def handle_post(self, request):
         """处理 MCP Vision POST 请求"""
         response = None  # 初始化response变量
+        request_id = uuid.uuid4().hex[:12]
+        started_at = time.monotonic()
+        outcome = "incomplete"
+        device_id = ""
+        image_bytes = None
         try:
             # 验证token
             is_valid, token_device_id = self._verify_auth_token(request)
             if not is_valid:
+                outcome = "rejected"
                 response = web.Response(
                     text=json.dumps(
                         self._create_error_response("无效的认证token或token已过期")
@@ -93,6 +102,9 @@ class VisionHandler(BaseHandler):
             device_id = request.headers.get("Device-Id", "")
             if device_id != token_device_id:
                 raise ValueError("设备ID与token不匹配")
+            self.logger.bind(tag=TAG).info(
+                f"Vision request {request_id} started for device {device_id}"
+            )
             # 解析multipart/form-data请求
             reader = await request.multipart()
 
@@ -112,6 +124,7 @@ class VisionHandler(BaseHandler):
             image_data = await image_field.read()
             if not image_data:
                 raise ValueError("图片数据为空")
+            image_bytes = len(image_data)
 
             # 检查文件大小
             if len(image_data) > MAX_FILE_SIZE:
@@ -141,22 +154,48 @@ class VisionHandler(BaseHandler):
                 text=json.dumps(return_json, separators=(",", ":")),
                 content_type="application/json",
             )
+            outcome = "completed"
         except ValueError as e:
-            self.logger.bind(tag=TAG).error(f"MCP Vision POST request failed: {e}")
+            self.logger.bind(tag=TAG).error(
+                f"Vision request {request_id} was rejected: {e}"
+            )
             return_json = self._create_error_response(str(e))
             response = web.Response(
                 text=json.dumps(return_json, separators=(",", ":")),
                 content_type="application/json",
             )
+            outcome = "rejected"
         except Exception as e:
-            self.logger.bind(tag=TAG).error(f"MCP Vision POST request failed: {e}")
+            self.logger.bind(tag=TAG).error(
+                f"Vision request {request_id} failed: {e}"
+            )
             return_json = self._create_error_response("处理请求时发生错误")
             response = web.Response(
                 text=json.dumps(return_json, separators=(",", ":")),
                 content_type="application/json",
             )
+            outcome = "failed"
         finally:
-            if response:
+            elapsed_ms = round((time.monotonic() - started_at) * 1000, 1)
+            response_bytes = (
+                len(response.body or b"") if response is not None else None
+            )
+            runtime_diagnostics.record_vision_request(
+                device_id,
+                request_id,
+                outcome,
+                elapsed_ms,
+                image_bytes=image_bytes,
+                response_bytes=response_bytes,
+            )
+            self.logger.bind(tag=TAG).info(
+                f"Vision request {request_id} {outcome} after {elapsed_ms} ms "
+                f"(image={image_bytes}, response={response_bytes} bytes)"
+            )
+            if response is not None:
+                response.headers["X-Xiaozhi-Request-Id"] = request_id
+                response.headers["X-Xiaozhi-Vision-Outcome"] = outcome
+                response.headers["Server-Timing"] = f"vision;dur={elapsed_ms}"
                 self._add_cors_headers(response)
             return response
 

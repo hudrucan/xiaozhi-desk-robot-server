@@ -11,6 +11,7 @@ from aiohttp import web
 
 from core.auth import AuthManager
 from core.utils.util import get_local_ip, get_vision_url
+from core.utils.runtime_diagnostics import runtime_diagnostics
 from core.api.base_handler import BaseHandler
 
 TAG = __name__
@@ -41,6 +42,23 @@ def _is_higher_version(a: str, b: str) -> bool:
         if ai < bi:
             return False
     return False
+
+
+def _read_reset_reason(payload: dict):
+    if not isinstance(payload, dict):
+        return None
+    containers = [payload]
+    containers.extend(
+        value
+        for key in ("application", "board", "system")
+        if isinstance((value := payload.get(key)), dict)
+    )
+    for container in containers:
+        for key in ("reset_reason", "reset-reason", "boot_reason", "boot-reason"):
+            value = container.get(key)
+            if value not in (None, ""):
+                return str(value)[:160]
+    return None
 
 
 class OTAHandler(BaseHandler):
@@ -219,6 +237,25 @@ class OTAHandler(BaseHandler):
                     device_version = ""
             if not device_version:
                 device_version = "0.0.0"
+
+            reset_reason = (
+                request.headers.get("reset-reason")
+                or request.headers.get("boot-reason")
+                or _read_reset_reason(data_json)
+            )
+            restart_event = runtime_diagnostics.record_bootstrap(
+                device_id,
+                client_id=client_id,
+                firmware_version=device_version,
+                device_model=device_model,
+                reset_reason=reset_reason,
+            )
+            if restart_event is not None:
+                reason = reset_reason or "not reported by firmware"
+                self.logger.bind(tag=TAG).warning(
+                    "Device sent OTA bootstrap while its previous WebSocket "
+                    f"was still active; suspected firmware restart, reason: {reason}"
+                )
 
             return_json = {
                 "server_time": {

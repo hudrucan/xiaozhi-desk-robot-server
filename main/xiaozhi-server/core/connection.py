@@ -38,6 +38,7 @@ from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response, get_tool_error_response
 from core.utils import text_utils
+from core.utils.runtime_diagnostics import runtime_diagnostics
 
 
 TAG = __name__
@@ -189,6 +190,11 @@ class ConnectionHandler:
             )
 
             self.device_id = self.headers.get("device-id", None)
+            runtime_diagnostics.register_connection(
+                self.session_id,
+                device_id=self.device_id,
+                client_ip=self.client_ip,
+            )
 
             # 认证通过,继续处理
             self.websocket = ws
@@ -862,6 +868,9 @@ class ConnectionHandler:
         if depth == 0:
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
+            with self._turn_metrics_lock:
+                if self._turn_metrics is not None:
+                    self._turn_metrics["input"] = str(query or "")[:240]
             self.mark_turn_metric("llm_dispatch", sentence_id=current_sentence_id)
             self.dialogue.put(Message(role="user", content=query))
             self.tts.tts_text_queue.put(
@@ -1411,6 +1420,8 @@ class ConnectionHandler:
         with self._turn_metrics_lock:
             self._turn_metrics = {
                 "turn_id": uuid.uuid4().hex,
+                "session_id": self.session_id,
+                "device_id": self.device_id,
                 "source": source,
                 "started_at": now,
                 "sentence_id": None,
@@ -1418,6 +1429,8 @@ class ConnectionHandler:
                 "tools": {},
                 "queue_peaks": {},
             }
+            turn_id = self._turn_metrics["turn_id"]
+        runtime_diagnostics.begin_turn(self.session_id, turn_id, source)
 
     def has_active_turn_metrics(self):
         with self._turn_metrics_lock:
@@ -1495,6 +1508,7 @@ class ConnectionHandler:
                 )
                 metric["outcome"] = "incomplete"
         metrics["tools"] = list(tools.values())
+        runtime_diagnostics.complete_turn(metrics)
         self.logger.bind(tag=TAG).debug(
             f"Turn metrics: {json.dumps(metrics, ensure_ascii=False)}"
         )
@@ -1652,6 +1666,7 @@ class ConnectionHandler:
             # 确保停止事件被设置
             if self.stop_event:
                 self.stop_event.set()
+            runtime_diagnostics.unregister_connection(self.session_id)
 
     def clear_queues(self):
         """清空所有任务队列"""

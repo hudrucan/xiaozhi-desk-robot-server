@@ -8,6 +8,7 @@ from config.config_loader import get_project_dir
 from core.api.base_handler import BaseHandler
 from core.utils.config_editor import ConfigEditor
 from core.utils.resource_monitor import ResourceMonitor
+from core.utils.runtime_diagnostics import runtime_diagnostics
 
 
 class SettingsHandler(BaseHandler):
@@ -78,6 +79,7 @@ class SettingsHandler(BaseHandler):
     async def handle_status(self, request):
         self._require_access(request)
         payload = await asyncio.to_thread(self.resource_monitor.sample)
+        payload["runtime"] = runtime_diagnostics.snapshot()
         return self._disable_cache(web.json_response(payload))
 
     async def handle_put(self, request):
