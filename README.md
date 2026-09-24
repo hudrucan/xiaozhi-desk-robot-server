@@ -338,10 +338,12 @@ server process tree, so CPU, RSS, and unique memory include managed llama.cpp
 children. The UI separates overview, diagnostics, providers, and configuration
 into focused pages. Resource sampling runs only while Overview is visible;
 bounded turn and tool history is polled only from Diagnostics; configuration
-pages do not poll runtime status. Diagnostics shows recent turn timings, tool
-outcomes, and firmware MCP dispatch/response stages. Bounded input, output,
-arguments, and result previews stay collapsed under each turn by default. It
-also tracks active robot connections and possible device restarts detected when
+pages do not poll runtime status. The Memory page loads on demand and can edit
+the active `mem_local_explicit` provider without a restart. Diagnostics shows
+recent turn timings, highlights slow LLM, tool, TTS, and audio stages, and
+includes firmware MCP dispatch/response stages. Bounded input, output, arguments,
+and result previews stay collapsed under each turn by default. It also tracks
+active robot connections and possible device restarts detected when
 OTA bootstrap arrives while the previous WebSocket is active or within 30 seconds
 of its disconnect. Duplicate restart events for the same device and reason are
 suppressed for 45 seconds. These diagnostics are bounded and kept in memory

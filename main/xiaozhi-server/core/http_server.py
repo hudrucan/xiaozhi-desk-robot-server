@@ -1,6 +1,7 @@
 import asyncio
 from aiohttp import web
 from config.logger import setup_logging
+from core.api.memory_handler import MemoryHandler
 from core.api.ota_handler import OTAHandler
 from core.api.settings_handler import SettingsHandler
 from core.api.vision_handler import VisionHandler
@@ -9,25 +10,27 @@ TAG = __name__
 
 
 class SimpleHttpServer:
-    def __init__(self, config: dict, request_restart=None):
+    def __init__(self, config: dict, request_restart=None, memory_provider=None):
         self.config = config
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config)
         self.settings_handler = None
+        self.memory_handler = None
         settings_config = config.get("server", {}).get("settings", {})
         if settings_config.get("enabled", True) and request_restart is not None:
             self.settings_handler = SettingsHandler(config, request_restart)
+            self.memory_handler = MemoryHandler(config, memory_provider)
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:
-        """获取websocket地址
+        """Return the WebSocket URL advertised by the bootstrap endpoint.
 
         Args:
-            local_ip: 本地IP地址
-            port: 端口号
+            local_ip: Local server IP address.
+            port: WebSocket listener port.
 
         Returns:
-            str: websocket地址
+            str: WebSocket URL.
         """
         server_config = self.config["server"]
         websocket_config = server_config.get("websocket")
@@ -87,6 +90,22 @@ class SimpleHttpServer:
                                 "/api/settings/restart",
                                 self.settings_handler.handle_restart,
                             ),
+                            web.get(
+                                "/api/settings/memory",
+                                self.memory_handler.handle_get,
+                            ),
+                            web.post(
+                                "/api/settings/memory",
+                                self.memory_handler.handle_post,
+                            ),
+                            web.put(
+                                "/api/settings/memory/{entry_id}",
+                                self.memory_handler.handle_put,
+                            ),
+                            web.delete(
+                                "/api/settings/memory/{entry_id}",
+                                self.memory_handler.handle_delete,
+                            ),
                         ]
                     )
                 # Vision routes.
@@ -102,15 +121,15 @@ class SimpleHttpServer:
                     ]
                 )
 
-                # 运行服务
+                # Start serving HTTP requests.
                 runner = web.AppRunner(app)
                 await runner.setup()
                 site = web.TCPSite(runner, host, port)
                 await site.start()
 
-                # 保持服务运行
+                # Keep the service alive until the task is cancelled.
                 while True:
-                    await asyncio.sleep(3600)  # 每隔 1 小时检查一次
+                    await asyncio.sleep(3600)
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"Failed to start HTTP server: {e}")
             import traceback

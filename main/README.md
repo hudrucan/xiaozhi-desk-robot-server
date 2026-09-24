@@ -345,6 +345,8 @@ default. It writes to `data/.config.yaml`, requires a restart after changes,
 and rejects non-loopback requests unless `server.settings.allow_remote` is
 explicitly enabled. Overview and Diagnostics poll only their own runtime data
 while visible; provider and configuration pages do not poll status endpoints.
+The Memory page loads on demand and edits the active explicit local-memory
+provider in place, so memory changes apply without restarting the server.
 
 ### 6.3. Provider selection
 

@@ -1,7 +1,15 @@
 const SUMMARY_GROUPS = ["VAD", "ASR", "LLM", "VLLM", "TTS"];
 const PROVIDER_GROUPS = [...SUMMARY_GROUPS, "Memory", "Intent"];
-const PAGE_IDS = ["overview", "diagnostics", "providers", "assistant", "runtime", "integrations", "advanced"];
+const PAGE_IDS = ["overview", "diagnostics", "providers", "assistant", "memory", "runtime", "integrations", "advanced"];
 const STATUS_SCOPES = { overview: "overview", diagnostics: "diagnostics" };
+const DIAGNOSTIC_THRESHOLDS_MS = {
+  llmFirst: 5000,
+  resumedLlmFirst: 5000,
+  tool: 5000,
+  ttsFirst: 2500,
+  firstAudio: 8000,
+  total: 30000,
+};
 const SECRET_NAMES = new Set([
   "access_key", "access_key_secret", "access_token", "api_key", "auth_key",
   "authorization", "client_secret", "mqtt_signature_key", "password",
@@ -21,6 +29,9 @@ const state = {
   statusTimer: null,
   statusGeneration: 0,
   statusController: null,
+  memory: null,
+  memoryLoading: false,
+  memorySearch: "",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -392,6 +403,50 @@ function renderToolDetail(tool) {
     </article>`;
 }
 
+function turnInsights(turn) {
+  const marks = turn.marks_ms || {};
+  const tools = turn.tools || [];
+  const insights = [];
+  const llmFirst = markDelta(marks, "llm_request", "llm_first_response");
+  const resumedLlmFirst = markDelta(marks, "resumed_llm_request", "resumed_llm_first_response");
+  const audible = markDelta(marks, "speech_end", "first_audio_sent");
+  const ttsFirst = markDelta(marks, "tts_infer_start", "tts_first_opus");
+  const slowestTool = Math.max(0, ...tools.map((tool) => Number(tool.duration_ms) || 0));
+
+  if (turn.outcome && turn.outcome !== "completed") {
+    insights.push({ tone: "error", label: `Turn ${String(turn.outcome).replaceAll("_", " ")}` });
+  }
+  if (tools.some((tool) => tool.outcome && tool.outcome !== "completed")) {
+    insights.push({ tone: "error", label: "Tool needs attention" });
+  }
+  if (llmFirst !== null && llmFirst >= DIAGNOSTIC_THRESHOLDS_MS.llmFirst) {
+    insights.push({ tone: "warning", label: `Slow LLM ${formatDuration(llmFirst)}` });
+  }
+  if (resumedLlmFirst !== null && resumedLlmFirst >= DIAGNOSTIC_THRESHOLDS_MS.resumedLlmFirst) {
+    insights.push({ tone: "warning", label: `Slow resume ${formatDuration(resumedLlmFirst)}` });
+  }
+  if (slowestTool >= DIAGNOSTIC_THRESHOLDS_MS.tool) {
+    insights.push({ tone: "warning", label: `Slow tool ${formatDuration(slowestTool)}` });
+  }
+  if (ttsFirst !== null && ttsFirst >= DIAGNOSTIC_THRESHOLDS_MS.ttsFirst) {
+    insights.push({ tone: "warning", label: `Slow TTS ${formatDuration(ttsFirst)}` });
+  }
+  if (audible !== null && audible >= DIAGNOSTIC_THRESHOLDS_MS.firstAudio) {
+    insights.push({ tone: "warning", label: `Late audio ${formatDuration(audible)}` });
+  }
+  if (Number(turn.total_ms) >= DIAGNOSTIC_THRESHOLDS_MS.total) {
+    insights.push({ tone: "warning", label: `Long turn ${formatDuration(turn.total_ms)}` });
+  }
+  return insights;
+}
+
+function renderTurnInsights(insights) {
+  if (!insights.length) return "";
+  return `<div class="turn-insights">${insights.map((insight) =>
+    `<span class="${escapeHtml(insight.tone)}">${escapeHtml(insight.label)}</span>`
+  ).join("")}</div>`;
+}
+
 function renderDiagnostics() {
   const expandedTurns = new Set(
     [...document.querySelectorAll(".turn-details[open][data-turn-id]")]
@@ -402,19 +457,21 @@ function renderDiagnostics() {
   const turns = runtime.turns || [];
   const events = runtime.device_events || [];
   const connections = runtime.connections || {};
+  const recentTurns = turns.slice(0, 20);
+  const flaggedTurns = recentTurns.filter((turn) => turnInsights(turn).length > 0).length;
 
   $("#diagnosticSummary").innerHTML = [
     resourceCard("Connected robots", String(connections.active_count || 0), connections.active_count ? "WebSocket online" : "Waiting for a device"),
-    resourceCard("Recent success", summary.sample_size ? `${summary.completed || 0} / ${summary.sample_size}` : "—", `${summary.attention || 0} need attention`),
+    resourceCard("Recent success", summary.sample_size ? `${summary.completed || 0} / ${summary.sample_size}` : "—", `${flaggedTurns} flagged by latency or outcome`),
     resourceCard("Median turn", formatDuration(summary.median_total_ms), "Last 20 completed records"),
     resourceCard("P95 turn", formatDuration(summary.p95_total_ms), "Slow-tail latency"),
   ].join("");
 
   const status = $("#diagnosticStatus");
-  status.classList.toggle("online", turns.length > 0 && !summary.attention);
-  status.classList.toggle("attention", Boolean(summary.attention));
+  status.classList.toggle("online", turns.length > 0 && !flaggedTurns);
+  status.classList.toggle("attention", Boolean(flaggedTurns));
   status.innerHTML = turns.length
-    ? `<i></i>${summary.attention ? `${summary.attention} need attention` : "Healthy"}`
+    ? `<i></i>${flaggedTurns ? `${flaggedTurns} flagged` : "Healthy"}`
     : "<i></i>No turns";
 
   $("#deviceEvents").innerHTML = events.slice(0, 3).map((event) => {
@@ -463,6 +520,7 @@ function renderDiagnostics() {
     const asr = markDelta(marks, "asr_start", "asr_done");
     const audible = markDelta(marks, "speech_end", "first_audio_sent");
     const toolDuration = Math.max(0, ...tools.map((tool) => Number(tool.duration_ms) || 0));
+    const insights = turnInsights(turn);
     const toolMarkup = tools.length
       ? `<div class="turn-tools">${tools.map((tool) => `<span class="${escapeHtml(tool.outcome || "unknown")}">${escapeHtml(tool.name || "tool")}<small>${escapeHtml(toolStage(tool))} · ${escapeHtml(formatDuration(tool.duration_ms))}</small></span>`).join("")}</div>`
       : "";
@@ -479,7 +537,7 @@ function renderDiagnostics() {
         </details>`
       : "";
     return `
-      <article class="turn-card ${escapeHtml(outcome)}">
+      <article class="turn-card ${escapeHtml(outcome)}${insights.length ? " flagged" : ""}">
         <div class="turn-rail"><i></i></div>
         <div class="turn-body">
           <header>
@@ -495,6 +553,7 @@ function renderDiagnostics() {
               ${turnPhase("To audio", audible)}
             </div>
             ${toolMarkup}
+            ${renderTurnInsights(insights)}
           </div>
           ${details}
         </div>
@@ -681,6 +740,117 @@ function renderAdvanced() {
   attachFieldListeners($("#advancedFields"));
 }
 
+function memoryTime(value) {
+  if (!value) return "Unknown time";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function renderMemoryEntries() {
+  const container = $("#memoryEntries");
+  const memory = state.memory || {};
+  const entries = Array.isArray(memory.entries) ? memory.entries : [];
+  const query = state.memorySearch.trim().toLocaleLowerCase();
+  const filtered = query
+    ? entries.filter((entry) => String(entry.content || "").toLocaleLowerCase().includes(query))
+    : entries;
+
+  $("#memoryCount").textContent = `${entries.length} memor${entries.length === 1 ? "y" : "ies"}`;
+  if (!memory.available || !memory.initialized) {
+    container.innerHTML = `<article class="empty-state"><span>◌</span><div><strong>Memory is not ready</strong><p>${escapeHtml(memory.reason || "Connect the robot once to initialize its memory scope.")}</p></div></article>`;
+    return;
+  }
+  if (!filtered.length) {
+    const message = entries.length ? "No memories match this filter." : "No explicit memories have been saved yet.";
+    container.innerHTML = `<article class="empty-state"><span>◌</span><div><strong>Nothing to show</strong><p>${escapeHtml(message)}</p></div></article>`;
+    return;
+  }
+
+  container.innerHTML = filtered.map((entry) => `
+    <article class="memory-entry" data-memory-entry="${escapeHtml(entry.id || "")}">
+      <textarea maxlength="${Number(memory.entry_max_chars) || 300}" aria-label="Memory content">${escapeHtml(entry.content || "")}</textarea>
+      <footer>
+        <span>Updated ${escapeHtml(memoryTime(entry.updated_at || entry.created_at))}</span>
+        <div>
+          <button class="button secondary" type="button" data-memory-delete>Delete</button>
+          <button class="button primary" type="button" data-memory-save>Save</button>
+        </div>
+      </footer>
+    </article>`).join("");
+
+  container.querySelectorAll("[data-memory-save]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const entry = button.closest("[data-memory-entry]");
+      await mutateMemory(
+        "PUT",
+        `/api/settings/memory/${encodeURIComponent(entry.dataset.memoryEntry)}`,
+        { content: entry.querySelector("textarea").value },
+      );
+    });
+  });
+  container.querySelectorAll("[data-memory-delete]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const entry = button.closest("[data-memory-entry]");
+      if (!window.confirm("Delete this memory? This cannot be undone.")) return;
+      await mutateMemory(
+        "DELETE",
+        `/api/settings/memory/${encodeURIComponent(entry.dataset.memoryEntry)}`,
+      );
+    });
+  });
+}
+
+function renderMemory() {
+  const memory = state.memory || {};
+  const status = $("#memoryStatus");
+  const ready = Boolean(memory.available && memory.initialized);
+  status.classList.toggle("online", ready);
+  status.classList.toggle("attention", Boolean(state.memory && !ready));
+  status.innerHTML = state.memoryLoading
+    ? "<i></i>Loading"
+    : `<i></i>${ready ? "Ready" : (state.memory ? "Unavailable" : "Not loaded")}`;
+
+  $("#memoryContent").maxLength = Number(memory.entry_max_chars) || 300;
+  $("#memoryContent").disabled = !ready || state.memoryLoading;
+  $("#memoryCreateButton").disabled = !ready || state.memoryLoading;
+  $("#memoryContext").textContent = ready
+    ? `${memory.device_id || "Active device"} · recall ${memory.recall_enabled ? "enabled" : "disabled"} · limit ${memory.max_entries}`
+    : (memory.reason || "Connect the robot once to initialize its memory scope.");
+  $("#memorySearch").value = state.memorySearch;
+  renderMemoryEntries();
+}
+
+async function loadMemory() {
+  if (state.memoryLoading) return;
+  state.memoryLoading = true;
+  renderMemory();
+  try {
+    const response = await fetch("/api/settings/memory", { cache: "no-store" });
+    if (!response.ok) throw new Error(await response.text());
+    state.memory = await response.json();
+  } catch (error) {
+    state.memory = { available: false, reason: error.message, entries: [] };
+  } finally {
+    state.memoryLoading = false;
+    renderMemory();
+  }
+}
+
+async function mutateMemory(method, url, body = null) {
+  try {
+    const options = { method, headers: { "Content-Type": "application/json" } };
+    if (body !== null) options.body = JSON.stringify(body);
+    const response = await fetch(url, options);
+    if (!response.ok) throw new Error(await response.text());
+    state.memory = await response.json();
+    $("#memoryContent").value = "";
+    renderMemory();
+    toast("Memory updated.");
+  } catch (error) {
+    toast(error.message || "Memory update failed", true);
+  }
+}
+
 function renderAll() {
   renderOverview();
   renderProviders();
@@ -688,6 +858,7 @@ function renderAll() {
   renderRuntime();
   renderIntegrations();
   renderAdvanced();
+  renderMemory();
   renderDiagnostics();
   renderSidebarLive();
   $("#configPath").textContent = state.configPath || "data/.config.yaml";
@@ -880,6 +1051,7 @@ function setActivePage(page, options = {}) {
   document.title = `${labelFor(nextPage)} · Xiaozhi Server`;
   if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "auto" });
   restartStatusPolling();
+  if (nextPage === "memory") loadMemory();
 }
 
 function initializeNavigation() {
@@ -903,5 +1075,16 @@ $("#saveButton").addEventListener("click", saveSettings);
 $("#discardButton").addEventListener("click", discardChanges);
 $("#restartButton").addEventListener("click", restartServer);
 $("#restartNowButton").addEventListener("click", restartServer);
+$("#memoryRefreshButton").addEventListener("click", loadMemory);
+$("#memorySearch").addEventListener("input", (event) => {
+  state.memorySearch = event.target.value;
+  renderMemoryEntries();
+});
+$("#memoryCreateForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await mutateMemory("POST", "/api/settings/memory", {
+    content: $("#memoryContent").value,
+  });
+});
 initializeNavigation();
 loadSettings();

@@ -1,3 +1,4 @@
+import copy
 import os
 import re
 import tempfile
@@ -41,11 +42,13 @@ class MemoryProvider(MemoryProviderBase):
             for word in configured_stop_words
             if str(word).strip()
         }
+        self._entries_lock = threading.RLock()
         self.entries = []
 
     def init_memory(self, role_id, llm, summary_memory=None, **kwargs):
-        super().init_memory(role_id, llm, **kwargs)
-        self.entries = self._load_entries()
+        with self._entries_lock:
+            super().init_memory(role_id, llm, **kwargs)
+            self.entries = self._load_entries()
 
     async def save_memory(self, msgs, session_id=None):
         """Conversation shutdown never writes implicit memories."""
@@ -65,7 +68,8 @@ class MemoryProvider(MemoryProviderBase):
         if not self.recall_enabled or self.recall_max_chars == 0:
             return ""
 
-        candidates = list(reversed(self.entries))
+        with self._entries_lock:
+            candidates = copy.deepcopy(list(reversed(self.entries)))
         normalized_query = self._normalize_for_search(query)
         query_terms = self._search_terms(normalized_query)
         if not query_terms:
@@ -132,34 +136,37 @@ class MemoryProvider(MemoryProviderBase):
         return bool(value)
 
     def remember(self, content: str):
-        normalized = " ".join(str(content or "").split()).strip()
+        normalized = self._normalize_content(content)
         if not normalized:
             return False
-        normalized = normalized[: self.entry_max_chars].rstrip()
 
-        matching_entry = next(
-            (
-                entry
-                for entry in self.entries
-                if entry.get("content", "").casefold() == normalized.casefold()
-            ),
-            None,
-        )
-        if matching_entry is not None:
-            matching_entry["updated_at"] = self._now()
-        else:
-            timestamp = self._now()
-            self.entries.append(
-                {
-                    "id": uuid.uuid4().hex,
-                    "content": normalized,
-                    "created_at": timestamp,
-                    "updated_at": timestamp,
-                }
+        with self._entries_lock:
+            matching_entry = next(
+                (
+                    entry
+                    for entry in self.entries
+                    if entry.get("content", "").casefold()
+                    == normalized.casefold()
+                ),
+                None,
             )
-            self.entries = self.entries[-self.max_entries :]
+            if matching_entry is not None:
+                matching_entry["updated_at"] = self._now()
+                self.entries.remove(matching_entry)
+                self.entries.append(matching_entry)
+            else:
+                timestamp = self._now()
+                self.entries.append(
+                    {
+                        "id": uuid.uuid4().hex,
+                        "content": normalized,
+                        "created_at": timestamp,
+                        "updated_at": timestamp,
+                    }
+                )
+                self.entries = self.entries[-self.max_entries :]
 
-        self._save_entries()
+            self._save_entries()
         return True
 
     def forget(self, query: str):
@@ -167,22 +174,80 @@ class MemoryProvider(MemoryProviderBase):
         if not normalized:
             return 0
 
-        kept = []
-        removed = 0
-        for entry in self.entries:
-            content = entry.get("content", "").casefold()
-            if normalized in content:
-                removed += 1
-            else:
-                kept.append(entry)
+        with self._entries_lock:
+            kept = []
+            removed = 0
+            for entry in self.entries:
+                content = entry.get("content", "").casefold()
+                if normalized in content:
+                    removed += 1
+                else:
+                    kept.append(entry)
 
-        if removed:
-            self.entries = kept
-            self._save_entries()
+            if removed:
+                self.entries = kept
+                self._save_entries()
         return removed
 
     def list_entries(self):
-        return [entry.get("content", "") for entry in self.entries if entry.get("content")]
+        with self._entries_lock:
+            return [
+                entry.get("content", "")
+                for entry in self.entries
+                if entry.get("content")
+            ]
+
+    def inspect_entries(self):
+        """Return editable memory state for the local settings UI."""
+        with self._entries_lock:
+            return {
+                "initialized": bool(self.role_id),
+                "device_id": self.role_id,
+                "recall_enabled": self.recall_enabled,
+                "max_entries": self.max_entries,
+                "entry_max_chars": self.entry_max_chars,
+                "entries": copy.deepcopy(list(reversed(self.entries))),
+            }
+
+    def update_entry(self, entry_id: str, content: str):
+        normalized = self._normalize_content(content)
+        if not normalized:
+            raise ValueError("Memory content cannot be empty")
+
+        with self._entries_lock:
+            entry = next(
+                (
+                    item
+                    for item in self.entries
+                    if item.get("id") == str(entry_id)
+                ),
+                None,
+            )
+            if entry is None:
+                return False
+            entry["content"] = normalized
+            entry["updated_at"] = self._now()
+            self.entries.remove(entry)
+            self.entries.append(entry)
+            self._save_entries()
+        return True
+
+    def delete_entry(self, entry_id: str):
+        with self._entries_lock:
+            kept = [
+                entry
+                for entry in self.entries
+                if entry.get("id") != str(entry_id)
+            ]
+            if len(kept) == len(self.entries):
+                return False
+            self.entries = kept
+            self._save_entries()
+        return True
+
+    def _normalize_content(self, content):
+        normalized = " ".join(str(content or "").split()).strip()
+        return normalized[: self.entry_max_chars].rstrip()
 
     def _load_entries(self):
         if not self.role_id:

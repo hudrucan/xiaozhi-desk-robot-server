@@ -66,6 +66,11 @@ class WebSocketServer:
         expire_seconds = auth_config.get("expire_seconds", None)
         self.auth = AuthManager(secret_key=secret_key, expire_seconds=expire_seconds)
 
+    @property
+    def memory_provider(self):
+        """Return the process-owned memory provider for local administration."""
+        return self._memory
+
     async def start(self):
         server_config = self.config["server"]
         host = server_config.get("ip", "0.0.0.0")

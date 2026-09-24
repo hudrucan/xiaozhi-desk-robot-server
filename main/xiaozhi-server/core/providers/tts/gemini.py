@@ -129,7 +129,11 @@ class TTSProvider(TTSProviderBase):
             if self.is_first_sentence
             else self.punctuations
         )
-        split_at = max((current_text.rfind(mark) for mark in punctuations), default=-1)
+        split_at = self._find_segment_boundary(
+            current_text,
+            punctuations,
+            prefer_latest=True,
+        )
         if split_at < 0:
             return None
 

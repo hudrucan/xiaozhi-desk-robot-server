@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=11" />
+    <link rel="stylesheet" href="/settings/styles.css?v=12" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -29,9 +29,10 @@
           <a href="#diagnostics"><span>02</span>Diagnostics</a>
           <a href="#providers"><span>03</span>Providers</a>
           <a href="#assistant"><span>04</span>Assistant</a>
-          <a href="#runtime"><span>05</span>Runtime</a>
-          <a href="#integrations"><span>06</span>Integrations</a>
-          <a href="#advanced"><span>07</span>Advanced</a>
+          <a href="#memory"><span>05</span>Memory</a>
+          <a href="#runtime"><span>06</span>Runtime</a>
+          <a href="#integrations"><span>07</span>Integrations</a>
+          <a href="#advanced"><span>08</span>Advanced</a>
         </nav>
 
         <div class="sidebar-live" aria-label="Live server status">
@@ -181,6 +182,37 @@
             <div class="settings-groups" id="assistantFields"></div>
           </section>
 
+          <section id="memory" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Durable local context</p>
+                <h2>Memory</h2>
+                <p class="section-copy">Inspect and edit the active robot's explicit memories. Changes apply to the next turn without restarting.</p>
+              </div>
+              <span class="badge" id="memoryStatus"><i></i>Not loaded</span>
+            </div>
+            <div class="memory-layout">
+              <article class="panel memory-compose">
+                <div class="panel-heading">
+                  <div><p class="eyebrow">Remember</p><h3>Add a memory</h3></div>
+                </div>
+                <form id="memoryCreateForm">
+                  <textarea id="memoryContent" placeholder="A durable fact the assistant should remember"></textarea>
+                  <button class="button primary" id="memoryCreateButton" type="submit">Add memory</button>
+                </form>
+                <p class="field-help" id="memoryContext">Connect the robot once to initialize its memory scope.</p>
+              </article>
+              <article class="panel memory-browser">
+                <header>
+                  <div><p class="eyebrow">Stored facts</p><h3 id="memoryCount">0 memories</h3></div>
+                  <button class="button secondary" id="memoryRefreshButton" type="button">Refresh</button>
+                </header>
+                <input id="memorySearch" type="search" placeholder="Filter memories" aria-label="Filter memories" />
+                <div class="memory-entries" id="memoryEntries"></div>
+              </article>
+            </div>
+          </section>
+
           <section id="runtime" class="page-section">
             <div class="section-heading">
               <div>
@@ -227,6 +259,6 @@
       </div>
     </div>
 
-    <script src="/settings/app.js?v=11" defer></script>
+    <script src="/settings/app.js?v=12" defer></script>
   </body>
 </html>

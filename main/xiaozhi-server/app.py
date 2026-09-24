@@ -80,7 +80,11 @@ async def main():
     ws_server = WebSocketServer(config)
     ws_task = asyncio.create_task(ws_server.start())
     # Start the HTTP server.
-    ota_server = SimpleHttpServer(config, restart_event.set)
+    ota_server = SimpleHttpServer(
+        config,
+        restart_event.set,
+        memory_provider=ws_server.memory_provider,
+    )
     ota_task = asyncio.create_task(ota_server.start())
 
     port = int(config["server"].get("http_port", 8003))
