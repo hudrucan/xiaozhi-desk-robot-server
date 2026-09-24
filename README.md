@@ -195,6 +195,9 @@ automatically supplies only facts relevant to the current request. Set it to
 
 ### Search and weather tools
 
+The built-in `get_current_datetime` tool reads the server's local clock and is
+enabled by default. It does not require provider configuration or an API key.
+
 Server plugins are disabled until their provider-specific configuration is set
 in `data/.config.yaml`. A typical Vietnamese deployment can use:
 

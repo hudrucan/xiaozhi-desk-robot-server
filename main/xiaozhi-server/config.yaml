@@ -245,12 +245,14 @@ Intent:
     type: intent_llm
     llm: GeminiLLM
     functions:
+      - get_current_datetime
       - web_search
       - get_weather
       - get_air_quality
   function_call:
     type: function_call
     functions:
+      - get_current_datetime
       - web_search
       - get_weather
       - get_air_quality
