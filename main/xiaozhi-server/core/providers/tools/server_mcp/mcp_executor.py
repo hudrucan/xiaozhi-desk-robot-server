@@ -3,6 +3,7 @@
 from typing import Dict, Any, Optional
 from ..base import ToolType, ToolDefinition, ToolExecutor
 from plugins_func.register import Action, ActionResponse
+from core.utils.util import get_tool_error_response
 from .mcp_manager import ServerMCPManager
 
 
@@ -47,12 +48,14 @@ class ServerMCPExecutor(ToolExecutor):
         except ValueError as e:
             return ActionResponse(
                 action=Action.NOTFOUND,
-                response=str(e),
+                result=str(e),
+                response=get_tool_error_response(conn.config),
             )
         except Exception as e:
             return ActionResponse(
                 action=Action.ERROR,
-                response=str(e),
+                result=str(e),
+                response=get_tool_error_response(conn.config),
             )
 
     def get_tools(self) -> Dict[str, ToolDefinition]:

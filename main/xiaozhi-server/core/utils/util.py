@@ -570,4 +570,13 @@ def get_system_error_response(config: dict) -> str:
     Returns:
         str: 系统错误时的回复
     """
-    return config.get("system_error_response", "主人，小智现在有点忙，我们稍后再试吧。")
+    return config.get(
+        "system_error_response",
+        "Sorry, I am temporarily unavailable. Please try again shortly.",
+    )
+
+
+def get_tool_error_response(config: dict, timed_out: bool = False) -> str:
+    """Return a deployment-localized response for a tool failure."""
+    key = "tool_timeout_response" if timed_out else "tool_error_response"
+    return config.get(key) or get_system_error_response(config)

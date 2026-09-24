@@ -213,6 +213,9 @@ plugins:
   get_weather:
     provider: open_meteo
     default_location: Ho Chi Minh City
+    location_aliases:
+      TP.HCM: Ho Chi Minh City
+      TPHCM: Ho Chi Minh City
     language: vi
     preferred_country_code: VN
     forecast_days: 7
@@ -227,7 +230,13 @@ plugins:
 ```
 
 Open-Meteo does not require an API key. `web_search` supports Tavily and Metaso;
-only configure options accepted by the selected provider.
+only configure options accepted by the selected provider. Weather location
+aliases are exact and case-insensitive; use them for local abbreviations that
+Open-Meteo's geocoder does not resolve reliably.
+
+Set the top-level `tool_error_response` and `tool_timeout_response` values in
+`data/.config.yaml` to keep spoken tool failures in the deployment language.
+Detailed provider and device errors remain in the server log.
 
 Gemini 3 models can use Google's native search grounding instead of the
 `web_search` plugin:

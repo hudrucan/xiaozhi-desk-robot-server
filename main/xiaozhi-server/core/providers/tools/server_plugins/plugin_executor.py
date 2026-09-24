@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from ..base import ToolType, ToolDefinition, ToolExecutor
 from plugins_func.register import all_function_registry, module_func_map, Action, ActionResponse
+from core.utils.util import get_tool_error_response
 
 
 class ServerPluginExecutor(ToolExecutor):
@@ -49,7 +50,8 @@ class ServerPluginExecutor(ToolExecutor):
         except Exception as e:
             return ActionResponse(
                 action=Action.ERROR,
-                response=str(e),
+                result=str(e),
+                response=get_tool_error_response(conn.config),
             )
 
     def _expand_plugin_names(self, config_functions):

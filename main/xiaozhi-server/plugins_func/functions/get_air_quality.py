@@ -16,7 +16,9 @@ GET_AIR_QUALITY_FUNCTION_DESC = {
         "name": "get_air_quality",
         "description": (
             "Get current air quality, particle pollution, UV index, and a short "
-            "forecast summary for a location."
+            "forecast summary for a location. Call this on every request for "
+            "current air quality, even if an earlier turn contains a previous "
+            "result."
         ),
         "parameters": {
             "type": "object",

@@ -14,6 +14,7 @@ from .device_iot import DeviceIoTExecutor
 from .device_mcp import DeviceMCPExecutor
 from .mcp_endpoint import MCPEndpointExecutor
 from core.handle.sendAudioHandle import send_display_message
+from core.utils.util import get_tool_error_response
 
 
 class UnifiedToolHandler:
@@ -148,7 +149,8 @@ class UnifiedToolHandler:
                     self.logger.error(f"Unable to parse function arguments: {arguments}")
                     return ActionResponse(
                         action=Action.ERROR,
-                        response="Unable to parse function arguments",
+                        result="Unable to parse function arguments",
+                        response=get_tool_error_response(self.config),
                     )
 
             self.logger.debug(f"Calling tool: {function_name}, arguments: {arguments}")
@@ -165,7 +167,11 @@ class UnifiedToolHandler:
 
         except Exception as e:
             self.logger.error(f"Function-call handling failed: {e}")
-            return ActionResponse(action=Action.ERROR, response=str(e))
+            return ActionResponse(
+                action=Action.ERROR,
+                result=str(e),
+                response=get_tool_error_response(self.config),
+            )
 
     def _combine_responses(self, responses: List[ActionResponse]) -> ActionResponse:
         """Combine responses from multiple tool calls."""

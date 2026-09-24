@@ -5,6 +5,7 @@ import asyncio
 from typing import Dict, Any
 from ..base import ToolType, ToolDefinition, ToolExecutor
 from plugins_func.register import Action, ActionResponse
+from core.utils.util import get_tool_error_response
 
 
 class DeviceIoTExecutor(ToolExecutor):
@@ -18,9 +19,12 @@ class DeviceIoTExecutor(ToolExecutor):
         self, conn, tool_name: str, arguments: Dict[str, Any]
     ) -> ActionResponse:
         """执行设备端IoT工具"""
+        arguments = arguments if isinstance(arguments, dict) else {}
         if not self.has_tool(tool_name):
             return ActionResponse(
-                action=Action.NOTFOUND, response=f"IoT工具 {tool_name} 不存在"
+                action=Action.NOTFOUND,
+                result=f"IoT tool {tool_name} does not exist",
+                response=get_tool_error_response(conn.config),
             )
 
         try:
@@ -36,7 +40,7 @@ class DeviceIoTExecutor(ToolExecutor):
                     if value is not None:
                         # 处理响应模板
                         response_success = arguments.get(
-                            "response_success", "查询成功：{value}"
+                            "response_success", "Current value: {value}"
                         )
                         response = response_success.replace("{value}", str(value))
 
@@ -46,7 +50,8 @@ class DeviceIoTExecutor(ToolExecutor):
                         )
                     else:
                         response_failure = arguments.get(
-                            "response_failure", f"无法获取{device_name}的状态"
+                            "response_failure",
+                            get_tool_error_response(conn.config),
                         )
                         return ActionResponse(
                             action=Action.ERROR, response=response_failure
@@ -73,7 +78,9 @@ class DeviceIoTExecutor(ToolExecutor):
                     # 等待状态更新
                     await asyncio.sleep(0.1)
 
-                    response_success = arguments.get("response_success", "操作成功")
+                    response_success = arguments.get(
+                        "response_success", "Operation completed"
+                    )
 
                     # 处理响应中的占位符
                     for param_name, param_value in control_params.items():
@@ -93,11 +100,21 @@ class DeviceIoTExecutor(ToolExecutor):
                         result=response_success,
                     )
 
-            return ActionResponse(action=Action.ERROR, response="无法解析IoT工具名称")
+            return ActionResponse(
+                action=Action.ERROR,
+                result="Unable to parse the IoT tool name",
+                response=get_tool_error_response(conn.config),
+            )
 
         except Exception as e:
-            response_failure = arguments.get("response_failure", "操作失败")
-            return ActionResponse(action=Action.ERROR, response=response_failure)
+            response_failure = arguments.get("response_failure") or (
+                get_tool_error_response(conn.config)
+            )
+            return ActionResponse(
+                action=Action.ERROR,
+                result=str(e),
+                response=response_failure,
+            )
 
     async def _get_iot_status(self, device_name: str, property_name: str):
         """获取IoT设备状态"""
@@ -130,7 +147,9 @@ class DeviceIoTExecutor(ToolExecutor):
                         await self.conn.websocket.send(send_message)
                         return
 
-        raise Exception(f"未找到设备{device_name}的方法{method_name}")
+        raise RuntimeError(
+            f"Method {method_name} was not found on device {device_name}"
+        )
 
     def register_iot_tools(self, descriptors: list):
         """注册IoT工具"""
@@ -147,17 +166,23 @@ class DeviceIoTExecutor(ToolExecutor):
                         "type": "function",
                         "function": {
                             "name": tool_name,
-                            "description": f"查询{device_desc}的{prop_info['description']}",
+                            "description": (
+                                f"Read the current {prop_info['description']} from "
+                                f"{device_desc}. This tool does not change device state."
+                            ),
                             "parameters": {
                                 "type": "object",
                                 "properties": {
                                     "response_success": {
                                         "type": "string",
-                                        "description": f"查询成功时的友好回复，必须使用{{value}}作为占位符表示查询到的值",
+                                        "description": (
+                                            "A friendly success response. Use {value} "
+                                            "as the placeholder for the returned value."
+                                        ),
                                     },
                                     "response_failure": {
                                         "type": "string",
-                                        "description": f"查询失败时的友好回复",
+                                        "description": "A friendly failure response.",
                                     },
                                 },
                                 "required": ["response_success", "response_failure"],
@@ -200,11 +225,11 @@ class DeviceIoTExecutor(ToolExecutor):
                         {
                             "response_success": {
                                 "type": "string",
-                                "description": "操作成功时的友好回复",
+                                "description": "A friendly success response.",
                             },
                             "response_failure": {
                                 "type": "string",
-                                "description": "操作失败时的友好回复",
+                                "description": "A friendly failure response.",
                             },
                         }
                     )

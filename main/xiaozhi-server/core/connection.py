@@ -36,7 +36,7 @@ from core.providers.tts.dto.dto import ContentType, TTSMessageDTO, SentenceType
 from config.logger import setup_logging, build_module_string, create_connection_logger
 from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
-from core.utils.util import get_system_error_response
+from core.utils.util import get_system_error_response, get_tool_error_response
 from core.utils import text_utils
 
 
@@ -82,6 +82,8 @@ class ConnectionHandler:
         # 线程任务相关
         self.loop = None  # 在 handle_connection 中获取运行中的事件循环
         self.stop_event = threading.Event()
+        self._close_lock = None
+        self._close_completed = False
         self.executor = ThreadPoolExecutor(max_workers=5)
         self.chat_executor = ThreadPoolExecutor(max_workers=1)
         self._turn_metrics_lock = threading.Lock()
@@ -282,6 +284,8 @@ class ConnectionHandler:
 
     async def _route_message(self, message):
         """消息路由"""
+        if self.stop_event.is_set():
+            return
         if isinstance(message, str):
             await handleTextMessage(self, message)
         elif isinstance(message, bytes):
@@ -1215,7 +1219,10 @@ class ConnectionHandler:
                         tool_results.append((
                             ActionResponse(
                                 action=Action.ERROR,
-                                result=get_system_error_response(self.config),
+                                result="Tool call timed out",
+                                response=get_tool_error_response(
+                                    self.config, timed_out=True
+                                ),
                             ),
                             tool_call_data,
                         ))
@@ -1233,7 +1240,8 @@ class ConnectionHandler:
                         tool_results.append((
                             ActionResponse(
                                 action=Action.ERROR,
-                                result=get_system_error_response(self.config),
+                                result=str(e),
+                                response=get_tool_error_response(self.config),
                             ),
                             tool_call_data
                         ))
@@ -1492,6 +1500,21 @@ class ConnectionHandler:
         )
 
     async def close(self, ws=None):
+        """Release connection resources once, even when close paths race."""
+        if self._close_completed:
+            return
+        if self.stop_event:
+            self.stop_event.set()
+        if self._close_lock is None:
+            self._close_lock = asyncio.Lock()
+
+        async with self._close_lock:
+            if self._close_completed:
+                return
+            await self._close_resources(ws)
+            self._close_completed = True
+
+    async def _close_resources(self, ws=None):
         """资源清理方法"""
         try:
             self.complete_turn_metrics("connection_closed")
@@ -1517,11 +1540,12 @@ class ConnectionHandler:
 
             # 取消超时任务
             if self.timeout_task and not self.timeout_task.done():
-                self.timeout_task.cancel()
-                try:
-                    await self.timeout_task
-                except asyncio.CancelledError:
-                    pass
+                if self.timeout_task is not asyncio.current_task():
+                    self.timeout_task.cancel()
+                    try:
+                        await self.timeout_task
+                    except asyncio.CancelledError:
+                        pass
                 self.timeout_task = None
 
             if self.asr_audio_task and not self.asr_audio_task.done():

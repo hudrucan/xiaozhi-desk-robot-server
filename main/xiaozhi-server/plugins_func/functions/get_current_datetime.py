@@ -14,8 +14,9 @@ GET_CURRENT_DATETIME_FUNCTION_DESC = {
         "name": "get_current_datetime",
         "description": (
             "Get the server's authoritative current local date, weekday, time, "
-            "and UTC offset. Call this whenever the user asks what date, day of "
-            "the week, or time it is now."
+            "and UTC offset. Call this on every request for the current date, "
+            "day of the week, or time, even if an earlier turn contains a "
+            "previous result."
         ),
         "parameters": {
             "type": "object",
@@ -34,8 +35,10 @@ GET_CURRENT_DATETIME_FUNCTION_DESC = {
 async def get_current_datetime(conn: "ConnectionHandler"):
     now = datetime.now().astimezone()
     result = {
+        "observed_at": now.isoformat(timespec="seconds"),
         "date": now.date().isoformat(),
         "weekday": now.strftime("%A"),
+        "iso_weekday": now.isoweekday(),
         "time": now.strftime("%H:%M:%S"),
         "utc_offset": now.strftime("%z"),
         "timezone": str(now.tzinfo),

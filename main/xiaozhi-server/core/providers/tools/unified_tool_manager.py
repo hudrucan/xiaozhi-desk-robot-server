@@ -3,6 +3,7 @@
 from typing import Dict, List, Optional, Any
 from config.logger import setup_logging
 from plugins_func.register import Action, ActionResponse
+from core.utils.util import get_tool_error_response
 from .base import ToolType, ToolDefinition, ToolExecutor
 
 
@@ -80,14 +81,16 @@ class ToolManager:
             if not tool_type:
                 return ActionResponse(
                     action=Action.NOTFOUND,
-                    response=f"Tool {tool_name} does not exist",
+                    result=f"Tool {tool_name} does not exist",
+                    response=get_tool_error_response(self.conn.config),
                 )
 
             executor = self.executors.get(tool_type)
             if not executor:
                 return ActionResponse(
                     action=Action.ERROR,
-                    response=f"No executor is registered for {tool_type.value}",
+                    result=f"No executor is registered for {tool_type.value}",
+                    response=get_tool_error_response(self.conn.config),
                 )
 
             self.logger.info(f"Executing tool: {tool_name}, arguments: {arguments}")
@@ -97,7 +100,11 @@ class ToolManager:
 
         except Exception as e:
             self.logger.error(f"Tool {tool_name} failed: {e}")
-            return ActionResponse(action=Action.ERROR, response=str(e))
+            return ActionResponse(
+                action=Action.ERROR,
+                result=str(e),
+                response=get_tool_error_response(self.conn.config),
+            )
 
     def get_supported_tool_names(self) -> List[str]:
         """Return all supported tool names."""

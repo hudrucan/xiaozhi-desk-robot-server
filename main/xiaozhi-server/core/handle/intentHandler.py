@@ -1,6 +1,7 @@
 import json
 import uuid
 import asyncio
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -10,7 +11,7 @@ from core.providers.tts.dto.dto import ContentType
 from core.handle.helloHandle import checkWakeupWords
 from plugins_func.register import Action, ActionResponse
 from core.handle.sendAudioHandle import send_stt_message
-from core.utils.util import remove_punctuation_and_length
+from core.utils.util import get_tool_error_response, remove_punctuation_and_length
 from core.providers.tts.dto.dto import TTSMessageDTO, SentenceType
 
 TAG = __name__
@@ -164,10 +165,21 @@ async def process_intent_result(
                         ),
                         conn.loop,
                     ).result(timeout=tool_call_timeout)
+                except FutureTimeoutError as e:
+                    conn.logger.bind(tag=TAG).error(f"Tool call failed: {e}")
+                    result = ActionResponse(
+                        action=Action.ERROR,
+                        result="Tool call timed out",
+                        response=get_tool_error_response(
+                            conn.config, timed_out=True
+                        ),
+                    )
                 except Exception as e:
                     conn.logger.bind(tag=TAG).error(f"Tool call failed: {e}")
                     result = ActionResponse(
-                        action=Action.ERROR, result="工具调用超时，请一会再试下哈", response="工具调用超时，请一会再试下哈"
+                        action=Action.ERROR,
+                        result=str(e),
+                        response=get_tool_error_response(conn.config),
                     )
 
                 if result:

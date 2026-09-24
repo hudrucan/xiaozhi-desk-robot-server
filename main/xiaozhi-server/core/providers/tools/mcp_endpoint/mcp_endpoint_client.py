@@ -103,7 +103,7 @@ class MCPEndpointClient:
         if self.websocket:
             await self.websocket.send(message)
         else:
-            raise RuntimeError("WebSocket连接未建立")
+            raise RuntimeError("WebSocket connection is not established")
 
     async def close(self):
         """关闭WebSocket连接"""

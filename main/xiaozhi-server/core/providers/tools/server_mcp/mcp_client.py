@@ -129,7 +129,7 @@ class ServerMCPClient:
             RuntimeError: 客户端未初始化时抛出
         """
         if not self.session:
-            raise RuntimeError("服务端MCP客户端未初始化")
+            raise RuntimeError("Server MCP client is not initialized")
 
         real_name = self.name_mapping.get(name, name)
         loop = self._worker_task.get_loop()
@@ -230,7 +230,9 @@ class ServerMCPClient:
                         read_stream, write_stream = sse_r, sse_w
 
                 else:
-                    raise ValueError("MCP客户端配置必须包含'command'或'url'")
+                    raise ValueError(
+                        "MCP client configuration must contain 'command' or 'url'"
+                    )
 
                 self.session = await stack.enter_async_context(
                     ClientSession(

@@ -178,6 +178,8 @@ plugins:
     description: "Get current conditions and a forecast for a requested location."
     # For a single local robot, this is the deterministic home location.
     default_location: ""
+    # Optional exact, case-insensitive aliases for names the geocoder may not resolve.
+    location_aliases: {}
     # ISO 639-1 language for localized place names, with English as the default.
     language: en
     # Prefer this ISO 3166-1 alpha-2 country when multiple locations match.
@@ -220,6 +222,9 @@ prompt_template: agent-base-prompt.txt
 
 # User-facing response for internal errors.
 system_error_response: "Sorry, I am temporarily unavailable. Please try again shortly."
+# User-facing responses for tool failures. Override these in data/.config.yaml.
+tool_error_response: "Sorry, that operation failed. Please try again."
+tool_timeout_response: "Sorry, that operation took too long. Please try again."
 
 # Optional conversation-closing prompt.
 end_prompt:

@@ -10,14 +10,27 @@ if TYPE_CHECKING:
 TAG = __name__
 logger = setup_logging()
 
+
+def _resolve_location_alias(location: str, aliases) -> str:
+    if not isinstance(aliases, dict):
+        return location
+
+    normalized_aliases = {
+        str(alias).strip().casefold(): str(value).strip()
+        for alias, value in aliases.items()
+        if str(alias).strip() and str(value).strip()
+    }
+    return normalized_aliases.get(location.casefold(), location)
+
+
 GET_WEATHER_FUNCTION_DESC = {
     "type": "function",
     "function": {
         "name": "get_weather",
         "description": (
             "Get current conditions and a multi-day forecast for a location. "
-            "Local weather may already be present in context; call this tool "
-            "when it is missing or the user asks about another location."
+            "Call this on every request for current weather or a forecast, even "
+            "if context or an earlier turn contains a previous result."
         ),
         "parameters": {
             "type": "object",
@@ -51,6 +64,9 @@ async def get_weather(
     location = str(location or weather_config.get("default_location", "")).strip()
     if not location:
         return ActionResponse(Action.REQLLM, "No weather location was provided", None)
+    location = _resolve_location_alias(
+        location, weather_config.get("location_aliases", {})
+    )
 
     language = str(lang or weather_config.get("language", "en")).strip() or "en"
     preferred_country_code = str(

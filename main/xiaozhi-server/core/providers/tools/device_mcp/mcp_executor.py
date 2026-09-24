@@ -6,6 +6,7 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 from ..base import ToolType, ToolDefinition, ToolExecutor
 from plugins_func.register import Action, ActionResponse
+from core.utils.util import get_tool_error_response
 from .mcp_handler import call_mcp_tool
 
 
@@ -22,13 +23,15 @@ class DeviceMCPExecutor(ToolExecutor):
         if not hasattr(conn, "mcp_client") or not conn.mcp_client:
             return ActionResponse(
                 action=Action.ERROR,
-                response="设备端MCP客户端未初始化",
+                result="Device MCP client is not initialized",
+                response=get_tool_error_response(conn.config),
             )
 
         if not await conn.mcp_client.is_ready():
             return ActionResponse(
                 action=Action.ERROR,
-                response="设备端MCP客户端未准备就绪",
+                result="Device MCP client is not ready",
+                response=get_tool_error_response(conn.config),
             )
 
         try:
@@ -38,7 +41,13 @@ class DeviceMCPExecutor(ToolExecutor):
             args_str = json.dumps(arguments) if arguments else "{}"
 
             # 调用设备端MCP工具
-            result = await call_mcp_tool(conn, conn.mcp_client, tool_name, args_str)
+            result = await call_mcp_tool(
+                conn,
+                conn.mcp_client,
+                tool_name,
+                args_str,
+                timeout=int(conn.config.get("tool_call_timeout", 30)),
+            )
 
             resultJson = None
             if isinstance(result, str):
@@ -61,9 +70,23 @@ class DeviceMCPExecutor(ToolExecutor):
             return ActionResponse(action=Action.REQLLM, result=str(result))
 
         except ValueError as e:
-            return ActionResponse(action=Action.NOTFOUND, response=str(e))
+            return ActionResponse(
+                action=Action.NOTFOUND,
+                result=str(e),
+                response=get_tool_error_response(conn.config),
+            )
+        except TimeoutError as e:
+            return ActionResponse(
+                action=Action.ERROR,
+                result=str(e),
+                response=get_tool_error_response(conn.config, timed_out=True),
+            )
         except Exception as e:
-            return ActionResponse(action=Action.ERROR, response=str(e))
+            return ActionResponse(
+                action=Action.ERROR,
+                result=str(e),
+                response=get_tool_error_response(conn.config),
+            )
 
     def get_tools(self) -> Dict[str, ToolDefinition]:
         """获取所有设备端MCP工具"""
