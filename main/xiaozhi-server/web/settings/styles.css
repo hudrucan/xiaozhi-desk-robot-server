@@ -156,6 +156,14 @@ main { grid-column: 2; min-width: 0; }
 .metric-card span { color: var(--faint); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
 .metric-card strong { display: block; margin-top: 18px; overflow: hidden; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 
+.resource-panel { margin-top: 16px; }
+.resource-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.resource-card { min-width: 0; padding: 15px; border: 1px solid rgba(94, 75, 49, 0.5); border-radius: 12px; background: rgba(10, 8, 5, 0.38); }
+.resource-card span { display: block; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase; }
+.resource-card strong { display: block; margin-top: 8px; font: 18px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.resource-card small { display: block; min-height: 32px; margin-top: 7px; overflow-wrap: anywhere; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.resource-note { margin: 13px 0 0; color: var(--faint); font-size: 11px; }
+
 .overview-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
 .panel { padding: 22px; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 19px; }
@@ -248,6 +256,7 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
   .metric-grid { grid-template-columns: repeat(3, 1fr); }
   .provider-grid { grid-template-columns: repeat(3, 1fr); }
   .provider-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .resource-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 780px) {
@@ -275,6 +284,7 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
   .topbar-actions { gap: 7px; }
   .button { padding: 0 11px; }
   .metric-grid, .provider-grid { grid-template-columns: 1fr; }
+  .resource-grid { grid-template-columns: 1fr; }
   .metric-card { min-height: 96px; }
   .metric-card strong { margin-top: 12px; }
   .provider-fields { grid-template-columns: 1fr; }

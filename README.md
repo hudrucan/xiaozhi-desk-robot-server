@@ -333,7 +333,11 @@ Settings   http://127.0.0.1:8003/settings/
 Point the firmware OTA/bootstrap URL at the local HTTP endpoint when testing the standalone server.
 The Settings UI writes local overrides to `data/.config.yaml` and requires a
 restart after changes. It accepts loopback requests only unless
-`server.settings.allow_remote` is explicitly enabled.
+`server.settings.allow_remote` is explicitly enabled. Its overview samples the
+server process tree, so CPU and RSS include managed llama.cpp children. NVIDIA
+VRAM is reported when `nvidia-smi` is available; per-process Metal usage is
+shown as unavailable because macOS does not expose it through an unprivileged,
+lightweight interface.
 
 ## Provider strategy
 
@@ -434,7 +438,7 @@ Do not replace device MCP with server-specific hard-coded robot behavior unless 
 5. Configure and optimize Gemini-first provider paths.
 6. Benchmark alternative ASR and TTS providers.
 7. Clean stale upstream management references from the core only when they are proven unused.
-8. Add a small Desk Robot-specific settings UI later if useful.
+8. Keep the lightweight Desk Robot settings UI aligned with runtime options.
 
 Future work may include direct raw-text input and native-audio providers, but those are not required for the initial stable server.
 

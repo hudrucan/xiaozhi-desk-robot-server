@@ -7,6 +7,7 @@ from aiohttp import web
 from config.config_loader import get_project_dir
 from core.api.base_handler import BaseHandler
 from core.utils.config_editor import ConfigEditor
+from core.utils.resource_monitor import ResourceMonitor
 
 
 class SettingsHandler(BaseHandler):
@@ -14,10 +15,17 @@ class SettingsHandler(BaseHandler):
         super().__init__(config)
         self.request_restart = request_restart
         self.editor = ConfigEditor()
+        self.resource_monitor = ResourceMonitor()
         self.web_dir = os.path.join(get_project_dir(), "web", "settings")
         settings_config = config.get("server", {}).get("settings", {})
         self.allow_remote = bool(settings_config.get("allow_remote", False))
         self.restart_required = False
+
+    @staticmethod
+    def _disable_cache(response):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
 
     def _require_access(self, request):
         if self.allow_remote:
@@ -44,7 +52,9 @@ class SettingsHandler(BaseHandler):
 
     async def handle_index(self, request):
         self._require_access(request)
-        return web.FileResponse(os.path.join(self.web_dir, "index.html"))
+        return self._disable_cache(
+            web.FileResponse(os.path.join(self.web_dir, "index.html"))
+        )
 
     async def handle_redirect(self, request):
         self._require_access(request)
@@ -55,13 +65,20 @@ class SettingsHandler(BaseHandler):
         filename = request.match_info["filename"]
         if filename not in {"app.js", "styles.css"}:
             raise web.HTTPNotFound()
-        return web.FileResponse(os.path.join(self.web_dir, filename))
+        return self._disable_cache(
+            web.FileResponse(os.path.join(self.web_dir, filename))
+        )
 
     async def handle_get(self, request):
         self._require_access(request)
         payload = self.editor.read_public()
         payload["restart_required"] = self.restart_required
-        return web.json_response(payload)
+        return self._disable_cache(web.json_response(payload))
+
+    async def handle_status(self, request):
+        self._require_access(request)
+        payload = await asyncio.to_thread(self.resource_monitor.sample)
+        return self._disable_cache(web.json_response(payload))
 
     async def handle_put(self, request):
         self._require_access(request)
@@ -76,7 +93,7 @@ class SettingsHandler(BaseHandler):
 
         self.restart_required = True
         payload["restart_required"] = True
-        return web.json_response(payload)
+        return self._disable_cache(web.json_response(payload))
 
     async def handle_restart(self, request):
         self._require_access(request)

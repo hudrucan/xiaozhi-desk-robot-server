@@ -20,7 +20,10 @@ EDITABLE_ROOTS = {
     "asr_audio_queue_max_frames",
     "asr_min_audio_ms",
     "close_connection_no_voice_time",
+    "context_providers",
     "delete_audio",
+    "device_mcp_tool_cache",
+    "dump_full_llm_request",
     "enable_direct_answer_tool",
     "enable_greeting",
     "enable_stop_tts_notify",
@@ -28,9 +31,12 @@ EDITABLE_ROOTS = {
     "enable_wakeup_words_response_cache",
     "enable_websocket_ping",
     "end_prompt",
+    "exit_commands",
     "exit_farewell",
+    "llm_request_dump_file",
     "log",
     "mcp_endpoint",
+    "module_test",
     "plugins",
     "prompt",
     "prompt_template",
@@ -38,12 +44,15 @@ EDITABLE_ROOTS = {
     "server",
     "stop_tts_notify_voice",
     "system_error_response",
+    "tool_error_response",
     "tool_call_timeout",
+    "tool_timeout_response",
     "tts_audio_send_delay",
     "tts_timeout",
     "voiceprint",
     "wakeup_greeting",
     "wakeup_words",
+    "xiaozhi",
 }
 
 SECRET_NAMES = {
@@ -104,15 +113,47 @@ def _public_copy(value, path=(), configured_secrets=None):
     return value
 
 
-def _drop_blank_secrets(value):
+def _drop_blank_secrets(value, existing=None):
+    if isinstance(value, list):
+        existing_items = existing if isinstance(existing, list) else []
+
+        def matching_existing(item, index):
+            if isinstance(item, Mapping):
+                for identity_key in ("url", "name", "id"):
+                    identity = item.get(identity_key)
+                    if identity in (None, ""):
+                        continue
+                    return next(
+                        (
+                            candidate
+                            for candidate in existing_items
+                            if isinstance(candidate, Mapping)
+                            and candidate.get(identity_key) == identity
+                        ),
+                        None,
+                    )
+            return existing_items[index] if index < len(existing_items) else None
+
+        return [
+            _drop_blank_secrets(
+                item,
+                matching_existing(item, index),
+            )
+            for index, item in enumerate(value)
+        ]
     if not isinstance(value, Mapping):
         return value
 
     cleaned = {}
     for key, child in value.items():
         if _is_secret(key) and (child is None or str(child).strip() == ""):
+            if isinstance(existing, Mapping) and _is_configured_secret(
+                existing.get(key)
+            ):
+                cleaned[key] = existing[key]
             continue
-        cleaned[key] = _drop_blank_secrets(child)
+        existing_child = existing.get(key) if isinstance(existing, Mapping) else None
+        cleaned[key] = _drop_blank_secrets(child, existing_child)
     return cleaned
 
 
@@ -156,7 +197,8 @@ class ConfigEditor:
         with self._lock:
             default_config = read_config(self.default_path)
             local_config = read_config(self.local_path)
-            safe_patch = _drop_blank_secrets(patch)
+            current_effective = merge_configs(default_config, local_config)
+            safe_patch = _drop_blank_secrets(patch, current_effective)
             updated_local = merge_configs(local_config, safe_patch)
             effective_config = merge_configs(default_config, updated_local)
             self._validate(effective_config)

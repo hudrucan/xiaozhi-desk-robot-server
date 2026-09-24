@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
-    <link rel="stylesheet" href="/settings/styles.css" />
+    <link rel="stylesheet" href="/settings/styles.css?v=2" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -29,6 +29,7 @@
           <a href="#assistant"><span>03</span>Assistant</a>
           <a href="#runtime"><span>04</span>Runtime</a>
           <a href="#integrations"><span>05</span>Integrations</a>
+          <a href="#advanced"><span>06</span>Advanced</a>
         </nav>
 
         <div class="sidebar-status">
@@ -66,6 +67,18 @@
             </div>
 
             <div class="metric-grid" id="providerSummary"></div>
+
+            <article class="panel resource-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Live process tree</p>
+                  <h3>Resource usage</h3>
+                </div>
+                <span class="badge online" id="resourceStatus"><i></i>Sampling</span>
+              </div>
+              <div class="resource-grid" id="resourceSummary"></div>
+              <p class="resource-note" id="resourceNote">CPU and memory include the server and its managed child processes.</p>
+            </article>
 
             <article class="panel restart-panel hidden" id="restartPanel">
               <div class="panel-icon">↻</div>
@@ -150,6 +163,17 @@
             </div>
             <div class="form-grid" id="integrationFields"></div>
           </section>
+
+          <section id="advanced" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Low-level options</p>
+                <h2>Advanced</h2>
+                <p class="section-copy">Protocol, logging, and benchmark defaults. Change these only when their effect is understood.</p>
+              </div>
+            </div>
+            <div class="form-grid" id="advancedFields"></div>
+          </section>
         </div>
       </main>
     </div>
@@ -164,6 +188,6 @@
       </div>
     </div>
 
-    <script src="/settings/app.js" defer></script>
+    <script src="/settings/app.js?v=2" defer></script>
   </body>
 </html>

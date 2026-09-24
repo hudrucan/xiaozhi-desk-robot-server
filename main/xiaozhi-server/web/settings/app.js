@@ -13,6 +13,7 @@ const state = {
   patch: {},
   configuredSecrets: new Set(),
   restartRequired: false,
+  resources: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -173,6 +174,85 @@ function renderOverview() {
   ).join("");
 }
 
+function formatBytes(value) {
+  if (value === null || value === undefined) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let amount = Number(value);
+  let unit = 0;
+  while (Math.abs(amount) >= 1024 && unit < units.length - 1) {
+    amount /= 1024;
+    unit += 1;
+  }
+  const digits = unit >= 3 ? 2 : 1;
+  return `${amount.toFixed(digits)} ${units[unit]}`;
+}
+
+function formatCpu(value) {
+  return value === null || value === undefined ? "Sampling…" : `${Number(value).toFixed(1)}%`;
+}
+
+function resourceCard(label, value, detail) {
+  return `
+    <article class="resource-card">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+      <small>${escapeHtml(detail)}</small>
+    </article>`;
+}
+
+function renderResources() {
+  const resources = state.resources;
+  if (!resources || !resources.available) {
+    $("#resourceSummary").innerHTML = [
+      resourceCard("Total CPU", "—", "Server + managed children"),
+      resourceCard("Total RAM", "—", "Process-tree RSS"),
+      resourceCard("GPU memory", "—", "Platform support required"),
+      resourceCard("Local models", "—", "No sample available"),
+    ].join("");
+    $("#resourceStatus").classList.remove("online");
+    $("#resourceStatus").innerHTML = "Unavailable";
+    $("#resourceNote").textContent = resources?.reason || "Waiting for the first resource sample.";
+    return;
+  }
+
+  const total = resources.total || {};
+  const server = resources.server || {};
+  const models = resources.local_models || {};
+  const gpu = resources.gpu || {};
+  const gpuValue = gpu.available ? formatBytes(gpu.memory_bytes) : "Unavailable";
+  const gpuDetail = gpu.available
+    ? `${gpu.backend || "GPU"} · ${gpu.process_count || 0} tracked process(es)`
+    : (gpu.reason || "Per-process metrics unavailable");
+  const modelValue = models.active
+    ? `${models.process_count || 0} active`
+    : "Stopped";
+
+  $("#resourceSummary").innerHTML = [
+    resourceCard(
+      "Total CPU",
+      formatCpu(total.cpu_percent),
+      `Server ${formatCpu(server.cpu_percent)} · models ${formatCpu(models.cpu_percent)}`,
+    ),
+    resourceCard(
+      "Total RAM",
+      formatBytes(total.memory_bytes),
+      `Server ${formatBytes(server.memory_bytes)} · models ${formatBytes(models.memory_bytes)}`,
+    ),
+    resourceCard("GPU memory", gpuValue, gpuDetail),
+    resourceCard(
+      "Local models",
+      modelValue,
+      models.active ? `${formatBytes(models.memory_bytes)} RSS` : "Managed llama.cpp is not running",
+    ),
+  ].join("");
+  $("#resourceStatus").classList.add("online");
+  $("#resourceStatus").innerHTML = "<i></i>Live";
+  $("#resourceNote").textContent = (
+    `Process-tree RSS across ${total.process_count || 0} process(es). `
+    + "CPU may exceed 100% when work spans multiple cores."
+  );
+}
+
 function renderProviders() {
   const selected = state.config.selected_module || {};
   $("#providerSelectors").innerHTML = PROVIDER_GROUPS.map((group) => {
@@ -211,8 +291,14 @@ function renderAssistant() {
     field("wakeup_greeting", "Wake-up greeting", { help: "Short acknowledgement sent after wake-word detection." }),
     field("exit_farewell", "Exit farewell"),
     field("system_error_response", "Error response", { multiline: true }),
+    field("tool_error_response", "Tool error response", { multiline: true }),
+    field("tool_timeout_response", "Tool timeout response", { multiline: true }),
+    field("prompt_template", "Prompt template path"),
+    field("exit_commands", "Exit commands", { help: "JSON list matched before intent processing." }),
+    field("end_prompt", "Conversation ending", { help: "JSON object controlling idle conversation closure." }),
     field("wakeup_words", "Wake words", { help: "JSON list used to identify activation phrases." }),
     field("enable_greeting", "Enable greeting", { type: "boolean" }),
+    field("enable_direct_answer_tool", "Enable direct-answer tool", { type: "boolean" }),
     field("enable_wakeup_words_response_cache", "Cache wake response", { type: "boolean" }),
     field("enable_stop_tts_notify", "End-of-speech notification", { type: "boolean" }),
   ].join("");
@@ -226,14 +312,22 @@ function renderRuntime() {
     field("server.http_port", "HTTP port"),
     field("server.websocket", "Advertised WebSocket URL"),
     field("server.vision_explain", "Vision endpoint"),
+    field("server.timezone_offset", "OTA timezone offset"),
+    field("server.settings.enabled", "Enable settings UI", { type: "boolean" }),
     field("server.settings.allow_remote", "Allow settings over LAN", { type: "boolean", help: "Disabled by default. Enable only on a trusted network." }),
     field("log.log_level", "Log level", { choices: ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"] }),
     field("close_connection_no_voice_time", "Idle disconnect (seconds)"),
     field("tts_timeout", "TTS timeout (seconds)"),
     field("tool_call_timeout", "Tool timeout (seconds)"),
+    field("asr_min_audio_ms", "Minimum ASR audio (ms)"),
+    field("asr_audio_queue_max_frames", "ASR queue limit (frames)"),
     field("tts_audio_send_delay", "Audio packet delay (ms)"),
+    field("stop_tts_notify_voice", "End-of-speech sound path"),
     field("delete_audio", "Delete generated audio", { type: "boolean" }),
     field("enable_websocket_ping", "WebSocket ping", { type: "boolean" }),
+    field("enable_turn_metrics", "Turn metrics", { type: "boolean" }),
+    field("dump_full_llm_request", "Dump full LLM requests", { type: "boolean", help: "May write private conversation and tool data to disk." }),
+    field("llm_request_dump_file", "LLM request dump path"),
   ].join("");
   attachFieldListeners($("#runtimeFields"));
 }
@@ -241,10 +335,29 @@ function renderRuntime() {
 function renderIntegrations() {
   $("#integrationFields").innerHTML = [
     field("mcp_endpoint", "External MCP endpoint", { placeholder: "ws://host:port/mcp/?token=…" }),
+    field("device_mcp_tool_cache", "Device MCP tool cache", { wide: true, help: "Used only by the managed local llama.cpp provider." }),
+    field("context_providers", "Context providers", { wide: true, help: "JSON list of optional HTTP context sources. Configured authorization values remain masked." }),
     field("voiceprint", "Voiceprint", { wide: true, help: "Leave the URL empty to keep voiceprint recognition disabled." }),
     field("plugins", "Server plugins", { wide: true, help: "JSON configuration for optional server-side tools." }),
   ].join("");
   attachFieldListeners($("#integrationFields"));
+}
+
+function renderAdvanced() {
+  $("#advancedFields").innerHTML = [
+    field("server.auth", "Device authentication", { wide: true }),
+    field("server.mqtt_gateway", "MQTT gateway"),
+    field("server.mqtt_signature_key", "MQTT signing key"),
+    field("server.udp_gateway", "UDP gateway"),
+    field("log.log_format", "Console log format", { multiline: true, wide: true }),
+    field("log.log_format_file", "File log format", { multiline: true, wide: true }),
+    field("log.log_dir", "Log directory"),
+    field("log.log_file", "Log filename"),
+    field("log.data_dir", "Runtime data directory"),
+    field("xiaozhi", "Protocol hello", { wide: true }),
+    field("module_test", "Benchmark defaults", { wide: true }),
+  ].join("");
+  attachFieldListeners($("#advancedFields"));
 }
 
 function renderAll() {
@@ -253,9 +366,23 @@ function renderAll() {
   renderAssistant();
   renderRuntime();
   renderIntegrations();
+  renderAdvanced();
   $("#configPath").textContent = state.configPath || "data/.config.yaml";
   $("#restartPanel").classList.toggle("hidden", !state.restartRequired);
   updateDirtyState();
+}
+
+async function loadResources() {
+  try {
+    const response = await fetch("/api/settings/status", { cache: "no-store" });
+    if (!response.ok) throw new Error(await response.text());
+    state.resources = await response.json();
+  } catch (error) {
+    state.resources = { available: false, reason: error.message };
+  }
+  renderResources();
+  const delay = document.hidden ? 10000 : 2000;
+  window.setTimeout(loadResources, delay);
 }
 
 function updateDirtyState() {
@@ -374,3 +501,4 @@ $("#restartButton").addEventListener("click", restartServer);
 $("#restartNowButton").addEventListener("click", restartServer);
 trackNavigation();
 loadSettings();
+loadResources();

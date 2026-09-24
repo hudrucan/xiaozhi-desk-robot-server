@@ -76,6 +76,10 @@ class SimpleHttpServer:
                             web.get(
                                 "/api/settings", self.settings_handler.handle_get
                             ),
+                            web.get(
+                                "/api/settings/status",
+                                self.settings_handler.handle_status,
+                            ),
                             web.put(
                                 "/api/settings", self.settings_handler.handle_put
                             ),
