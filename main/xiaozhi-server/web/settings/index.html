@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
-    <link rel="stylesheet" href="/settings/styles.css?v=2" />
+    <link rel="stylesheet" href="/settings/styles.css?v=6" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -25,12 +25,34 @@
 
         <nav class="navigation" aria-label="Settings sections">
           <a class="active" href="#overview"><span>01</span>Overview</a>
-          <a href="#providers"><span>02</span>Providers</a>
-          <a href="#assistant"><span>03</span>Assistant</a>
-          <a href="#runtime"><span>04</span>Runtime</a>
-          <a href="#integrations"><span>05</span>Integrations</a>
-          <a href="#advanced"><span>06</span>Advanced</a>
+          <a href="#diagnostics"><span>02</span>Diagnostics</a>
+          <a href="#providers"><span>03</span>Providers</a>
+          <a href="#assistant"><span>04</span>Assistant</a>
+          <a href="#runtime"><span>05</span>Runtime</a>
+          <a href="#integrations"><span>06</span>Integrations</a>
+          <a href="#advanced"><span>07</span>Advanced</a>
         </nav>
+
+        <div class="sidebar-live" aria-label="Live server status">
+          <div class="sidebar-live-heading">
+            <span>Live status</span>
+            <i id="sidebarLiveDot"></i>
+          </div>
+          <dl>
+            <div><dt>Robot</dt><dd id="sidebarDevice">Offline</dd></div>
+            <div><dt>Firmware</dt><dd id="sidebarFirmware">Unknown</dd></div>
+            <div><dt>Process</dt><dd id="sidebarProcess">Sampling</dd></div>
+            <div><dt>LLM</dt><dd id="sidebarLlm">Not selected</dd></div>
+          </dl>
+          <div class="sidebar-endpoint">
+            <span>WebSocket</span>
+            <code id="sidebarWebsocket">—</code>
+          </div>
+          <div class="sidebar-endpoint">
+            <span>Vision</span>
+            <code id="sidebarVision">—</code>
+          </div>
+        </div>
 
         <div class="sidebar-status">
           <div class="status-row">
@@ -77,6 +99,7 @@
                 <span class="badge online" id="resourceStatus"><i></i>Sampling</span>
               </div>
               <div class="resource-grid" id="resourceSummary"></div>
+              <div class="resource-meters" id="resourceMeters"></div>
               <p class="resource-note" id="resourceNote">CPU and memory include the server and its managed child processes.</p>
             </article>
 
@@ -117,6 +140,20 @@
                 </ul>
               </article>
             </div>
+          </section>
+
+          <section id="diagnostics" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Recent turn health</p>
+                <h2>Diagnostics</h2>
+                <p class="section-copy">A compact timeline of completed turns, tool calls, and latency. Kept in memory only.</p>
+              </div>
+              <span class="badge" id="diagnosticStatus"><i></i>No turns</span>
+            </div>
+            <div class="diagnostic-summary" id="diagnosticSummary"></div>
+            <div class="device-events" id="deviceEvents"></div>
+            <div class="turn-feed" id="turnFeed"></div>
           </section>
 
           <section id="providers" class="page-section">
@@ -188,6 +225,6 @@
       </div>
     </div>
 
-    <script src="/settings/app.js?v=2" defer></script>
+    <script src="/settings/app.js?v=6" defer></script>
   </body>
 </html>

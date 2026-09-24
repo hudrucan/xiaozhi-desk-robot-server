@@ -172,6 +172,15 @@ function renderOverview() {
   $("#endpointSummary").innerHTML = rows.map(([key, value]) =>
     `<div><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd></div>`
   ).join("");
+
+  const websocket = rows[0][1];
+  const vision = rows[1][1];
+  $("#sidebarWebsocket").textContent = websocket;
+  $("#sidebarWebsocket").title = websocket;
+  $("#sidebarVision").textContent = vision;
+  $("#sidebarVision").title = vision;
+  $("#sidebarLlm").textContent = selected.LLM || "Not selected";
+  $("#sidebarLlm").title = selected.LLM || "Not selected";
 }
 
 function formatBytes(value) {
@@ -191,6 +200,24 @@ function formatCpu(value) {
   return value === null || value === undefined ? "Sampling…" : `${Number(value).toFixed(1)}%`;
 }
 
+function formatDuration(value) {
+  if (value === null || value === undefined) return "—";
+  const milliseconds = Number(value);
+  if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
+  return `${(milliseconds / 1000).toFixed(milliseconds >= 10000 ? 1 : 2)} s`;
+}
+
+function formatUptime(value) {
+  if (value === null || value === undefined) return "—";
+  const seconds = Math.max(0, Math.floor(Number(value)));
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
 function resourceCard(label, value, detail) {
   return `
     <article class="resource-card">
@@ -200,15 +227,26 @@ function resourceCard(label, value, detail) {
     </article>`;
 }
 
+function meter(label, value, detail, tone = "") {
+  const numeric = Math.max(0, Math.min(100, Number(value) || 0));
+  return `
+    <article class="resource-meter ${tone}">
+      <div><span>${escapeHtml(label)}</span><strong>${escapeHtml(detail)}</strong></div>
+      <div class="meter-track"><i style="width: ${numeric}%"></i></div>
+    </article>`;
+}
+
 function renderResources() {
   const resources = state.resources;
   if (!resources || !resources.available) {
     $("#resourceSummary").innerHTML = [
       resourceCard("Total CPU", "—", "Server + managed children"),
       resourceCard("Total RAM", "—", "Process-tree RSS"),
+      resourceCard("System memory", "—", "Host sample unavailable"),
       resourceCard("GPU memory", "—", "Platform support required"),
       resourceCard("Local models", "—", "No sample available"),
     ].join("");
+    $("#resourceMeters").innerHTML = "";
     $("#resourceStatus").classList.remove("online");
     $("#resourceStatus").innerHTML = "Unavailable";
     $("#resourceNote").textContent = resources?.reason || "Waiting for the first resource sample.";
@@ -218,6 +256,7 @@ function renderResources() {
   const total = resources.total || {};
   const server = resources.server || {};
   const models = resources.local_models || {};
+  const system = resources.system || {};
   const gpu = resources.gpu || {};
   const gpuValue = gpu.available ? formatBytes(gpu.memory_bytes) : "Unavailable";
   const gpuDetail = gpu.available
@@ -227,17 +266,25 @@ function renderResources() {
     ? `${models.process_count || 0} active`
     : "Stopped";
 
+  const processMemoryDetail = total.unique_memory_bytes === null || total.unique_memory_bytes === undefined
+    ? `RSS · ${total.process_count || 0} process(es)`
+    : `${formatBytes(total.unique_memory_bytes)} unique · ${total.process_count || 0} process(es)`;
+  const systemMemoryValue = system.memory_total_bytes
+    ? `${formatBytes(system.memory_used_bytes)} / ${formatBytes(system.memory_total_bytes)}`
+    : "Unavailable";
+
   $("#resourceSummary").innerHTML = [
     resourceCard(
-      "Total CPU",
+      "Process CPU",
       formatCpu(total.cpu_percent),
       `Server ${formatCpu(server.cpu_percent)} · models ${formatCpu(models.cpu_percent)}`,
     ),
     resourceCard(
-      "Total RAM",
+      "Process memory",
       formatBytes(total.memory_bytes),
-      `Server ${formatBytes(server.memory_bytes)} · models ${formatBytes(models.memory_bytes)}`,
+      processMemoryDetail,
     ),
+    resourceCard("System memory", systemMemoryValue, `${formatCpu(system.memory_percent)} used · ${formatBytes(system.memory_available_bytes)} available`),
     resourceCard("GPU memory", gpuValue, gpuDetail),
     resourceCard(
       "Local models",
@@ -245,12 +292,143 @@ function renderResources() {
       models.active ? `${formatBytes(models.memory_bytes)} RSS` : "Managed llama.cpp is not running",
     ),
   ].join("");
+  const logicalCpus = Math.max(1, Number(resources.logical_cpu_count) || 1);
+  const processCpuCapacity = Math.min(100, (Number(total.cpu_percent) || 0) / logicalCpus);
+  const processMemoryShare = system.memory_total_bytes
+    ? (Number(total.memory_bytes) / Number(system.memory_total_bytes)) * 100
+    : 0;
+  $("#resourceMeters").innerHTML = [
+    meter("System CPU", system.cpu_percent, formatCpu(system.cpu_percent)),
+    meter("Process CPU capacity", processCpuCapacity, `${formatCpu(total.cpu_percent)} across ${logicalCpus} logical cores`),
+    meter("System memory pressure", system.memory_percent, `${formatCpu(system.memory_percent)} used`, Number(system.memory_percent) >= 85 ? "warning" : ""),
+    meter("Process share of RAM", processMemoryShare, `${processMemoryShare.toFixed(1)}% of physical memory`),
+  ].join("");
   $("#resourceStatus").classList.add("online");
   $("#resourceStatus").innerHTML = "<i></i>Live";
   $("#resourceNote").textContent = (
-    `Process-tree RSS across ${total.process_count || 0} process(es). `
-    + "CPU may exceed 100% when work spans multiple cores."
+    `Server uptime ${formatUptime(resources.server_uptime_seconds)} · system uptime ${formatUptime(system.uptime_seconds)}. `
+    + "RSS includes shared pages; unique memory excludes pages shared with other processes."
   );
+  renderSidebarLive();
+}
+
+function markDelta(marks, start, end) {
+  const startValue = marks?.[start];
+  const endValue = marks?.[end];
+  if (startValue === undefined || endValue === undefined) return null;
+  return Math.max(0, Number(endValue) - Number(startValue));
+}
+
+function turnPhase(label, value) {
+  if (value === null || value === undefined) return "";
+  return `<span><small>${escapeHtml(label)}</small>${escapeHtml(formatDuration(value))}</span>`;
+}
+
+function renderDiagnostics() {
+  const runtime = state.resources?.runtime || {};
+  const summary = runtime.summary || {};
+  const turns = runtime.turns || [];
+  const events = runtime.device_events || [];
+  const connections = runtime.connections || {};
+
+  $("#diagnosticSummary").innerHTML = [
+    resourceCard("Connected robots", String(connections.active_count || 0), connections.active_count ? "WebSocket online" : "Waiting for a device"),
+    resourceCard("Recent success", summary.sample_size ? `${summary.completed || 0} / ${summary.sample_size}` : "—", `${summary.attention || 0} need attention`),
+    resourceCard("Median turn", formatDuration(summary.median_total_ms), "Last 20 completed records"),
+    resourceCard("P95 turn", formatDuration(summary.p95_total_ms), "Slow-tail latency"),
+  ].join("");
+
+  const status = $("#diagnosticStatus");
+  status.classList.toggle("online", turns.length > 0 && !summary.attention);
+  status.classList.toggle("attention", Boolean(summary.attention));
+  status.innerHTML = turns.length
+    ? `<i></i>${summary.attention ? `${summary.attention} need attention` : "Healthy"}`
+    : "<i></i>No turns";
+
+  $("#deviceEvents").innerHTML = events.slice(0, 3).map((event) => {
+    const observedAt = event.observed_at
+      ? new Date(event.observed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "—";
+    const reason = event.reset_reason
+      ? `Firmware reported: ${event.reset_reason}`
+      : "Firmware did not report a reset reason.";
+    const activeTurn = event.active_turn
+      ? ` It happened during an active ${event.active_turn.source || "unknown"} turn.`
+      : "";
+    const vision = event.recent_vision;
+    const visionDetail = vision
+      ? ` Vision ${vision.request_id} was ${vision.outcome} in ${formatDuration(vision.duration_ms)}, returned ${formatBytes(vision.response_bytes)}, then bootstrap arrived ${formatDuration(vision.before_bootstrap_ms)} later.`
+      : "";
+    return `
+      <article class="device-event warning">
+        <span>!</span>
+        <div>
+          <header><strong>Possible device restart</strong><time>${escapeHtml(observedAt)}</time></header>
+          <p>OTA bootstrap arrived while the previous WebSocket was still active. ${escapeHtml(reason + activeTurn + visionDetail)}</p>
+        </div>
+      </article>`;
+  }).join("");
+
+  if (!turns.length) {
+    $("#turnFeed").innerHTML = `
+      <article class="empty-state">
+        <span>◌</span>
+        <div><strong>No completed turns yet</strong><p>Connect the robot and finish a voice or text turn. Nothing is written to disk.</p></div>
+      </article>`;
+    return;
+  }
+
+  $("#turnFeed").innerHTML = turns.slice(0, 12).map((turn) => {
+    const marks = turn.marks_ms || {};
+    const tools = turn.tools || [];
+    const outcome = turn.outcome || "unknown";
+    const completedAt = turn.completed_at ? new Date(turn.completed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
+    const llmFirst = markDelta(marks, "llm_request", "llm_first_response");
+    const resumedLlmFirst = markDelta(marks, "resumed_llm_request", "resumed_llm_first_response");
+    const asr = markDelta(marks, "asr_start", "asr_done");
+    const audible = markDelta(marks, "speech_end", "first_audio_sent");
+    const toolDuration = Math.max(0, ...tools.map((tool) => Number(tool.duration_ms) || 0));
+    const toolMarkup = tools.length
+      ? `<div class="turn-tools">${tools.map((tool) => `<span class="${escapeHtml(tool.outcome || "unknown")}">${escapeHtml(tool.name || "tool")}<small>${escapeHtml(formatDuration(tool.duration_ms))}</small></span>`).join("")}</div>`
+      : "";
+    return `
+      <article class="turn-card ${escapeHtml(outcome)}">
+        <div class="turn-rail"><i></i></div>
+        <div class="turn-body">
+          <header>
+            <div><span class="turn-outcome">${escapeHtml(outcome.replaceAll("_", " "))}</span><time>${escapeHtml(completedAt)}</time></div>
+            <strong>${escapeHtml(formatDuration(turn.total_ms))}</strong>
+          </header>
+          <p class="turn-input">${escapeHtml(turn.input || `${turn.source || "Unknown"} turn`)}</p>
+          <div class="turn-observability">
+            <div class="turn-phases">
+              ${turnPhase("ASR", asr)}
+              ${turnPhase("LLM first", llmFirst)}
+              ${turnPhase(tools.length > 1 ? "Slowest tool" : "Tool", tools.length ? toolDuration : null)}
+              ${turnPhase("Resume", resumedLlmFirst)}
+              ${turnPhase("To audio", audible)}
+            </div>
+            ${toolMarkup}
+          </div>
+        </div>
+      </article>`;
+  }).join("");
+}
+
+function renderSidebarLive() {
+  const resources = state.resources;
+  const connections = resources?.runtime?.connections || {};
+  const connected = Number(connections.active_count) > 0;
+  const device = connections.items?.[0];
+  const firmware = resources?.runtime?.devices?.find((item) => item.device_id === device?.device_id);
+  $("#sidebarDevice").textContent = connected ? `${connections.active_count} connected` : "Offline";
+  $("#sidebarDevice").title = device?.device_id || "No active device";
+  $("#sidebarFirmware").textContent = firmware?.firmware_version || "Unknown";
+  $("#sidebarFirmware").title = firmware?.device_model || "Device model unavailable";
+  $("#sidebarProcess").textContent = resources?.available
+    ? `${formatCpu(resources.total?.cpu_percent)} · ${formatBytes(resources.total?.memory_bytes)}`
+    : "Unavailable";
+  $("#sidebarLiveDot").classList.toggle("online", connected);
 }
 
 function renderProviders() {
@@ -367,6 +545,8 @@ function renderAll() {
   renderRuntime();
   renderIntegrations();
   renderAdvanced();
+  renderDiagnostics();
+  renderSidebarLive();
   $("#configPath").textContent = state.configPath || "data/.config.yaml";
   $("#restartPanel").classList.toggle("hidden", !state.restartRequired);
   updateDirtyState();
@@ -381,6 +561,8 @@ async function loadResources() {
     state.resources = { available: false, reason: error.message };
   }
   renderResources();
+  renderDiagnostics();
+  renderSidebarLive();
   const delay = document.hidden ? 10000 : 2000;
   window.setTimeout(loadResources, delay);
 }

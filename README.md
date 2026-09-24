@@ -334,10 +334,21 @@ Point the firmware OTA/bootstrap URL at the local HTTP endpoint when testing the
 The Settings UI writes local overrides to `data/.config.yaml` and requires a
 restart after changes. It accepts loopback requests only unless
 `server.settings.allow_remote` is explicitly enabled. Its overview samples the
-server process tree, so CPU and RSS include managed llama.cpp children. NVIDIA
-VRAM is reported when `nvidia-smi` is available; per-process Metal usage is
-shown as unavailable because macOS does not expose it through an unprivileged,
-lightweight interface.
+server process tree, so CPU, RSS, and unique memory include managed llama.cpp
+children. It also shows host memory pressure, recent turn timings, tool outcomes,
+active robot connections, and possible device restarts detected when OTA
+bootstrap arrives before the previous WebSocket has closed. These diagnostics
+are bounded and kept in memory only. Firmware may include `reset-reason` or
+`boot-reason` in its OTA request headers or JSON payload to make restart events
+actionable. NVIDIA VRAM is reported when `nvidia-smi` is available; per-process
+Metal usage is shown as unavailable because macOS does not expose it through an
+unprivileged, lightweight interface.
+
+Vision responses include `X-Xiaozhi-Request-Id`, `X-Xiaozhi-Vision-Outcome`,
+and `Server-Timing` headers so firmware logs can correlate a camera request with
+the matching server request and latency without changing the response body. A
+restart event also includes the most recent vision request duration and payload
+sizes when the requests occur close together.
 
 ## Provider strategy
 

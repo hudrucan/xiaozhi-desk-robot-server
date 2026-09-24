@@ -17,10 +17,15 @@ class ResourceMonitor:
 
     def __init__(self):
         self.root_pid = os.getpid()
+        self._started_at = time.monotonic()
         self._lock = threading.Lock()
         self._previous_cpu_seconds = {}
         self._previous_sample_time = None
+        self._unique_memory_bytes = {}
+        self._last_unique_memory_sample = None
         self._nvidia_smi = shutil.which("nvidia-smi")
+        if psutil is not None:
+            psutil.cpu_percent(interval=None)
 
     def sample(self):
         with self._lock:
@@ -78,6 +83,8 @@ class ResourceMonitor:
             "available": True,
             "sampled_at": sampled_at,
             "logical_cpu_count": os.cpu_count(),
+            "server_uptime_seconds": round(time.monotonic() - self._started_at, 1),
+            "system": self._read_system_usage(),
             "total": self._summarize(processes, cpu_percent(processes)),
             "server": self._summarize(
                 server_processes, cpu_percent(server_processes)
@@ -98,6 +105,11 @@ class ResourceMonitor:
         return payload
 
     def _read_process_tree(self):
+        now = time.monotonic()
+        refresh_unique_memory = (
+            self._last_unique_memory_sample is None
+            or now - self._last_unique_memory_sample >= 10
+        )
         try:
             root = psutil.Process(self.root_pid)
             candidates = [root, *root.children(recursive=True)]
@@ -117,12 +129,57 @@ class ResourceMonitor:
                             "name": name,
                             "cpu_seconds": cpu_times.user + cpu_times.system,
                             "memory_bytes": process.memory_info().rss,
+                            "unique_memory_bytes": (
+                                self._read_unique_memory(process)
+                                if refresh_unique_memory
+                                else self._unique_memory_bytes.get(process.pid)
+                            ),
                             "is_local_model": self._is_local_model(name, command),
                         }
                     )
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
+        if refresh_unique_memory:
+            self._unique_memory_bytes = {
+                process["pid"]: process["unique_memory_bytes"]
+                for process in processes
+                if process["unique_memory_bytes"] is not None
+            }
+            self._last_unique_memory_sample = now
         return processes
+
+    @staticmethod
+    def _read_unique_memory(process):
+        try:
+            return process.memory_full_info().uss
+        except (
+            AttributeError,
+            NotImplementedError,
+            OSError,
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+        ):
+            return None
+
+    @staticmethod
+    def _read_system_usage():
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        try:
+            load_average = [round(value, 2) for value in os.getloadavg()]
+        except (AttributeError, OSError):
+            load_average = None
+        return {
+            "cpu_percent": round(psutil.cpu_percent(interval=None), 1),
+            "memory_total_bytes": memory.total,
+            "memory_used_bytes": memory.used,
+            "memory_available_bytes": memory.available,
+            "memory_percent": round(memory.percent, 1),
+            "swap_used_bytes": swap.used,
+            "swap_total_bytes": swap.total,
+            "uptime_seconds": max(0, round(time.time() - psutil.boot_time(), 1)),
+            "load_average": load_average,
+        }
 
     @staticmethod
     def _is_local_model(name, command):
@@ -135,10 +192,18 @@ class ResourceMonitor:
 
     @staticmethod
     def _summarize(processes, cpu_percent):
+        unique_values = [
+            process["unique_memory_bytes"]
+            for process in processes
+            if process["unique_memory_bytes"] is not None
+        ]
         return {
             "cpu_percent": cpu_percent,
             "memory_bytes": sum(
                 process["memory_bytes"] for process in processes
+            ),
+            "unique_memory_bytes": (
+                sum(unique_values) if len(unique_values) == len(processes) else None
             ),
             "process_count": len(processes),
         }
