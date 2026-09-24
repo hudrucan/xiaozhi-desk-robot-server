@@ -64,7 +64,7 @@ class SettingsHandler(BaseHandler):
     async def handle_asset(self, request):
         self._require_access(request)
         filename = request.match_info["filename"]
-        if filename not in {"app.js", "styles.css"}:
+        if filename not in {"app.js", "favicon.svg", "styles.css"}:
             raise web.HTTPNotFound()
         return self._disable_cache(
             web.FileResponse(os.path.join(self.web_dir, filename))
