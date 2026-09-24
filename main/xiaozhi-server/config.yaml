@@ -373,9 +373,7 @@ LLM:
       parallel: 1
       # Reuse unchanged tool-schema chunks when conversation history shifts.
       cache_reuse: 64
-      # Qwen3 thinking is unnecessary for low-latency spoken turns.
-      chat_template_kwargs:
-        enable_thinking: false
+      # Reasoning is unnecessary for low-latency spoken turns.
       reasoning: "off"
       # The first start may also download the 4-bit model.
       startup_timeout: 900
