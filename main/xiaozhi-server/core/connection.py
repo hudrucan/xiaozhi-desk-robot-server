@@ -39,6 +39,7 @@ from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response, get_tool_error_response
 from core.utils import text_utils
 from core.utils.runtime_diagnostics import runtime_diagnostics
+from core.utils.turn_diagnostics import TurnDiagnosticsMixin
 
 
 TAG = __name__
@@ -51,7 +52,7 @@ class TTSException(RuntimeError):
     pass
 
 
-class ConnectionHandler:
+class ConnectionHandler(TurnDiagnosticsMixin):
     def __init__(
             self,
             config: Dict[str, Any],
@@ -74,23 +75,22 @@ class ConnectionHandler:
         self.audio_format = "opus"
         self.sample_rate = 24000  # 默认采样率，从客户端 hello 消息中动态更新
 
-        # 客户端状态相关
+        # Client state.
         self.client_abort = False
         self.client_is_speaking = False
         self.client_listen_mode = "auto"
-        self.client_aec = False  # 是否启用了服务端AEC
+        self.client_aec = False  # Whether server-side AEC is enabled.
 
-        # 线程任务相关
-        self.loop = None  # 在 handle_connection 中获取运行中的事件循环
+        # Worker and event-loop state.
+        self.loop = None  # Assigned by handle_connection on the running loop.
         self.stop_event = threading.Event()
         self._close_lock = None
         self._close_completed = False
         self.executor = ThreadPoolExecutor(max_workers=5)
         self.chat_executor = ThreadPoolExecutor(max_workers=1)
-        self._turn_metrics_lock = threading.Lock()
-        self._turn_metrics = None
+        self.initialize_turn_diagnostics()
 
-        # 依赖的组件
+        # Connection-owned components.
         self.vad = None
         self.asr = None
         self.tts = None
@@ -857,20 +857,18 @@ class ConnectionHandler:
         return self._chat(query, depth, memory_str)
 
     def _chat(self, query, depth=0, memory_str=None):
-        # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
+        # Keep the sentence ID local so a newer turn cannot overwrite it.
         current_sentence_id = None
         llm_started_at = time.monotonic()
 
         if query is not None:
             self.logger.bind(tag=TAG).info(f"LLM received user message: {query}")
 
-        # 为最顶层时新建会话ID和发送FIRST请求
+        # A top-level request owns a new sentence and TTS start marker.
         if depth == 0:
             current_sentence_id = str(uuid.uuid4().hex)
-            self.sentence_id = current_sentence_id  # 更新共享属性
-            with self._turn_metrics_lock:
-                if self._turn_metrics is not None:
-                    self._turn_metrics["input"] = str(query or "")[:240]
+            self.sentence_id = current_sentence_id
+            self.record_turn_input(query or "")
             self.mark_turn_metric("llm_dispatch", sentence_id=current_sentence_id)
             self.dialogue.put(Message(role="user", content=query))
             self.tts.tts_text_queue.put(
@@ -881,19 +879,19 @@ class ConnectionHandler:
                 )
             )
         else:
-            # 递归调用时，使用当前的sentence_id
+            # Tool continuations stay attached to the current sentence.
             current_sentence_id = self.sentence_id
 
-        # 设置最大递归深度，避免无限循环，可根据实际需求调整
+        # Bound recursive tool continuations to prevent loops.
         MAX_DEPTH = 5
-        force_final_answer = False  # 标记是否强制最终回答
+        force_final_answer = False
 
         if depth >= MAX_DEPTH:
             self.logger.bind(tag=TAG).debug(
                 f"Maximum tool-call depth of {MAX_DEPTH} reached; forcing an answer from available information"
             )
             force_final_answer = True
-            # 添加系统指令，要求 LLM 基于现有信息回答
+            # Ask for a final answer using only the evidence already collected.
             self.dialogue.put(
                 Message(
                     role="user",
@@ -903,15 +901,15 @@ class ConnectionHandler:
 
         # Define intent functions
         functions = None
-        # 达到最大深度时，禁用工具调用，强制 LLM 直接回答
+        # Disable tools at the depth limit so the model must answer directly.
         if (
                 self.intent_type == "function_call"
                 and hasattr(self, "func_handler")
                 and not force_final_answer
         ):
             functions = list(self.func_handler.get_functions())
-            # 仅在第一层调用时注入 direct_answer 虚拟工具
-            # 递归调用（depth>0）不注入，避免模型在生成文本回复时再次调 direct_answer 导致循环
+            # Offer direct_answer only on the first request. Excluding it from
+            # continuations prevents a second synthetic call from looping.
             if (
                 functions is not None
                 and depth == 0
@@ -926,7 +924,6 @@ class ConnectionHandler:
             self.mark_turn_metric(
                 "llm_request" if depth == 0 else "resumed_llm_request"
             )
-            # 使用带记忆的对话
             # Query memory once for the user turn, then preserve the same
             # evidence across any LLM continuations after tool results.
             if memory_str is None and self.memory is not None and query:
@@ -935,8 +932,8 @@ class ConnectionHandler:
                 )
                 memory_str = future.result()
 
-            # 仅在该说话人首次出现时把身份注入 system，之后靠对话历史首轮保留，
-            # 避免每轮在 system 重复出现名字诱导模型反复称呼
+            # Inject speaker identity into the system context only once. The
+            # dialogue history retains it without encouraging repeated names.
             speaker_for_system = None
             cs = (self.current_speaker or "").strip()
             if cs and cs != "未知说话人" and cs not in self.system_introduced_speakers:
@@ -952,7 +949,7 @@ class ConnectionHandler:
                 provider_kwargs["event_loop"] = self.loop
 
             if self.intent_type == "function_call" and functions is not None:
-                # 使用支持functions的streaming接口
+                # Use the provider's streaming function-call interface.
                 llm_responses = self.llm.response_with_functions(
                     self.session_id,
                     llm_dialogue,
@@ -985,10 +982,10 @@ class ConnectionHandler:
                 )
             return None
 
-        # 处理流式响应
+        # Consume the streaming response.
         tool_call_flag = False
-        # 支持多个并行工具调用 - 使用列表存储
-        tool_calls_list = []  # 格式: [{"id": "", "name": "", "arguments": ""}]
+        # Accumulate one or more tool calls emitted by the provider.
+        tool_calls_list = []
         content_arguments = ""
         emotion_flag = True
         try:
@@ -1018,8 +1015,8 @@ class ConnectionHandler:
                         tool_call_flag = True
                         self._merge_tool_calls(tool_calls_list, tools_call)
 
-                    # 流式提取 direct_answer 的 response 参数，实时送 TTS
-                    # 使用安全缓冲区，防止 JSON 闭合符号泄漏到 TTS
+                    # Stream direct_answer text to TTS while retaining a short
+                    # buffer so trailing JSON syntax cannot leak into speech.
                     _DA_STREAM_BUFFER = 5
                     for tc in tool_calls_list:
                         if tc["name"] == "direct_answer" and tc.get("arguments"):
@@ -1029,7 +1026,7 @@ class ConnectionHandler:
                                 safe_end = max(sent_len, len(da_text) - _DA_STREAM_BUFFER)
                                 if safe_end > sent_len:
                                     new_part = da_text[sent_len:safe_end]
-                                    # 清理 delta 中可能泄漏的 JSON 闭合垃圾
+                                    # Remove any trailing JSON syntax from the delta.
                                     new_part = clean_response_text(new_part)
                                     if new_part:
                                         tc["_da_sent"] = safe_end
@@ -1044,7 +1041,7 @@ class ConnectionHandler:
                 else:
                     content = response
 
-                # 在llm回复中获取情绪表情，一轮对话只在开头获取一次
+                # Derive the display emotion once from the start of the reply.
                 if emotion_flag and content is not None and content.strip():
                     if (self.features or {}).get("emoji", True):
                         asyncio.run_coroutine_threadsafe(
@@ -1090,10 +1087,10 @@ class ConnectionHandler:
         if self.client_abort:
             return None
 
-        # 处理function call
+        # Execute any function calls emitted by the model.
         if tool_call_flag:
             bHasError = False
-            # 处理基于文本的工具调用格式
+            # Parse providers that encode tool calls inside text.
             if len(tool_calls_list) == 0 and content_arguments:
                 a = extract_json_from_string(content_arguments)
                 if a is not None:
@@ -1121,7 +1118,7 @@ class ConnectionHandler:
                     )
 
             if not bHasError and len(tool_calls_list) > 0:
-                # 处理 direct_answer 虚拟工具
+                # Handle the synthetic direct_answer tool separately.
                 direct_answer_calls = [tc for tc in tool_calls_list if tc["name"] == "direct_answer"]
                 real_tool_calls = [tc for tc in tool_calls_list if tc["name"] != "direct_answer"]
 
@@ -1138,7 +1135,8 @@ class ConnectionHandler:
                         )
                         if da_response:
                             has_direct_answer_output = True
-                            # 刷新流式缓冲区中未发送的部分
+                            self.append_turn_output(da_response)
+                            # Flush text retained by the streaming safety buffer.
                             sent_len = tc.get("_da_sent", 0)
                             remaining = da_response[sent_len:]
                             if remaining:
@@ -1150,7 +1148,7 @@ class ConnectionHandler:
                                         content_detail=remaining,
                                     )
                                 )
-                            # 写入对话历史
+                            # Preserve the final response in dialogue history.
                             self.tts.store_tts_text(current_sentence_id, da_response)
                             self.dialogue.put(Message(role="assistant", content=da_response))
 
@@ -1184,33 +1182,43 @@ class ConnectionHandler:
                     f"Detected {len(tool_calls_list)} tool call(s)"
                 )
 
-                # LLM 流式阶段已播报过的文本
+                # Preserve any text spoken before the tool call completed.
                 streamed_text = ""
                 if len(response_message) > 0:
                     streamed_text = "".join(response_message)
+                    self.append_turn_output(streamed_text)
                     self.tts.store_tts_text(current_sentence_id, streamed_text)
                     self.dialogue.put(Message(role="assistant", content=streamed_text))
                 response_message.clear()
 
-                # 收集所有工具调用的 Future
+                # Dispatch all calls before waiting so independent tools can overlap.
                 futures_with_data = []
                 for tool_call_data in tool_calls_list:
                     self.logger.bind(tag=TAG).debug(
                         f"function_name={tool_call_data['name']}, function_id={tool_call_data['id']}, function_arguments={tool_call_data['arguments']}"
                     )
 
+                    tool_type = self.func_handler.tool_manager.get_tool_type(
+                        tool_call_data["name"]
+                    )
+                    self.start_tool_metric(
+                        tool_call_data["id"],
+                        tool_call_data["name"],
+                        arguments=tool_call_data.get("arguments"),
+                        tool_type=(tool_type.value if tool_type else None),
+                    )
                     future = asyncio.run_coroutine_threadsafe(
-                        self.func_handler.handle_llm_function_call(
-                            self, tool_call_data
+                        self.observe_tool_call(
+                            tool_call_data["id"],
+                            self.func_handler.handle_llm_function_call(
+                                self, tool_call_data
+                            ),
                         ),
                         self.loop,
                     )
-                    self.start_tool_metric(
-                        tool_call_data["id"], tool_call_data["name"]
-                    )
                     futures_with_data.append((future, tool_call_data))
 
-                # 工具调用超时时间，可配置，默认30秒
+                # Apply the configured timeout to the complete tool batch.
                 tool_call_timeout = int(self.config.get("tool_call_timeout", 30))
                 tool_results = []
                 completed_futures, _ = wait(
@@ -1220,8 +1228,12 @@ class ConnectionHandler:
 
                 for future, tool_call_data in futures_with_data:
                     if future not in completed_futures:
+                        self.finish_tool_metric(
+                            tool_call_data["id"],
+                            "timed_out",
+                            result="Tool call timed out",
+                        )
                         future.cancel()
-                        self.finish_tool_metric(tool_call_data["id"], "timed_out")
                         self.logger.bind(tag=TAG).error(
                             f"Tool call timed out: {tool_call_data['name']}"
                         )
@@ -1238,14 +1250,12 @@ class ConnectionHandler:
                         continue
                     try:
                         result = future.result()
-                        self.finish_tool_metric(tool_call_data["id"], "completed")
                         tool_results.append((result, tool_call_data))
                     except Exception as e:
-                        self.finish_tool_metric(tool_call_data["id"], "failed")
                         self.logger.bind(tag=TAG).error(
                             f"Tool call failed: {tool_call_data['name']}, error: {e}"
                         )
-                        # 超时时返回错误响应，避免整个流程卡死
+                        # Convert failures into a bounded user-facing tool error.
                         tool_results.append((
                             ActionResponse(
                                 action=Action.ERROR,
@@ -1254,7 +1264,7 @@ class ConnectionHandler:
                             ),
                             tool_call_data
                         ))
-                # 统一处理工具调用结果
+                # Apply all results through the same continuation path.
                 if tool_results:
                     self._handle_function_result(
                         tool_results,
@@ -1263,9 +1273,10 @@ class ConnectionHandler:
                         memory_str=memory_str,
                     )
 
-        # 存储对话内容
+        # Store direct model output in the dialogue.
         if len(response_message) > 0:
             text_buff = "".join(response_message)
+            self.append_turn_output(text_buff)
             self.tts.store_tts_text(current_sentence_id, text_buff)
             self.dialogue.put(Message(role="assistant", content=text_buff))
 
@@ -1277,7 +1288,7 @@ class ConnectionHandler:
                     content_type=ContentType.ACTION,
                 )
             )
-            # 使用lambda延迟计算，只有在DEBUG级别时才执行get_llm_dialogue()
+            # Build the verbose dialogue dump only when debug logging consumes it.
             self.logger.bind(tag=TAG).debug(
                 lambda: json.dumps(
                     self.dialogue.get_llm_dialogue(), indent=4, ensure_ascii=False
@@ -1306,6 +1317,7 @@ class ConnectionHandler:
                 else:
                     self.tts.tts_one_sentence(self, ContentType.TEXT, content_detail=text)
                     self.tts.store_tts_text(self.sentence_id, text)
+                self.append_turn_output(text)
                 self.dialogue.put(Message(role="assistant", content=text))
             elif result.action == Action.REQLLM:
                 need_llm_tools.append((result, tool_call_data))
@@ -1314,10 +1326,9 @@ class ConnectionHandler:
             else:
                 pass
 
-        # Action.RECORD：写入完整工具调用链（assistant(tool_calls) → tool(result) → assistant(response)）
-        # 模型从历史中学到工具调用模式，不额外调用LLM
+        # RECORD writes the complete tool chain without another LLM request.
         if record_tools:
-            # 构造 assistant 消息（含 tool_calls），记录"模型调用了哪些工具"
+            # Record which calls the assistant selected.
             all_tool_calls = [
                 {
                     "id": tool_call_data["id"],
@@ -1336,7 +1347,7 @@ class ConnectionHandler:
             ]
             self.dialogue.put(Message(role="assistant", tool_calls=all_tool_calls))
 
-            # 写入每条工具的执行结果，记录"工具返回了什么"
+            # Record each tool result for future conversational context.
             for result, tool_call_data in record_tools:
                 text = result.result or ""
                 self.dialogue.put(
@@ -1351,14 +1362,19 @@ class ConnectionHandler:
                     )
                 )
 
-            # 用固定文本作为最终回复，补全标准三段式，保证下一条消息是 user 而非接 tool
+            # Add a final assistant message so the next user message never
+            # follows a tool result directly.
             response_parts = []
             for result, _ in record_tools:
                 resp = result.response or result.result
                 if resp:
                     response_parts.append(resp)
             if response_parts:
-                self.dialogue.put(Message(role="assistant", content=", ".join(response_parts)))
+                recorded_response = ", ".join(response_parts)
+                self.append_turn_output(recorded_response)
+                self.dialogue.put(
+                    Message(role="assistant", content=recorded_response)
+                )
 
         if need_llm_tools:
             all_tool_calls = [
@@ -1412,106 +1428,6 @@ class ConnectionHandler:
                 f"Failed to cancel active LLM request: {error}"
             )
             return False
-
-    def start_turn_metrics(self, source):
-        if not self.config.get("enable_turn_metrics", True):
-            return
-        now = time.monotonic()
-        with self._turn_metrics_lock:
-            self._turn_metrics = {
-                "turn_id": uuid.uuid4().hex,
-                "session_id": self.session_id,
-                "device_id": self.device_id,
-                "source": source,
-                "started_at": now,
-                "sentence_id": None,
-                "marks": {},
-                "tools": {},
-                "queue_peaks": {},
-            }
-            turn_id = self._turn_metrics["turn_id"]
-        runtime_diagnostics.begin_turn(self.session_id, turn_id, source)
-
-    def has_active_turn_metrics(self):
-        with self._turn_metrics_lock:
-            return self._turn_metrics is not None
-
-    def mark_turn_metric(self, event, sentence_id=None):
-        now = time.monotonic()
-        with self._turn_metrics_lock:
-            if self._turn_metrics is None:
-                return
-            if sentence_id is not None:
-                self._turn_metrics["sentence_id"] = sentence_id
-            self._turn_metrics["marks"].setdefault(event, now)
-
-    def record_queue_depth(self, queue_name, depth):
-        with self._turn_metrics_lock:
-            if self._turn_metrics is None:
-                return
-            peaks = self._turn_metrics["queue_peaks"]
-            peaks[queue_name] = max(depth, peaks.get(queue_name, 0))
-
-    def enqueue_asr_audio(self, pcm_frame):
-        try:
-            self.asr_audio_queue.put_nowait(pcm_frame)
-        except asyncio.QueueFull as error:
-            raise RuntimeError(
-                "ASR audio queue overflow; closing the stale connection"
-            ) from error
-        self.record_queue_depth("asr_audio", self.asr_audio_queue.qsize())
-
-    def start_tool_metric(self, tool_call_id, tool_name):
-        now = time.monotonic()
-        with self._turn_metrics_lock:
-            if self._turn_metrics is None:
-                return
-            self._turn_metrics["tools"][tool_call_id] = {
-                "name": tool_name,
-                "started_at": now,
-            }
-
-    def finish_tool_metric(self, tool_call_id, outcome):
-        now = time.monotonic()
-        with self._turn_metrics_lock:
-            if self._turn_metrics is None:
-                return
-            metric = self._turn_metrics["tools"].get(tool_call_id)
-            if metric is None or "duration_ms" in metric:
-                return
-            metric["duration_ms"] = round(
-                (now - metric.pop("started_at")) * 1000, 1
-            )
-            metric["outcome"] = outcome
-
-    def complete_turn_metrics(self, outcome):
-        completed_at = time.monotonic()
-        with self._turn_metrics_lock:
-            metrics = self._turn_metrics
-            self._turn_metrics = None
-        if metrics is None:
-            return
-
-        started_at = metrics.pop("started_at")
-        marks = metrics.pop("marks")
-        tools = metrics.pop("tools")
-        metrics["outcome"] = outcome
-        metrics["total_ms"] = round((completed_at - started_at) * 1000, 1)
-        metrics["marks_ms"] = {
-            name: round((marked_at - started_at) * 1000, 1)
-            for name, marked_at in marks.items()
-        }
-        for metric in tools.values():
-            if "started_at" in metric:
-                metric["duration_ms"] = round(
-                    (completed_at - metric.pop("started_at")) * 1000, 1
-                )
-                metric["outcome"] = "incomplete"
-        metrics["tools"] = list(tools.values())
-        runtime_diagnostics.complete_turn(metrics)
-        self.logger.bind(tag=TAG).debug(
-            f"Turn metrics: {json.dumps(metrics, ensure_ascii=False)}"
-        )
 
     async def close(self, ws=None):
         """Release connection resources once, even when close paths race."""

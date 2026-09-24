@@ -1,4 +1,4 @@
-"""设备端MCP客户端支持模块"""
+"""Firmware MCP message and tool-call helpers."""
 
 import json
 import asyncio
@@ -17,7 +17,7 @@ logger = setup_logging()
 
 
 class MCPClient:
-    """设备端MCP客户端，用于管理MCP状态和工具"""
+    """Track firmware MCP state, tools, and pending calls."""
 
     def __init__(self):
         self.tools = {}  # sanitized_name -> tool_data
@@ -104,28 +104,30 @@ async def send_mcp_message(conn: "ConnectionHandler", payload: dict):
     """Helper to send MCP messages, encapsulating common logic."""
     if not conn.features.get("mcp"):
         logger.bind(tag=TAG).warning("Client does not support MCP; cannot send MCP message")
-        return
+        return False
 
     message = json.dumps({"type": "mcp", "payload": payload})
 
     try:
         await conn.websocket.send(message)
         logger.bind(tag=TAG).debug(f"MCP message sent successfully: {message}")
+        return True
     except Exception as e:
         logger.bind(tag=TAG).error(f"Failed to send MCP message: {e}")
+        return False
 
 
 async def handle_mcp_message(
     conn: "ConnectionHandler", mcp_client: MCPClient, payload: dict
 ):
-    """处理MCP消息,包括初始化、工具列表和工具调用响应等"""
+    """Handle MCP initialization, inventory, calls, and responses."""
     logger.bind(tag=TAG).debug(f"Processing MCP message: {str(payload)[:100]}")
 
     if not isinstance(payload, dict):
         logger.bind(tag=TAG).error("MCP message is missing a payload or has an invalid format")
         return
 
-    # Handle result
+    # Handle successful responses.
     if "result" in payload:
         result = payload["result"]
         msg_id = int(payload.get("id", 0))
@@ -135,6 +137,7 @@ async def handle_mcp_message(
             logger.bind(tag=TAG).debug(
                 f"Received tool-call response, ID: {msg_id}, result: {result}"
             )
+            conn.mark_device_mcp_response(msg_id)
             await mcp_client.resolve_call_result(msg_id, result)
             return
 
@@ -279,20 +282,21 @@ async def handle_mcp_message(
                         await send_status_message(conn, "clear", "initializing")
             return
 
-    # Handle method calls (requests from the client)
+    # Handle method calls initiated by the client.
     elif "method" in payload:
         method = payload["method"]
         logger.bind(tag=TAG).info(f"Received MCP client request: {method}")
 
     elif "error" in payload:
         error_data = payload["error"]
-        error_msg = error_data.get("message", "未知错误")
+        error_msg = error_data.get("message", "Unknown error")
         logger.bind(tag=TAG).error(f"Received MCP error response: {error_msg}")
 
         msg_id = int(payload.get("id", 0))
         if msg_id in mcp_client.call_results:
+            conn.mark_device_mcp_response(msg_id, outcome="error")
             await mcp_client.reject_call_result(
-                msg_id, Exception(f"MCP错误: {error_msg}")
+                msg_id, Exception(f"MCP error: {error_msg}")
             )
         elif msg_id in (1, 2):
             from core.handle.sendAudioHandle import send_status_message
@@ -301,11 +305,11 @@ async def handle_mcp_message(
 
 
 async def send_mcp_initialize_message(conn: "ConnectionHandler"):
-    """发送MCP初始化消息"""
+    """Send the MCP initialization request to firmware."""
 
     vision_url = get_vision_url(conn.config)
 
-    # 密钥生成token
+    # Generate the vision token from the server authentication key.
     auth = AuthToken(conn.config["server"]["auth_key"])
     token = auth.generate_token(conn.headers.get("device-id"))
 
@@ -336,7 +340,7 @@ async def send_mcp_initialize_message(conn: "ConnectionHandler"):
 
 
 async def send_mcp_tools_list_request(conn: "ConnectionHandler"):
-    """发送MCP工具列表请求"""
+    """Request the first page of firmware tools."""
     payload = {
         "jsonrpc": "2.0",
         "id": 2,  # mcpToolsListID
@@ -347,7 +351,7 @@ async def send_mcp_tools_list_request(conn: "ConnectionHandler"):
 
 
 async def send_mcp_tools_list_continue_request(conn: "ConnectionHandler", cursor: str):
-    """发送带有cursor的MCP工具列表请求"""
+    """Request the next page of firmware tools."""
     payload = {
         "jsonrpc": "2.0",
         "id": 2,  # mcpToolsListID (same ID for continuation)
@@ -364,33 +368,32 @@ async def call_mcp_tool(
     tool_name: str,
     args: str = "{}",
     timeout: int = 30,
+    diagnostic_call_id=None,
 ):
-    """
-    调用指定的工具，并等待响应
-    """
+    """Call a firmware tool and wait for its correlated response."""
     if not await mcp_client.is_ready():
         raise RuntimeError("Device MCP client is not ready")
 
     if not mcp_client.has_tool(tool_name):
         raise ValueError(f"Tool {tool_name} does not exist")
 
-    # 处理参数
+    # Normalize the arguments before sending them to firmware.
     try:
         if isinstance(args, str):
-            # 确保字符串是有效的JSON
+            # Accept a JSON object encoded as a string.
             if not args.strip():
                 arguments = {}
             else:
                 try:
-                    # 尝试直接解析
                     arguments = json.loads(args)
                 except json.JSONDecodeError:
-                    # 如果解析失败，尝试合并多个JSON对象
+                    # Some models concatenate simple JSON objects; merge them
+                    # only when each fragment can be parsed safely.
                     try:
-                        # 使用正则表达式匹配所有JSON对象
+                        # Extract flat JSON object fragments.
                         json_objects = re.findall(r"\{[^{}]*\}", args)
                         if len(json_objects) > 1:
-                            # 合并所有JSON对象
+                            # Merge fragments in their original order.
                             merged_dict = {}
                             for json_str in json_objects:
                                 try:
@@ -419,7 +422,6 @@ async def call_mcp_tool(
                 f"Invalid argument type; expected string or object, got {type(args)}"
             )
 
-        # 确保参数是字典类型
         if not isinstance(arguments, dict):
             raise ValueError(f"Arguments must be an object, got {type(arguments)}")
 
@@ -444,8 +446,10 @@ async def call_mcp_tool(
         logger.bind(tag=TAG).info(
             f"Sending client MCP tool-call request: {actual_name}, arguments: {args}"
         )
-        await send_mcp_message(conn, payload)
-        # Wait for response or timeout
+        sent = await send_mcp_message(conn, payload)
+        if sent:
+            conn.mark_device_mcp_request(diagnostic_call_id, tool_call_id)
+        # Wait for the matching firmware response or timeout.
         raw_result = await asyncio.wait_for(result_future, timeout=timeout)
         logger.bind(tag=TAG).info(
             f"Client MCP tool call {actual_name} succeeded, raw result: {raw_result}"
@@ -461,9 +465,9 @@ async def call_mcp_tool(
             content = raw_result.get("content")
             if isinstance(content, list) and len(content) > 0:
                 if isinstance(content[0], dict) and "text" in content[0]:
-                    # 直接返回文本内容，不进行JSON解析
+                    # Keep text results intact for the LLM continuation.
                     return content[0]["text"]
-        # 如果结果不是预期的格式，将其转换为字符串
+        # Preserve unexpected result shapes as text for compatibility.
         return str(raw_result)
     except asyncio.TimeoutError as error:
         raise TimeoutError("Device MCP tool call timed out") from error

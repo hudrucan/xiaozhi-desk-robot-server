@@ -72,7 +72,10 @@ class ToolManager:
         return tool_def.tool_type if tool_def else None
 
     async def execute_tool(
-        self, tool_name: str, arguments: Dict[str, Any]
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        diagnostic_call_id=None,
     ) -> ActionResponse:
         """Execute a tool call."""
         try:
@@ -94,7 +97,15 @@ class ToolManager:
                 )
 
             self.logger.info(f"Executing tool: {tool_name}, arguments: {arguments}")
-            result = await executor.execute(self.conn, tool_name, arguments)
+            if tool_type == ToolType.DEVICE_MCP:
+                result = await executor.execute(
+                    self.conn,
+                    tool_name,
+                    arguments,
+                    diagnostic_call_id=diagnostic_call_id,
+                )
+            else:
+                result = await executor.execute(self.conn, tool_name, arguments)
             self.logger.debug(f"Tool result: {result}")
             return result
 

@@ -1,4 +1,4 @@
-"""设备端MCP工具执行器"""
+"""Execute tools advertised by the connected firmware MCP server."""
 
 from typing import Dict, Any, TYPE_CHECKING
 
@@ -11,15 +11,19 @@ from .mcp_handler import call_mcp_tool
 
 
 class DeviceMCPExecutor(ToolExecutor):
-    """设备端MCP工具执行器"""
+    """Bridge unified tool calls to the connected firmware."""
 
     def __init__(self, conn):
         self.conn = conn
 
     async def execute(
-        self, conn: "ConnectionHandler", tool_name: str, arguments: Dict[str, Any]
+        self,
+        conn: "ConnectionHandler",
+        tool_name: str,
+        arguments: Dict[str, Any],
+        diagnostic_call_id=None,
     ) -> ActionResponse:
-        """执行设备端MCP工具"""
+        """Execute one firmware-owned MCP tool."""
         if not hasattr(conn, "mcp_client") or not conn.mcp_client:
             return ActionResponse(
                 action=Action.ERROR,
@@ -35,28 +39,29 @@ class DeviceMCPExecutor(ToolExecutor):
             )
 
         try:
-            # 转换参数为JSON字符串
+            # Keep the existing wire helper compatible with string arguments.
             import json
 
             args_str = json.dumps(arguments) if arguments else "{}"
 
-            # 调用设备端MCP工具
             result = await call_mcp_tool(
                 conn,
                 conn.mcp_client,
                 tool_name,
                 args_str,
                 timeout=int(conn.config.get("tool_call_timeout", 30)),
+                diagnostic_call_id=diagnostic_call_id,
             )
 
             resultJson = None
             if isinstance(result, str):
                 try:
                     resultJson = json.loads(result)
-                except Exception as e:
+                except Exception:
                     pass
 
-            # 视觉大模型不经过二次LLM处理
+            # Vision may return a complete user-facing response and skip the
+            # second LLM request.
             if (
                 resultJson is not None
                 and isinstance(resultJson, dict)
@@ -89,7 +94,7 @@ class DeviceMCPExecutor(ToolExecutor):
             )
 
     def get_tools(self) -> Dict[str, ToolDefinition]:
-        """获取所有设备端MCP工具"""
+        """Return tools advertised by the firmware."""
         if not hasattr(self.conn, "mcp_client") or not self.conn.mcp_client:
             return {}
 
@@ -108,7 +113,7 @@ class DeviceMCPExecutor(ToolExecutor):
         return tools
 
     def has_tool(self, tool_name: str) -> bool:
-        """检查是否有指定的设备端MCP工具"""
+        """Return whether the firmware advertised a tool."""
         if not hasattr(self.conn, "mcp_client") or not self.conn.mcp_client:
             return False
 

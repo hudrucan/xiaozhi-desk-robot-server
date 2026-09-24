@@ -328,7 +328,57 @@ function turnPhase(label, value) {
   return `<span><small>${escapeHtml(label)}</small>${escapeHtml(formatDuration(value))}</span>`;
 }
 
+function toolStage(tool) {
+  const type = String(tool.type || "unknown").replaceAll("_", " ");
+  if (tool.type !== "device_mcp") return type;
+  if (tool.outcome === "timed_out" || tool.outcome === "incomplete") {
+    if (tool.request_sent_ms === undefined) return "before firmware dispatch";
+    if (tool.response_received_ms === undefined) return "waiting for firmware";
+    return "after firmware response";
+  }
+  if (tool.mcp_response_outcome === "error") return "firmware error";
+  return tool.response_received_ms === undefined ? "device MCP" : "firmware replied";
+}
+
+function diagnosticText(value, truncated, emptyText) {
+  if (!value) return `<p class="diagnostic-empty">${escapeHtml(emptyText)}</p>`;
+  return `<pre>${escapeHtml(value)}${truncated ? "\n… preview truncated" : ""}</pre>`;
+}
+
+function renderToolDetail(tool) {
+  const stages = [
+    turnPhase("Turn offset", tool.started_ms),
+    turnPhase("FW dispatch", tool.request_sent_ms),
+    turnPhase("FW response", tool.response_received_ms),
+    turnPhase("Complete", tool.duration_ms),
+  ].join("");
+  const identifiers = [
+    tool.call_id ? `LLM ${tool.call_id}` : "",
+    tool.mcp_request_id !== undefined ? `MCP ${tool.mcp_request_id}` : "",
+  ].filter(Boolean).join(" · ");
+  const resultState = [tool.action, toolStage(tool), formatDuration(tool.duration_ms)]
+    .filter(Boolean)
+    .join(" · ");
+  return `
+    <article class="tool-detail ${escapeHtml(tool.outcome || "unknown")}">
+      <header>
+        <div><strong>${escapeHtml(tool.name || "tool")}</strong><span>${escapeHtml(String(tool.type || "unknown").replaceAll("_", " "))}</span></div>
+        <small>${escapeHtml(resultState)}</small>
+      </header>
+      <div class="tool-lifecycle">${stages}</div>
+      ${identifiers ? `<code>${escapeHtml(identifiers)}</code>` : ""}
+      <div class="tool-payloads">
+        <section><label>Arguments</label>${diagnosticText(tool.arguments, tool.arguments_truncated, "No arguments")}</section>
+        <section><label>Result</label>${diagnosticText(tool.result || tool.response, tool.result_truncated || tool.response_truncated, "No result captured")}</section>
+      </div>
+    </article>`;
+}
+
 function renderDiagnostics() {
+  const expandedTurns = new Set(
+    [...document.querySelectorAll(".turn-details[open][data-turn-id]")]
+      .map((details) => details.dataset.turnId),
+  );
   const runtime = state.resources?.runtime || {};
   const summary = runtime.summary || {};
   const turns = runtime.turns || [];
@@ -396,7 +446,19 @@ function renderDiagnostics() {
     const audible = markDelta(marks, "speech_end", "first_audio_sent");
     const toolDuration = Math.max(0, ...tools.map((tool) => Number(tool.duration_ms) || 0));
     const toolMarkup = tools.length
-      ? `<div class="turn-tools">${tools.map((tool) => `<span class="${escapeHtml(tool.outcome || "unknown")}">${escapeHtml(tool.name || "tool")}<small>${escapeHtml(formatDuration(tool.duration_ms))}</small></span>`).join("")}</div>`
+      ? `<div class="turn-tools">${tools.map((tool) => `<span class="${escapeHtml(tool.outcome || "unknown")}">${escapeHtml(tool.name || "tool")}<small>${escapeHtml(toolStage(tool))} · ${escapeHtml(formatDuration(tool.duration_ms))}</small></span>`).join("")}</div>`
+      : "";
+    const detailLabel = [turn.input ? "input" : "", turn.output ? "output" : "", tools.length ? `${tools.length} tool${tools.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+    const turnId = String(turn.turn_id || turn.sentence_id || turn.completed_at || "");
+    const details = detailLabel
+      ? `<details class="turn-details" data-turn-id="${escapeHtml(turnId)}" ${expandedTurns.has(turnId) ? "open" : ""}>
+          <summary><span>Inspect turn</span><small>${escapeHtml(detailLabel)}</small></summary>
+          <div class="turn-transcript">
+            <section><label>User input</label>${diagnosticText(turn.input, turn.input_truncated, "Input was not captured")}</section>
+            <section><label>Assistant output</label>${diagnosticText(turn.output, turn.output_truncated, "Output was not captured")}</section>
+          </div>
+          ${tools.length ? `<div class="tool-details">${tools.map(renderToolDetail).join("")}</div>` : ""}
+        </details>`
       : "";
     return `
       <article class="turn-card ${escapeHtml(outcome)}">
@@ -406,7 +468,6 @@ function renderDiagnostics() {
             <div><span class="turn-outcome">${escapeHtml(outcome.replaceAll("_", " "))}</span><time>${escapeHtml(completedAt)}</time></div>
             <strong>${escapeHtml(formatDuration(turn.total_ms))}</strong>
           </header>
-          <p class="turn-input">${escapeHtml(turn.input || `${turn.source || "Unknown"} turn`)}</p>
           <div class="turn-observability">
             <div class="turn-phases">
               ${turnPhase("ASR", asr)}
@@ -417,6 +478,7 @@ function renderDiagnostics() {
             </div>
             ${toolMarkup}
           </div>
+          ${details}
         </div>
       </article>`;
   }).join("");

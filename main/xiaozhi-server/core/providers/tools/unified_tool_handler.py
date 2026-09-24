@@ -132,7 +132,9 @@ class UnifiedToolHandler:
                 responses = []
                 for call in function_call_data["function_calls"]:
                     result = await self.tool_manager.execute_tool(
-                        call["name"], call.get("arguments", {})
+                        call["name"],
+                        call.get("arguments", {}),
+                        diagnostic_call_id=call.get("id"),
                     )
                     responses.append(result)
                 return self._combine_responses(responses)
@@ -162,7 +164,11 @@ class UnifiedToolHandler:
                 self.logger.warning(f"Failed to send tool-call display message: {e}")
 
             # Execute the tool call.
-            result = await self.tool_manager.execute_tool(function_name, arguments)
+            result = await self.tool_manager.execute_tool(
+                function_name,
+                arguments,
+                diagnostic_call_id=function_call_data.get("id"),
+            )
             return result
 
         except Exception as e:

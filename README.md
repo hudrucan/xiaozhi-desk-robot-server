@@ -336,7 +336,9 @@ restart after changes. It accepts loopback requests only unless
 `server.settings.allow_remote` is explicitly enabled. Its overview samples the
 server process tree, so CPU, RSS, and unique memory include managed llama.cpp
 children. It also shows host memory pressure, recent turn timings, tool outcomes,
-active robot connections, and possible device restarts detected when OTA
+and firmware MCP dispatch/response stages. Bounded input, output, arguments, and
+result previews stay collapsed under each turn by default. It also tracks active
+robot connections and possible device restarts detected when OTA
 bootstrap arrives while the previous WebSocket is active or within 30 seconds
 of its disconnect. Duplicate restart events for the same device and reason are
 suppressed for 45 seconds. These diagnostics are bounded and kept in memory
