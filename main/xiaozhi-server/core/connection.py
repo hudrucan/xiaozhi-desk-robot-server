@@ -841,12 +841,12 @@ class ConnectionHandler:
                 f"Failed to dump full LLM request to {dump_path}: {error}"
             )
 
-    def chat(self, query, depth=0):
+    def chat(self, query, depth=0, memory_str=None):
         if depth == 0:
             self.client_abort = False
-        return self._chat(query, depth)
+        return self._chat(query, depth, memory_str)
 
-    def _chat(self, query, depth=0):
+    def _chat(self, query, depth=0, memory_str=None):
         # 保存当前任务的sentence_id到局部变量，避免被新任务覆盖
         current_sentence_id = None
         llm_started_at = time.monotonic()
@@ -914,9 +914,9 @@ class ConnectionHandler:
                 "llm_request" if depth == 0 else "resumed_llm_request"
             )
             # 使用带记忆的对话
-            memory_str = None
-            # 仅当query非空（代表用户询问）时查询记忆
-            if self.memory is not None and query:
+            # Query memory once for the user turn, then preserve the same
+            # evidence across any LLM continuations after tool results.
+            if memory_str is None and self.memory is not None and query:
                 future = asyncio.run_coroutine_threadsafe(
                     self.memory.query_memory(query), self.loop
                 )
@@ -1239,7 +1239,12 @@ class ConnectionHandler:
                         ))
                 # 统一处理工具调用结果
                 if tool_results:
-                    self._handle_function_result(tool_results, depth=depth, streamed_text=streamed_text)
+                    self._handle_function_result(
+                        tool_results,
+                        depth=depth,
+                        streamed_text=streamed_text,
+                        memory_str=memory_str,
+                    )
 
         # 存储对话内容
         if len(response_message) > 0:
@@ -1264,7 +1269,9 @@ class ConnectionHandler:
 
         return True
 
-    def _handle_function_result(self, tool_results, depth, streamed_text=""):
+    def _handle_function_result(
+        self, tool_results, depth, streamed_text="", memory_str=None
+    ):
         need_llm_tools = []
         record_tools = []
 
@@ -1370,7 +1377,7 @@ class ConnectionHandler:
                         )
                     )
 
-            self.chat(None, depth=depth + 1)
+            self.chat(None, depth=depth + 1, memory_str=memory_str)
 
     def clearSpeakStatus(self):
         self.client_is_speaking = False

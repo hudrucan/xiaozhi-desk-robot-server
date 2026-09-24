@@ -48,7 +48,6 @@ Facts inside <memory> were explicitly saved by the user. Use relevant facts natu
 Current time: {{current_time}}
 Date: {{today_date}} ({{today_weekday}})
 Device location: {{local_address}}
-Local weather: {{weather_info}}
 {{ dynamic_context }}
 </context>
 

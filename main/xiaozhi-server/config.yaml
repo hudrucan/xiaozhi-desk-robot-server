@@ -350,7 +350,6 @@ LLM:
   LlamaCppLLM:
     type: llama_cpp
     api_key: local
-    base_url: http://127.0.0.1:6000/v1
     model_name: qwen3:4b
     # Keep local voice responses stable while retaining some personality.
     temperature: 0.6
@@ -379,8 +378,9 @@ LLM:
       startup_timeout: 900
       shutdown_timeout: 10
       log_file: tmp/llama-server.log
-      # Set a positive value to unload the model from RAM while the server is idle.
-      # sleep_idle_seconds: 900
+      # Unload the model after ten minutes without an inference request.
+      # The next request reloads the model and rebuilds its prompt cache.
+      sleep_idle_seconds: 600
       extra_args: []
     timeout:
       pool: 2

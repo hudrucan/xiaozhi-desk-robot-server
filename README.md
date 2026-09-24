@@ -258,7 +258,6 @@ LLM:
   LlamaCppLLM:
     type: llama_cpp
     api_key: local
-    base_url: http://127.0.0.1:6000/v1
     model_name: qwen3:4b
     temperature: 0.6
     top_p: 0.95
@@ -273,17 +272,20 @@ LLM:
       gpu_layers: all
       parallel: 1
       cache_reuse: 64
-      chat_template_kwargs:
-        enable_thinking: false
       reasoning: "off"
       startup_timeout: 900
       shutdown_timeout: 10
       log_file: tmp/llama-server.log
+      sleep_idle_seconds: 600
 ```
 
 With `managed: true`, `llama-server` starts only when this provider is selected
 and stops during normal application shutdown or configuration restart. Set
-`managed: false` to connect to an externally managed llama.cpp endpoint instead.
+`managed: false` and configure `base_url` to connect to an externally managed
+llama.cpp endpoint instead. For a managed server, `base_url` is derived from
+`process.host` and `process.port`.
+After `sleep_idle_seconds` expires, the next inference request reloads the model
+and rebuilds the prompt cache, so that first response has cold-start latency.
 The bounded history and cache reuse settings keep the repeated MCP/tool schemas
 from forcing a full prompt prefill on every conversational turn.
 For the single-device deployment, `config/device_mcp_tools.json` seeds the known
