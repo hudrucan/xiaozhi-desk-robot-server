@@ -96,7 +96,12 @@ class MemoryHandler(BaseHandler):
         content = str(body.get("content", "")).strip()
         if not content:
             raise web.HTTPBadRequest(text="Memory content cannot be empty")
-        remembered = await asyncio.to_thread(provider.remember, content)
+        try:
+            remembered = await asyncio.to_thread(
+                provider.remember, content, **self._metadata(body)
+            )
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error)) from error
         if not remembered:
             raise web.HTTPBadRequest(text="Memory content cannot be empty")
         return self._disable_cache(web.json_response(await self._snapshot()))
@@ -113,6 +118,7 @@ class MemoryHandler(BaseHandler):
                 provider.update_entry,
                 request.match_info["entry_id"],
                 content,
+                **self._metadata(body),
             )
         except ValueError as error:
             raise web.HTTPBadRequest(text=str(error)) from error
@@ -155,3 +161,17 @@ class MemoryHandler(BaseHandler):
         if not isinstance(body, dict):
             raise web.HTTPBadRequest(text="Request body must be an object")
         return body
+
+    @staticmethod
+    def _metadata(body):
+        fields = (
+            "type",
+            "project",
+            "entities",
+            "tags",
+            "importance",
+            "pinned",
+            "active",
+            "supersedes",
+        )
+        return {field: body[field] for field in fields if field in body}

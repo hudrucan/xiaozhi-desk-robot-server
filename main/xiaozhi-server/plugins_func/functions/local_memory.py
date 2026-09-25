@@ -30,7 +30,42 @@ MANAGE_MEMORY_FUNCTION_DESC = {
                         "A concise fact to save, or a short search phrase for "
                         "recall or deletion. Omit only for list."
                     ),
-                }
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "fact", "preference", "decision", "project_state",
+                        "hardware", "todo", "session",
+                    ],
+                    "description": "Memory category. Used only when remembering.",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Optional project scope. Omit for global memory.",
+                },
+                "entities": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Exact names, components, people, or devices.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "importance": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                },
+                "pinned": {"type": "boolean"},
+                "active": {"type": "boolean"},
+                "supersedes": {
+                    "type": "string",
+                    "description": (
+                        "ID of an older memory replaced by this new memory. "
+                        "Use only when the replacement is explicit."
+                    ),
+                },
             },
             "required": ["action"],
         },
@@ -62,7 +97,17 @@ def _explicit_memory(conn: "ConnectionHandler"):
 
 @register_function("manage_memory", MANAGE_MEMORY_FUNCTION_DESC, ToolType.SYSTEM_CTL)
 async def manage_memory(
-    conn: "ConnectionHandler", action: str, content: str = None
+    conn: "ConnectionHandler",
+    action: str,
+    content: str = None,
+    type: str = None,
+    project: str = None,
+    entities: list = None,
+    tags: list = None,
+    importance: int = None,
+    pinned: bool = None,
+    active: bool = None,
+    supersedes: str = None,
 ):
     memory = _explicit_memory(conn)
     if memory is None:
@@ -73,7 +118,25 @@ async def manage_memory(
 
     normalized_action = str(action or "").strip().lower()
     if normalized_action == "remember":
-        if not memory.remember(content):
+        metadata = {
+            key: value
+            for key, value in {
+                "type": type,
+                "project": project,
+                "entities": entities,
+                "tags": tags,
+                "importance": importance,
+                "pinned": pinned,
+                "active": active,
+                "supersedes": supersedes,
+            }.items()
+            if value is not None
+        }
+        try:
+            remembered = memory.remember(content, **metadata)
+        except ValueError as error:
+            return ActionResponse(Action.ERROR, response=str(error))
+        if not remembered:
             return ActionResponse(
                 Action.ERROR,
                 response=_response(
@@ -96,7 +159,12 @@ async def manage_memory(
                     conn, "missing_content", "No memory content was provided."
                 ),
             )
-        recalled = memory.recall(content)
+        recalled = memory.recall(
+            content,
+            context={
+                "active_project": getattr(conn, "active_memory_project", None),
+            },
+        )
         if not recalled:
             return ActionResponse(
                 Action.RESPONSE,
@@ -109,7 +177,8 @@ async def manage_memory(
             result=(
                 "Saved local memories relevant to the user's request:\n"
                 f"{recalled}\n"
-                "Answer from these facts and do not call the memory tool again."
+                "Answer from these facts. Call memory again only if the user "
+                "explicitly asked to save, replace, or forget information."
             ),
         )
     elif normalized_action == "forget":

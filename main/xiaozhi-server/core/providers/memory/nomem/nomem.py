@@ -15,6 +15,6 @@ class MemoryProvider(MemoryProviderBase):
         logger.bind(tag=TAG).debug("nomem mode: No memory saving is performed.")
         return None
 
-    async def query_memory(self, query: str) -> str:
+    async def query_memory(self, query: str, context=None) -> str:
         logger.bind(tag=TAG).debug("nomem mode: No memory query is performed.")
         return ""

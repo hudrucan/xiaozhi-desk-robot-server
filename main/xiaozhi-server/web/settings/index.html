@@ -203,10 +203,14 @@
                 </header>
                 <form class="memory-compose" id="memoryCreateForm">
                   <label for="memoryContent">Add a durable fact</label>
-                  <div>
-                    <textarea id="memoryContent" placeholder="What should the assistant remember?"></textarea>
-                    <button class="button primary" id="memoryCreateButton" type="submit">Add memory</button>
+                  <textarea id="memoryContent" placeholder="What should the assistant remember?"></textarea>
+                  <div class="memory-create-fields">
+                    <label><span>Type</span><select id="memoryType"><option value="fact">Fact</option><option value="preference">Preference</option><option value="decision">Decision</option><option value="project_state">Project state</option><option value="hardware">Hardware</option><option value="todo">Todo</option><option value="session">Session</option></select></label>
+                    <label><span>Project</span><input id="memoryProject" placeholder="Global when empty" /></label>
+                    <label><span>Importance</span><select id="memoryImportance"><option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option></select></label>
+                    <label class="memory-check"><input id="memoryPinned" type="checkbox" /><span>Pinned</span></label>
                   </div>
+                  <button class="button primary" id="memoryCreateButton" type="submit">Add memory</button>
                 </form>
                 <div class="memory-filter">
                   <label for="memorySearch">Find a memory</label>

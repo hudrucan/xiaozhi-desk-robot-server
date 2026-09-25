@@ -283,8 +283,20 @@ Memory:
     max_entries: 200
     entry_max_chars: 300
     recall_enabled: true
+    # Pinned memories bypass retrieval; relevant memories still use score and top-K.
+    pinned_max_chars: 1200
     recall_max_chars: 2000
+    recall_top_k: 6
+    recall_min_score: 2.5
+    # Use the current message plus 2-3 recent turns to resolve project context.
+    recall_recent_turns: 3
+    recall_fuzzy_threshold: 0.84
+    # Legacy fallback for deployments that have not set the two budgets above.
     inject_max_chars: 1200
+    recall_aliases:
+      cam: camera
+      vl53: vl53l0x
+      mpu: mpu6050
     # Override this list in data/.config.yaml for the deployment language.
     recall_stop_words:
       - about

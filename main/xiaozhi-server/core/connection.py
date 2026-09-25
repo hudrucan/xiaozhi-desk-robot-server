@@ -127,6 +127,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
 
         # llm相关变量
         self.dialogue = Dialogue()
+        self.active_memory_project = None
 
         # tts相关变量
         self.sentence_id = None
@@ -856,6 +857,31 @@ class ConnectionHandler(TurnDiagnosticsMixin):
             self.client_abort = False
         return self._chat(query, depth, memory_str)
 
+    def _build_memory_recall_context(self, query):
+        recent_messages = [
+            message.content
+            for message in self.dialogue.dialogue
+            if message.role in {"user", "assistant"}
+            and not message.is_temporary
+            and isinstance(message.content, str)
+            and message.content.strip()
+        ]
+        if recent_messages and recent_messages[-1] == query:
+            recent_messages.pop()
+        recent_messages = recent_messages[-6:]
+
+        resolve_project = getattr(self.memory, "resolve_active_project", None)
+        if callable(resolve_project):
+            self.active_memory_project = resolve_project(
+                query,
+                recent_messages=recent_messages,
+                current=self.active_memory_project,
+            )
+        return {
+            "recent_messages": recent_messages,
+            "active_project": self.active_memory_project,
+        }
+
     def _chat(self, query, depth=0, memory_str=None):
         # Keep the sentence ID local so a newer turn cannot overwrite it.
         current_sentence_id = None
@@ -927,8 +953,9 @@ class ConnectionHandler(TurnDiagnosticsMixin):
             # Query memory once for the user turn, then preserve the same
             # evidence across any LLM continuations after tool results.
             if memory_str is None and self.memory is not None and query:
+                memory_context = self._build_memory_recall_context(query)
                 future = asyncio.run_coroutine_threadsafe(
-                    self.memory.query_memory(query), self.loop
+                    self.memory.query_memory(query, context=memory_context), self.loop
                 )
                 memory_str = future.result()
 

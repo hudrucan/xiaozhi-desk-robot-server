@@ -19,7 +19,7 @@ class MemoryProviderBase(ABC):
         print("this is base func", msgs)
 
     @abstractmethod
-    async def query_memory(self, query: str) -> str:
+    async def query_memory(self, query: str, context=None) -> str:
         """Query memories for specific role based on similarity"""
         return "please implement query method"
 

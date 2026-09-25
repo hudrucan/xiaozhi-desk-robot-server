@@ -333,15 +333,22 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
 .memory-workspace > header .field-help { margin-top: 5px; }
 .memory-compose { padding: 18px 22px; border-bottom: 1px solid rgba(94, 75, 49, 0.28); background: rgba(213, 168, 94, 0.025); }
 .memory-compose > label, .memory-filter > label { display: block; margin-bottom: 8px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
-.memory-compose > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 10px; }
 .memory-compose textarea { min-height: 74px; resize: vertical; }
-.memory-compose .button { min-width: 126px; }
+.memory-create-fields, .memory-entry-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 10px; margin-top: 10px; }
+.memory-create-fields label, .memory-entry-fields label { display: grid; gap: 6px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.memory-compose > .button { min-width: 126px; margin-top: 10px; }
 .memory-filter { padding: 16px 22px 0; }
 .memory-filter input { background: rgba(9, 7, 5, 0.42); }
 .memory-entries { display: grid; gap: 10px; padding: 12px 22px 22px; }
 .memory-empty { min-height: 118px; background: rgba(9, 7, 5, 0.2); }
 .memory-entry { padding: 13px; border: 1px solid rgba(94, 75, 49, 0.44); border-radius: 12px; background: rgba(9, 7, 5, 0.3); }
+.memory-entry.inactive { opacity: 0.68; }
 .memory-entry textarea { min-height: 76px; }
+.memory-entry-fields { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.memory-entry-toggles { display: flex; align-items: center; gap: 18px; margin-top: 10px; }
+.memory-check { display: flex !important; align-items: center; align-self: end; grid-auto-flow: column; justify-content: start; gap: 8px !important; min-height: 42px; }
+.memory-check input { width: 18px; min-height: 18px; accent-color: var(--accent); }
+.memory-entry-meta { overflow-wrap: anywhere; }
 .memory-entry footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 10px; }
 .memory-entry footer > span { color: var(--faint); font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .memory-entry footer > div { display: flex; gap: 7px; }
@@ -406,7 +413,7 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
   .turn-insights { justify-content: flex-start; }
   .turn-transcript, .tool-payloads { grid-template-columns: 1fr; }
   .field-card.wide { grid-column: auto; }
-  .memory-compose > div { grid-template-columns: 1fr; }
+  .memory-create-fields, .memory-entry-fields { grid-template-columns: 1fr; }
   .memory-compose .button { min-height: 42px; }
 }
 
