@@ -1,130 +1,77 @@
-# Xiaozhi Desk Robot Server
+<p align="center">
+  <img src="main/xiaozhi-server/web/settings/favicon.svg" width="96" alt="Xiaozhi Desk Robot" />
+</p>
 
-A lean, self-hosted Xiaozhi backend for the Desk Robot.
+<h1 align="center">Xiaozhi Desk Robot Server</h1>
 
-This repository is derived from `xinnan-tech/xiaozhi-esp32-server`, but intentionally keeps only the core Python runtime needed for the robot. The management backend, web/mobile management apps, and digital-human test app have been removed.
+<p align="center">
+  A lean, local-first Xiaozhi backend built for one Desk Robot.
+</p>
 
-The current goal is simple:
+<p align="center">
+  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python&logoColor=white" />
+  <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-D3A85E?style=flat-square" />
+  <img alt="Turn based" src="https://img.shields.io/badge/Conversation-Turn--based-6F5B45?style=flat-square" />
+  <img alt="Docker not required" src="https://img.shields.io/badge/Docker-Not%20required-2E7D6B?style=flat-square" />
+</p>
 
-> Preserve Xiaozhi firmware behavior, keep the provider ecosystem, make the local server stable and easy to customize, and reduce per-turn latency as much as possible.
+> Keep the firmware contract stable, make every turn deterministic, and stay
+> small enough to understand.
 
-## Scope
+This fork keeps the Xiaozhi Python runtime and provider ecosystem while removing
+the upstream management, mobile, and digital-human applications. It runs
+directly from source and targets a trusted, single-robot deployment.
 
-```text
-xiaozhi-desk-robot-server/
-├─ main/
-│  └─ xiaozhi-server/   # core runtime
-├─ .gitignore
-└─ LICENSE
-```
+## Status
 
-The core runtime provides:
+| Area | Current state |
+| --- | --- |
+| Product target | One local Desk Robot |
+| Conversation model | Turn-based: VAD → ASR → LLM/tools → TTS |
+| Transport | Native WebSocket + HTTP; external gateway for MQTT/UDP |
+| Configuration | Reference YAML + gitignored local override |
+| Control plane | Local Settings UI with diagnostics and Memory editor |
+| Memory | Explicit YAML Memory v2; no embeddings or vector database |
+| Provider strategy | Gemini-first development, provider-neutral core |
+| Validation | Provider benchmarks plus real-firmware smoke testing |
 
-- Xiaozhi WebSocket protocol support
-- HTTP bootstrap / OTA endpoints
-- camera / vision endpoint
-- VAD
-- interchangeable ASR providers
-- interchangeable LLM providers
-- interchangeable TTS providers
-- VLLM / vision providers
-- MCP and tool calling
-- server-side plugins
-- memory / intent modules
-- provider performance testing
+Real hardware remains the final compatibility check for audio framing, MCP,
+camera, abort, reconnect, and playback behavior.
 
-This fork is intended for a local, trusted Desk Robot deployment rather than a multi-user management platform.
+## What is included
 
-## Architecture
-
-```text
-Xiaozhi firmware
-      │
-      │ Xiaozhi protocol
-      ▼
-┌──────────────────────────────┐
-│       xiaozhi-server         │
-│                              │
-│  session / turn lifecycle    │
-│      │                       │
-│      ├─ VAD                  │
-│      ├─ ASR                  │
-│      ├─ LLM                  │
-│      ├─ MCP / tools          │
-│      ├─ vision / camera      │
-│      └─ TTS                  │
-└──────────────────────────────┘
-      │
-      ▼
-Xiaozhi firmware
-```
-
-The robot remains **turn-based**. Realtime/native-audio providers may be evaluated later, but they must not take ownership of the firmware lifecycle or break deterministic MCP/tool behavior.
-
-## Repository layout
-
-The important directory is:
+- Xiaozhi WebSocket sessions, OTA/bootstrap, camera/vision, and audio lifecycle.
+- Swappable cloud or local ASR, LLM, VLLM, TTS, memory, and intent providers.
+- Dynamic device MCP, server MCP, firmware IoT tools, and server-side plugins.
+- A local Settings UI for providers, configuration, resource usage, turn
+  diagnostics, and memory administration.
+- Explicit YAML Memory v2 with project-aware pinned context and deterministic
+  lexical recall.
+- Provider and plugin performance testers for latency comparisons.
 
 ```text
-main/xiaozhi-server/
-├─ app.py
-├─ config.yaml
-├─ requirements.txt
-├─ performance_tester.py
-├─ performance_testers/
-├─ config/
-├─ core/
-│  ├─ api/
-│  ├─ handle/
-│  ├─ providers/
-│  ├─ utils/
-│  ├─ connection.py
-│  ├─ http_server.py
-│  └─ websocket_server.py
-├─ plugins_func/
-├─ web/
-│  └─ settings/           # lightweight local settings UI
-└─ data/                 # local runtime config/data; gitignored
+Desk Robot firmware
+        │  Xiaozhi WebSocket / HTTP
+        ▼
+┌───────────────────────────────────────┐
+│            xiaozhi-server             │
+│ VAD → ASR → LLM ↔ MCP/tools → TTS    │
+│              │                        │
+│        camera / vision                │
+└───────────────────────────────────────┘
+        │  Opus audio + protocol events
+        ▼
+Desk Robot firmware
 ```
 
-Key entry points:
-
-- `app.py` — starts the core runtime.
-- `core/websocket_server.py` — Xiaozhi WebSocket server and session creation.
-- `core/http_server.py` — local HTTP server for OTA/bootstrap, vision, and settings.
-- `core/connection.py` — per-device session/orchestration.
-- `core/handle/` — protocol and turn handlers.
-- `core/providers/` — VAD, ASR, LLM, TTS, memory, intent, and vision providers.
-- `plugins_func/` — server-side function/tool plugins.
-- `performance_tester.py` — provider latency/response testing.
-- `performance_testers/` — provider and grouped plugin benchmark implementations.
-
-## Transport
-
-The standalone Python runtime directly exposes:
-
-- WebSocket: default port `8000`
-- HTTP: default port `8003`
-
-The HTTP server includes the lightweight local endpoints used for:
-
-- `/xiaozhi/ota/`
-- `/xiaozhi/ota/download/{filename}`
-- `/mcp/vision/explain`
-- `/settings/` (local requests only by default)
-
-MQTT + UDP remains a supported Xiaozhi deployment path through the external Xiaozhi MQTT gateway. The gateway is **not bundled in this repository**.
-
-## Local installation
-
-This project is intended to run directly from source. Docker is not required.
+## Quick start
 
 ### Requirements
 
-- Python 3.10
+- Python `3.10` (`3.10.14` is pinned in `.tool-versions`)
 - FFmpeg
 - Opus / libopus
-- network access for any configured cloud providers
+- Provider credentials or the required local model runtime
 
 On macOS:
 
@@ -132,351 +79,159 @@ On macOS:
 brew install ffmpeg opus
 ```
 
-Create a Python 3.10 environment, then:
+Install and start:
 
 ```bash
-cd main/xiaozhi-server
+git clone https://github.com/hudrucan/xiaozhi-desk-robot-server.git
+cd xiaozhi-desk-robot-server/main/xiaozhi-server
 
 python3.10 -m venv .venv
 source .venv/bin/activate
-
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-```
 
-If a dependency does not install cleanly in a plain virtual environment, use a Python 3.10 Conda environment instead. The upstream dependency set includes native/audio/ML packages.
-
-## Configuration
-
-`data/.config.yaml` is required by the current runtime and is intended for machine-local overrides.
-
-```bash
-cd main/xiaozhi-server
 mkdir -p data
 touch data/.config.yaml
+python app.py
 ```
 
-Do **not** put API keys directly into committed files.
+`data/.config.yaml` is required, may initially be empty, and is gitignored. Add
+provider selections, model names, endpoints, and secrets there—never in the
+committed `config.yaml`.
 
-Configuration is merged with `config.yaml`, so the local file only needs the values you want to override.
+### Default endpoints
 
-Typical selections:
+| Service | URL |
+| --- | --- |
+| WebSocket | `ws://<host>:8000/xiaozhi/v1/` |
+| OTA/bootstrap | `http://<host>:8003/xiaozhi/ota/` |
+| Vision | `http://<host>:8003/mcp/vision/explain` |
+| Settings | `http://127.0.0.1:8003/settings/` |
 
-```yaml
-selected_module:
-  VAD: SileroVAD
-  ASR: OpenAIASR
-  LLM: OpenAILLM
-  VLLM: OpenAIVLLM
-  TTS: EdgeTTS
-  Memory: nomem
-  Intent: function_call
+Settings accepts loopback requests by default. Enable
+`server.settings.allow_remote` only on a trusted LAN. Configuration edits are
+validated, written atomically to `data/.config.yaml`, and normally require a
+restart; Memory edits apply to the next turn immediately.
+
+## Providers
+
+Provider selection lives under `selected_module` in YAML.
+
+| Family | Implementations in this fork |
+| --- | --- |
+| VAD | Silero ONNX |
+| ASR | Gemini, OpenAI-compatible, Sherpa ONNX |
+| LLM | Gemini, OpenAI-compatible, llama.cpp |
+| Vision | Gemini/OpenAI-compatible, llama.cpp |
+| TTS | Gemini, Edge, Sherpa ONNX, VieNeu, OpenAI-compatible, custom HTTP |
+| Memory | Disabled, short-summary legacy, explicit YAML v2 |
+| Intent | Function calling, intent LLM, disabled |
+
+The committed [`config.yaml`](main/xiaozhi-server/config.yaml) is the complete
+reference for current options. Bundled and optional speech assets are documented
+in [`models/README.md`](main/xiaozhi-server/models/README.md).
+
+## Memory v2
+
+Select `mem_local_explicit` to store durable records in
+`data/.memory.yaml`. Memory changes only through explicit tool/UI actions; normal
+conversation and disconnects do not create records or invoke a separate memory
+LLM.
+
+Recall stays local and deterministic:
+
+- global pinned records load every turn;
+- project-pinned records load for the active project;
+- dynamic recall uses the current message, three recent turns, aliases, exact
+  metadata matches, light typo fallback, importance, and recency;
+- inactive and superseded records are excluded before ranking;
+- top-K, minimum score, and character budgets bound prompt growth.
+
+Legacy YAML entries containing only `content` are normalized automatically.
+
+## Tools and MCP
+
+Firmware-advertised MCP tools remain authoritative. The server also supports
+external/server MCP and these built-in plugins:
+
+- local date/time;
+- Tavily or Metaso web search;
+- Open-Meteo weather and air quality;
+- explicit local-memory management.
+
+Tools are enabled by configuration. Gemini can optionally use native Google
+Search while other providers retain the configured `web_search` plugin.
+
+## Local models
+
+The repository includes the Silero VAD model plus selected Vietnamese Sherpa
+ASR/TTS assets. Sherpa and VieNeu Python runtimes remain optional:
+
+```bash
+pip install -r requirements-optional.txt
 ```
 
-These are the safe reference selections in committed `config.yaml`. Their API
-keys, model names, voices, and endpoints are placeholders; override them in
-`data/.config.yaml` before starting the server. Local Sherpa ASR/TTS providers
-are also available when their optional runtime and model files are installed.
-
-For local vision, select `LlamaCppVLLM`. Its managed Qwen2.5-VL process uses a
-separate port from the text LLM, starts lazily on the first camera request, is
-reused by later image requests, and stops with the HTTP server. The first image
-request therefore includes model loading time. Override `response_language` in
-`data/.config.yaml` for the deployment language. If the selected local LLM uses
-the same model source and a compatible context/projector configuration, vision
-reuses that live llama.cpp endpoint instead of loading a second model process.
-
-For opt-in local memory, select `mem_local_explicit`. It stores compact facts in
-`data/.memory.yaml` only when the user explicitly asks the assistant to remember
-or forget something. It does not summarize conversations on disconnect or call
-an additional memory LLM. With `recall_enabled: true`, a bounded lexical lookup
-automatically supplies only facts relevant to the current request. Set it to
-`false` to disable recall while keeping explicitly saved facts on disk.
-
-### Search and weather tools
-
-The built-in `get_current_datetime` tool reads the server's local clock and is
-enabled by default. It does not require provider configuration or an API key.
-
-Server plugins are disabled until their provider-specific configuration is set
-in `data/.config.yaml`. A typical Vietnamese deployment can use:
-
-```yaml
-plugins:
-  web_search:
-    provider: tavily
-    api_key: your_tavily_api_key
-    max_results: 5
-    search_depth: advanced
-    include_answer: advanced
-    country: vietnam
-  get_weather:
-    provider: open_meteo
-    default_location: Ho Chi Minh City
-    location_aliases:
-      TP.HCM: Ho Chi Minh City
-      TPHCM: Ho Chi Minh City
-    language: vi
-    preferred_country_code: VN
-    forecast_days: 7
-    cache_ttl_seconds: 1800
-  get_air_quality:
-    provider: open_meteo
-    default_location: Ho Chi Minh City
-    language: vi
-    preferred_country_code: VN
-    forecast_hours: 24
-    cache_ttl_seconds: 1800
-```
-
-Open-Meteo does not require an API key. `web_search` supports Tavily and Metaso;
-only configure options accepted by the selected provider. Weather location
-aliases are exact and case-insensitive; use them for local abbreviations that
-Open-Meteo's geocoder does not resolve reliably.
-
-Set the top-level `tool_error_response` and `tool_timeout_response` values in
-`data/.config.yaml` to keep spoken tool failures in the deployment language.
-Detailed provider and device errors remain in the server log.
-
-Gemini 3 models can use Google's native search grounding instead of the
-`web_search` plugin:
-
-```yaml
-LLM:
-  GeminiLLM:
-    native_google_search: true
-```
-
-Native Google Search applies only to Gemini. Keep `plugins.web_search`
-configured when other LLM providers need a search tool; Gemini excludes the
-custom `web_search` tool while native grounding is enabled.
-
-### Local LLM with llama.cpp
-
-The dedicated llama.cpp provider runs a local OpenAI-compatible server,
-including streaming and function calls. Install the lightweight runtime:
+For local text or vision inference with managed llama.cpp:
 
 ```bash
 brew install llama.cpp
 ```
 
-Then select it in `data/.config.yaml`:
+Select `LlamaCppLLM` or `LlamaCppVLLM` in the local override. Managed processes
+start only when selected, reuse prompt/model state, and stop with the server.
 
-```yaml
-selected_module:
-  LLM: LlamaCppLLM
+## Measure latency
 
-LLM:
-  LlamaCppLLM:
-    type: llama_cpp
-    api_key: local
-    model_name: qwen3:4b
-    temperature: 0.6
-    top_p: 0.95
-    max_history_messages: 8
-    process:
-      managed: true
-      executable: llama-server
-      hf_model: Qwen/Qwen3-4B-GGUF:Q4_K_M
-      host: 127.0.0.1
-      port: 6000
-      context_size: 8192
-      gpu_layers: all
-      parallel: 1
-      cache_reuse: 64
-      reasoning: "off"
-      startup_timeout: 900
-      shutdown_timeout: 10
-      log_file: tmp/llama-server.log
-      sleep_idle_seconds: 600
-```
-
-With `managed: true`, `llama-server` starts only when this provider is selected
-and stops during normal application shutdown or configuration restart. Set
-`managed: false` and configure `base_url` to connect to an externally managed
-llama.cpp endpoint instead. For a managed server, `base_url` is derived from
-`process.host` and `process.port`.
-After `sleep_idle_seconds` expires, the next inference request reloads the model
-and rebuilds the prompt cache, so that first response has cold-start latency.
-The bounded history and cache reuse settings keep the repeated MCP/tool schemas
-from forcing a full prompt prefill on every conversational turn.
-For the single-device deployment, `config/device_mcp_tools.json` seeds the known
-firmware tool inventory. llama.cpp prewarms that stable prefix before opening the
-WebSocket listener. The live `tools/list` response is still authoritative: an
-order-independent schema fingerprint keeps the warm cache when it matches and
-writes changed schemas to `data/.device_mcp_tools.json` for the next startup.
-This cache is inactive for cloud LLM providers; they continue to use only the
-inventory reported by the connected firmware.
-Use `model_path` instead of `hf_model` to avoid network access and load an
-existing GGUF file. Keep the `web_search` plugin configured if this provider
-should be able to search the web; native Google Search grounding remains
-Gemini-only.
-
-## Run
+Run the benchmark for the provider selected in the merged configuration:
 
 ```bash
 cd main/xiaozhi-server
-source .venv/bin/activate
-python app.py
-```
 
-Default local endpoints:
+python performance_tester.py asr
+python performance_tester.py llm
+python performance_tester.py tts
+python performance_tester.py vllm
 
-```text
-WebSocket  ws://<host>:8000/xiaozhi/v1/
-HTTP       http://<host>:8003/
-OTA        http://<host>:8003/xiaozhi/ota/
-Vision     http://<host>:8003/mcp/vision/explain
-Settings   http://127.0.0.1:8003/settings/
-```
-
-Point the firmware OTA/bootstrap URL at the local HTTP endpoint when testing the standalone server.
-The Settings UI writes local overrides to `data/.config.yaml` and requires a
-restart after changes. It accepts loopback requests only unless
-`server.settings.allow_remote` is explicitly enabled. Its overview samples the
-server process tree, so CPU, RSS, and unique memory include managed llama.cpp
-children. The UI separates overview, diagnostics, providers, and configuration
-into focused pages. Resource sampling runs only while Overview is visible;
-bounded turn and tool history is polled only from Diagnostics; configuration
-pages do not poll runtime status. The Memory page loads on demand and can edit
-the active `mem_local_explicit` provider without a restart. Diagnostics shows
-recent turn timings, highlights slow LLM, tool, TTS, and audio stages, and
-includes firmware MCP dispatch/response stages. Bounded input, output, arguments,
-and result previews stay collapsed under each turn by default. It also tracks
-active robot connections and possible device restarts detected when
-OTA bootstrap arrives while the previous WebSocket is active or within 30 seconds
-of its disconnect. Duplicate restart events for the same device and reason are
-suppressed for 45 seconds. These diagnostics are bounded and kept in memory
-only. The reset reason is resolved from the `Reset-Reason` header, then the
-`Boot-Reason` header, then JSON `system.reset_reason`, `reset_reason`, or
-`boot_reason`. NVIDIA VRAM is reported when `nvidia-smi` is available;
-per-process Metal usage is shown as unavailable because macOS does not expose
-it through an unprivileged, lightweight interface.
-
-Vision responses include `X-Xiaozhi-Request-Id`, `X-Xiaozhi-Vision-Outcome`,
-and `Server-Timing` headers so firmware logs can correlate a camera request with
-the matching server request and latency without changing the response body. A
-restart event also includes the most recent vision request duration and payload
-sizes when the requests occur close together.
-
-## Provider strategy
-
-The provider architecture is a feature, not bloat.
-
-The project should remain able to swap and benchmark:
-
-- ASR independently
-- LLM independently
-- TTS independently
-- vision models independently
-
-Current development priority is **Gemini first** where it provides the best cost/quality tradeoff, while keeping the architecture provider-neutral.
-
-Gemini Live/native audio is optional. It is not a requirement for the core architecture.
-
-## Latency
-
-The primary latency target is **time per Xiaozhi turn**, not continuous full-duplex conversation.
-
-Optimize the critical path:
-
-```text
-end of speech
-→ ASR
-→ LLM first decision
-→ optional MCP/tool calls
-→ LLM continuation
-→ TTS first audio
-→ playback
-```
-
-Useful areas to measure:
-
-- end-of-speech → ASR result
-- ASR result → first LLM token/tool call
-- MCP call duration
-- tool result → first response token
-- response text → first TTS audio
-- end-to-end turn latency
-
-Use:
-
-```bash
-cd main/xiaozhi-server
-python performance_tester.py
-
-# Or run one active provider directly.
-python performance_tester.py asr  # or llm, tts, vllm
-
-# Benchmark a server plugin without running the LLM.
 python performance_tester.py plugins web_search
 python performance_tester.py plugins get_weather
 python performance_tester.py plugins get_air_quality
 ```
 
-ASR, LLM, TTS, and VLLM benchmarks run the provider selected in the merged
-configuration. Plugin benchmarks call the provider configured under `plugins`
-directly, so they measure the external lookup without LLM continuation or the
-plugin result cache. Set
-`PERF_RUNS`, `PERF_TIMEOUT_SECONDS`, `PERF_ASR_AUDIO`, `PERF_LLM_PROMPT`, or
-`PERF_TTS_TEXT` to override its small default workload.
+Runtime Diagnostics separately keeps a bounded in-memory timeline of completed
+turns, tool calls, device events, and latency stages.
 
-The LLM benchmark samples prompts from `module_test.test_sentences` using a
-reproducible shuffle. Set `PERF_LLM_SEED` for a different order or
-`PERF_LLM_PROMPT` for one fixed prompt. The selected provider and model always
-come from the merged server configuration. When llama.cpp prewarming is enabled,
-the benchmark reports prewarm time separately, then sends the same cached device
-and server-plugin tool schemas during each measured sample.
+## Repository map
 
-For plugin benchmarks, use `PERF_WEB_SEARCH_QUERY`, `PERF_WEATHER_LOCATION`, or
-`PERF_AIR_QUALITY_LOCATION` to run one fixed input. Result logging defaults to a
-500-character preview; set the corresponding `*_PREVIEW_CHARS=0` variable for
-the complete provider response. The corresponding `*_SEED` variables control
-reproducible sampling from the query or location lists under `module_test`.
+```text
+main/xiaozhi-server/
+├── app.py                  # application entrypoint
+├── config.yaml             # safe reference configuration
+├── core/
+│   ├── connection.py       # per-connection turn orchestration
+│   ├── handle/             # Xiaozhi protocol handlers
+│   ├── providers/          # replaceable AI/tool providers
+│   └── api/                # OTA, vision, settings, memory APIs
+├── plugins_func/           # server-side tools
+├── web/settings/           # lightweight local control plane
+├── performance_testers/    # provider/plugin benchmarks
+└── models/                 # bundled and local model assets
+```
 
-## MCP and Desk Robot behavior
+Runtime state belongs under `main/xiaozhi-server/data/` and logs/generated audio
+under `main/xiaozhi-server/tmp/`; both are ignored by Git.
 
-Device-side MCP is a core requirement for this fork.
+## Scope
 
-The server must preserve deterministic turn behavior for robot features such as:
+This project intentionally does not include `manager-api`, `manager-web`,
+`manager-mobile`, or `digital-human`. It is not an enterprise management stack,
+does not use Docker as the default path, and does not turn the firmware into a
+continuous full-duplex assistant.
 
-- movement
-- camera
-- sensors
-- display / emotion state
-- games and turn-based interactions
-- other firmware-advertised tools
+## License and origin
 
-Do not replace device MCP with server-specific hard-coded robot behavior unless there is a clear reason to do so.
+MIT licensed. See [`LICENSE`](LICENSE).
 
-## Current development priorities
-
-1. Run the trimmed core server locally without Docker.
-2. Verify end-to-end compatibility with the Desk Robot firmware.
-3. Stabilize voice → ASR → LLM → MCP → TTS turns.
-4. Measure latency before refactoring.
-5. Configure and optimize Gemini-first provider paths.
-6. Benchmark alternative ASR and TTS providers.
-7. Clean stale upstream management references from the core only when they are proven unused.
-8. Keep the lightweight Desk Robot settings UI aligned with runtime options.
-
-Future work may include direct raw-text input and native-audio providers, but those are not required for the initial stable server.
-
-## Removed upstream applications
-
-The following upstream applications were intentionally removed:
-
-- `manager-api`
-- `manager-web`
-- `manager-mobile`
-- `digital-human`
-
-Do not restore them as dependencies of the Desk Robot runtime.
-
-Some legacy references to these applications may still exist inside inherited core code or ignore rules. They are cleanup targets, not evidence that the removed applications are required.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
-
-This repository retains code derived from `xinnan-tech/xiaozhi-esp32-server`; preserve the applicable copyright and license notices.
+Derived from
+[`xinnan-tech/xiaozhi-esp32-server`](https://github.com/xinnan-tech/xiaozhi-esp32-server).
+Please preserve applicable upstream notices and review each downloaded model's
+own license before redistribution.

@@ -1,21 +1,42 @@
-# Local speech models
+# Local speech assets
 
-Local ASR and TTS model files are runtime assets and are not committed to Git.
+This directory contains the local model assets currently bundled with the
+single-robot server:
 
-Install the optional Sherpa runtime from the server directory:
+| Path | Runtime |
+| --- | --- |
+| `vad/silero_vad.onnx` | Default Silero VAD |
+| `asr/sherpa/vi-zipformer-int8/` | Vietnamese Sherpa transducer ASR |
+| `tts/sherpa/vi-vivos-x-low/` | Vietnamese Sherpa VITS TTS |
+
+Cloud providers do not use these files. To enable the bundled Sherpa models,
+install the optional local-speech dependencies:
 
 ```bash
 pip install -r requirements-optional.txt
 ```
 
-Download compatible models from the upstream sources:
+Then add local overrides in `data/.config.yaml`:
 
-- [Sherpa ONNX source](https://github.com/k2-fsa/sherpa-onnx)
+```yaml
+selected_module:
+  ASR: SherpaASR
+  TTS: SherpaTTS
 
-Keep ASR and TTS assets under their respective provider directories, then set
-the model paths and filenames in `data/.config.yaml`. The committed
-`config.yaml` intentionally contains placeholders and does not select a
-specific model.
+ASR:
+  SherpaASR:
+    model_dir: models/asr/sherpa/vi-zipformer-int8
 
-Sherpa ONNX is Apache-2.0 licensed. Each downloaded model may use a different
-license; retain and review its accompanying model card.
+TTS:
+  SherpaTTS:
+    language: vi
+    model_dir: models/tts/sherpa/vi-vivos-x-low
+    number_language: vi
+```
+
+Additional Sherpa model directories belong under `models/asr/sherpa/` or
+`models/tts/sherpa/` and are ignored by Git unless deliberately force-added as
+bundled defaults. Point the matching provider configuration at the new directory.
+
+Model licenses may differ from the server's MIT license. Keep the accompanying
+model card and verify redistribution terms before replacing or adding assets.
