@@ -4,6 +4,7 @@ import {
 } from "./configuration.js";
 import { renderDiagnostics } from "./diagnostics.js";
 import { initializeMemory, loadMemory, renderMemory } from "./memory.js";
+import { initializePushTts } from "./push_tts.js";
 import {
   renderOverview,
   renderResources,
@@ -239,5 +240,6 @@ $("#restartButton").addEventListener("click", restartServer);
 $("#restartNowButton").addEventListener("click", restartServer);
 initializeConfiguration(updateDirtyState);
 initializeMemory();
+initializePushTts();
 initializeNavigation();
 loadSettings();

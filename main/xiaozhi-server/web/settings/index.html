@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=13" />
+    <link rel="stylesheet" href="/settings/styles.css?v=20" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -159,6 +159,37 @@
               <div class="resource-grid" id="transportHealth"></div>
             </div>
             <div class="device-events" id="deviceEvents"></div>
+            <article class="panel push-tts-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Persistent WebSocket debug</p>
+                  <h3>Push TTS</h3>
+                  <p class="field-help">Generate a temporary voice clip and push it to a connected robot.</p>
+                </div>
+                <span class="push-tts-mode"><i></i>Live connection only</span>
+              </div>
+              <form id="pushTtsForm" class="push-tts-form">
+                <label>
+                  <span>Connected robot</span>
+                  <select id="pushTtsDevice" required>
+                    <option value="">No persistent-WebSocket robot connected</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Notification text</span>
+                  <textarea id="pushTtsText" maxlength="1000" required placeholder="Miao Miao test notification."></textarea>
+                </label>
+                <div class="push-tts-actions">
+                  <button class="button primary" id="pushTtsButton" type="submit" aria-label="Send to robot" title="Send to robot" disabled>
+                    <svg class="push-tts-send-icon" aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="M3.6 4.1 21 12 3.6 19.9l1.6-6.1 9.1-1.8-9.1-1.8-1.6-6.1Z" />
+                    </svg>
+                    <span class="push-tts-spinner" aria-hidden="true"></span>
+                  </button>
+                </div>
+                <p class="push-tts-status muted" id="pushTtsStatus">Connect a persistent-WebSocket robot to enable Push TTS.</p>
+              </form>
+            </article>
             <div class="turn-feed" id="turnFeed"></div>
           </section>
 
@@ -271,6 +302,6 @@
       </div>
     </div>
 
-    <script type="module" src="/settings/app.js?v=13"></script>
+    <script type="module" src="/settings/app.js?v=20"></script>
   </body>
 </html>

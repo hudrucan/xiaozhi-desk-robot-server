@@ -7,6 +7,7 @@ import {
   resourceCard,
   state,
 } from "./shared.js";
+import { renderPushTtsDevices } from "./push_tts.js";
 
 const DEFAULT_THRESHOLDS_MS = {
   llm_first: 5000,
@@ -160,6 +161,7 @@ export function renderDiagnostics() {
   const turns = runtime.turns || [];
   const events = runtime.device_events || [];
   const connections = runtime.connections || {};
+  renderPushTtsDevices();
   const connection = connections.items?.[0] || null;
   const recentTurns = turns.slice(0, 20);
   const flaggedTurns = recentTurns.filter((turn) => turnInsights(turn).length > 0).length;

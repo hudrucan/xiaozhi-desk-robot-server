@@ -6,6 +6,10 @@ from aiohttp import web
 
 from config.config_loader import get_project_dir
 from core.api.base_handler import BaseHandler
+from core.notification_audio import (
+    PushTtsError,
+    TemporaryNotificationAudioService,
+)
 from core.utils.config_editor import ConfigEditor
 from core.utils.resource_monitor import ResourceMonitor
 from core.utils.runtime_diagnostics import runtime_diagnostics
@@ -21,6 +25,7 @@ class SettingsHandler(BaseHandler):
         settings_config = config.get("server", {}).get("settings", {})
         self.allow_remote = bool(settings_config.get("allow_remote", False))
         self.restart_required = False
+        self.notification_audio = TemporaryNotificationAudioService(config)
 
     @staticmethod
     def _disable_cache(response):
@@ -88,6 +93,7 @@ class SettingsHandler(BaseHandler):
             "diagnostics.js",
             "favicon.svg",
             "memory.js",
+            "push_tts.js",
             "resources.js",
             "shared.js",
             "styles.css",
@@ -148,3 +154,47 @@ class SettingsHandler(BaseHandler):
         self._require_json(request)
         asyncio.get_running_loop().call_later(0.5, self.request_restart)
         return web.json_response({"restarting": True})
+
+    async def handle_push_tts(self, request):
+        self._require_access(request)
+        self._require_json(request)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise PushTtsError("Request body must be an object")
+            result = await self.notification_audio.push_tts(
+                body.get("device_id"), body.get("text")
+            )
+        except PushTtsError as error:
+            return self._disable_cache(
+                web.json_response({"error": str(error)}, status=error.status)
+            )
+        except (ValueError, TypeError) as error:
+            return self._disable_cache(
+                web.json_response({"error": str(error)}, status=400)
+            )
+
+        return self._disable_cache(
+            web.json_response(
+                {
+                    "success": True,
+                    "device_id": result["device_id"],
+                    "audio_url": result["audio_url"],
+                    "message": "Audio generated and notify pushed; playback is not confirmed.",
+                }
+            )
+        )
+
+    async def handle_notify_audio(self, request):
+        # Deliberately not protected by the Settings localhost policy: the
+        # selected ESP32 must be able to download this opaque, temporary URL.
+        path = self.notification_audio.audio_path(request.match_info["token"])
+        if path is None:
+            raise web.HTTPNotFound(text="Notification audio not found or expired")
+        response = web.FileResponse(path)
+        response.content_type = "audio/ogg"
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+    def close(self):
+        self.notification_audio.close()

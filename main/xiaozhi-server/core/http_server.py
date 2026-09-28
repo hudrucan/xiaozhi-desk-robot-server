@@ -90,6 +90,14 @@ class SimpleHttpServer:
                                 "/api/settings/restart",
                                 self.settings_handler.handle_restart,
                             ),
+                            web.post(
+                                "/api/settings/push-tts",
+                                self.settings_handler.handle_push_tts,
+                            ),
+                            web.get(
+                                "/api/notify/audio/{token}.ogg",
+                                self.settings_handler.handle_notify_audio,
+                            ),
                             web.get(
                                 "/api/settings/memory",
                                 self.memory_handler.handle_get,
@@ -140,3 +148,5 @@ class SimpleHttpServer:
             self.vision_handler.close()
             if runner is not None:
                 await runner.cleanup()
+            if self.settings_handler is not None:
+                self.settings_handler.close()

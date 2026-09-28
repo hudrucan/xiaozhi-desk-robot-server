@@ -39,6 +39,15 @@ class ConnectedDeviceRegistry:
             return False
         return await handler.send_json(payload)
 
+    async def send_if_current(
+        self, device_id: str, expected_handler, payload: dict[str, Any]
+    ) -> bool:
+        """Send only if the registry still points at the selected handler."""
+        async with self._lock:
+            if self._handlers.get(device_id) is not expected_handler:
+                return False
+            return await expected_handler.send_json(payload)
+
 
 connected_devices = ConnectedDeviceRegistry()
 
