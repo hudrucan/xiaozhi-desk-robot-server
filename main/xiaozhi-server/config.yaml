@@ -345,6 +345,20 @@ ASR:
     num_threads: 2
     sentence_case: true
     output_dir: tmp/
+  Qwen3ASR:
+    type: sherpa
+    model_type: qwen3_asr
+    model_dir: models/asr/sherpa/qwen3-asr-0.6b-int8
+    conv_frontend: conv_frontend.onnx
+    encoder: encoder.int8.onnx
+    decoder: decoder.onnx
+    tokenizer: tokenizer
+    num_threads: 2
+    max_total_len: 512
+    max_new_tokens: 128
+    provider: cpu
+    sentence_case: true
+    output_dir: tmp/
 
 VAD:
   SileroVAD:
