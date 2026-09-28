@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=20" />
+    <link rel="stylesheet" href="/settings/styles.css?v=23" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -187,6 +187,72 @@
                     <span class="push-tts-spinner" aria-hidden="true"></span>
                   </button>
                 </div>
+                <div class="push-tts-options">
+                  <label>
+                    <span>Reaction</span>
+                    <select id="pushTtsReaction">
+                      <option value="">None</option>
+                      <option value="acknowledge">Acknowledge</option>
+                      <option value="success">Success</option>
+                      <option value="celebrate">Celebrate</option>
+                      <option value="thinking">Thinking</option>
+                      <option value="curious">Curious</option>
+                      <option value="confused">Confused</option>
+                      <option value="warning">Warning</option>
+                      <option value="error">Error</option>
+                      <option value="startled">Startled</option>
+                      <option value="sleepy">Sleepy</option>
+                      <option value="nope">Nope</option>
+                      <option value="attention">Attention</option>
+                    </select>
+                  </label>
+                  <label id="pushTtsEmotionField">
+                    <span>Emotion</span>
+                    <select id="pushTtsEmotion">
+                      <option value="">None</option>
+                      <option value="neutral">Neutral</option>
+                      <option value="happy">Happy</option>
+                      <option value="bored">Bored</option>
+                      <option value="laughing">Laughing</option>
+                      <option value="funny">Funny</option>
+                      <option value="sad">Sad</option>
+                      <option value="angry">Angry</option>
+                      <option value="crying">Crying</option>
+                      <option value="loving">Loving</option>
+                      <option value="embarrassed">Embarrassed</option>
+                      <option value="surprised">Surprised</option>
+                      <option value="shocked">Shocked</option>
+                      <option value="thinking">Thinking</option>
+                      <option value="winking">Winking</option>
+                      <option value="cool">Cool</option>
+                      <option value="relaxed">Relaxed</option>
+                      <option value="delicious">Delicious</option>
+                      <option value="kissy">Kissy</option>
+                      <option value="confident">Confident</option>
+                      <option value="sleepy">Sleepy</option>
+                      <option value="silly">Silly</option>
+                      <option value="confused">Confused</option>
+                      <option value="suspicious">Suspicious</option>
+                      <option value="shake">Shake</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Effect ms</span>
+                    <input id="pushTtsDuration" type="number" min="250" max="30000" step="250" value="3500" />
+                  </label>
+                  <label>
+                    <span>Text hold ms</span>
+                    <input id="pushTtsHold" type="number" min="0" max="10000" step="250" value="2500" />
+                  </label>
+                  <label class="push-tts-chime">
+                    <span>Chime</span>
+                    <input id="pushTtsChime" type="checkbox" checked />
+                  </label>
+                  <label>
+                    <span>OLED text</span>
+                    <input id="pushTtsOled" type="text" maxlength="48" placeholder="BUILD OK" />
+                  </label>
+                </div>
                 <p class="push-tts-status muted" id="pushTtsStatus">Connect a persistent-WebSocket robot to enable Push TTS.</p>
               </form>
             </article>
@@ -302,6 +368,6 @@
       </div>
     </div>
 
-    <script type="module" src="/settings/app.js?v=20"></script>
+    <script type="module" src="/settings/app.js?v=23"></script>
   </body>
 </html>

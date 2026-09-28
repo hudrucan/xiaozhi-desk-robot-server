@@ -15,8 +15,57 @@ from core.utils.util import get_local_ip
 
 TAG = __name__
 MAX_TEXT_LENGTH = 1000
+MAX_OLED_TEXT_LENGTH = 48
 DEFAULT_AUDIO_TTL_SECONDS = 600
 _SAFE_EXTENSION = re.compile(r"^[a-z0-9]{1,8}$")
+PRESENTATION_FIELDS = {
+    "display_hold_ms",
+    "reaction",
+    "emotion",
+    "presentation_duration_ms",
+    "chime",
+    "oled_text",
+}
+SUPPORTED_REACTIONS = {
+    "acknowledge",
+    "success",
+    "celebrate",
+    "thinking",
+    "curious",
+    "confused",
+    "warning",
+    "error",
+    "startled",
+    "sleepy",
+    "nope",
+    "attention",
+}
+SUPPORTED_EMOTIONS = {
+    "neutral",
+    "happy",
+    "bored",
+    "laughing",
+    "funny",
+    "sad",
+    "angry",
+    "crying",
+    "loving",
+    "embarrassed",
+    "surprised",
+    "shocked",
+    "thinking",
+    "winking",
+    "cool",
+    "relaxed",
+    "delicious",
+    "kissy",
+    "confident",
+    "sleepy",
+    "silly",
+    "confused",
+    "suspicious",
+    "shake",
+}
 
 
 class PushTtsError(Exception):
@@ -55,8 +104,66 @@ class TemporaryNotificationAudioService:
             )
         return device_id.strip(), normalized_text
 
-    async def push_tts(self, device_id, text):
+    @staticmethod
+    def validate_presentation(options):
+        if not isinstance(options, dict):
+            raise PushTtsError("presentation options must be an object")
+        validated = {}
+
+        def bounded_integer(name, minimum, maximum):
+            if name not in options:
+                return
+            value = options[name]
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise PushTtsError(f"{name} must be an integer")
+            if not minimum <= value <= maximum:
+                raise PushTtsError(
+                    f"{name} must be between {minimum} and {maximum}"
+                )
+            validated[name] = value
+
+        bounded_integer("display_hold_ms", 0, 10000)
+        bounded_integer("presentation_duration_ms", 250, 30000)
+
+        if "chime" in options:
+            if not isinstance(options["chime"], bool):
+                raise PushTtsError("chime must be a boolean")
+            validated["chime"] = options["chime"]
+
+        reaction = options.get("reaction", "")
+        if not isinstance(reaction, str):
+            raise PushTtsError("reaction must be a string")
+        reaction = reaction.strip()
+        if reaction and reaction not in SUPPORTED_REACTIONS:
+            raise PushTtsError("reaction is not supported")
+        if reaction:
+            validated["reaction"] = reaction
+        else:
+            emotion = options.get("emotion", "")
+            if not isinstance(emotion, str):
+                raise PushTtsError("emotion must be a string")
+            emotion = emotion.strip()
+            if emotion and emotion not in SUPPORTED_EMOTIONS:
+                raise PushTtsError("emotion is not supported")
+            if emotion:
+                validated["emotion"] = emotion
+
+        oled_text = options.get("oled_text", "")
+        if not isinstance(oled_text, str):
+            raise PushTtsError("oled_text must be a string")
+        oled_text = oled_text.strip()
+        if len(oled_text) > MAX_OLED_TEXT_LENGTH:
+            raise PushTtsError(
+                f"oled_text must not exceed {MAX_OLED_TEXT_LENGTH} characters"
+            )
+        if oled_text:
+            validated["oled_text"] = oled_text
+
+        return validated
+
+    async def push_tts(self, device_id, text, presentation=None):
         device_id, text = self.validate_input(device_id, text)
+        presentation = self.validate_presentation(presentation or {})
         handler = await connected_devices.get(device_id)
         if handler is None or handler.stop_event.is_set():
             raise PushTtsError("The selected robot is not connected", status=404)
@@ -78,12 +185,23 @@ class TemporaryNotificationAudioService:
 
         token = await self._generate_ogg(handler.tts, text)
         try:
+            if handler.stop_event.is_set() or not handler.persistent_websocket:
+                raise PushTtsError(
+                    "The robot connection changed while audio was being generated",
+                    status=409,
+                )
+            if handler.client_listening or handler.has_active_turn_metrics():
+                raise PushTtsError(
+                    "The selected robot became busy while audio was being generated",
+                    status=409,
+                )
             audio_url = self._build_audio_url(handler, token)
             payload = {
                 "type": "notify",
                 "audio_url": audio_url,
                 "subtitles": [{"start_ms": 0, "text": text}],
             }
+            payload.update(presentation)
             # Deliver through the registry only if this is still the exact
             # persistent handler whose active TTS provider generated the file.
             if not await connected_devices.send_if_current(

@@ -7,6 +7,7 @@ from aiohttp import web
 from config.config_loader import get_project_dir
 from core.api.base_handler import BaseHandler
 from core.notification_audio import (
+    PRESENTATION_FIELDS,
     PushTtsError,
     TemporaryNotificationAudioService,
 )
@@ -162,8 +163,13 @@ class SettingsHandler(BaseHandler):
             body = await request.json()
             if not isinstance(body, dict):
                 raise PushTtsError("Request body must be an object")
+            presentation = {
+                key: body[key]
+                for key in PRESENTATION_FIELDS
+                if key in body
+            }
             result = await self.notification_audio.push_tts(
-                body.get("device_id"), body.get("text")
+                body.get("device_id"), body.get("text"), presentation
             )
         except PushTtsError as error:
             return self._disable_cache(
