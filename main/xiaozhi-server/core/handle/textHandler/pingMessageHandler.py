@@ -4,6 +4,7 @@ from typing import Dict, Any
 
 from core.handle.textMessageHandler import TextMessageHandler
 from core.handle.textMessageType import TextMessageType
+from core.utils.runtime_diagnostics import runtime_diagnostics
 
 TAG = __name__
 
@@ -25,13 +26,15 @@ class PingMessageHandler(TextMessageHandler):
         """
         # 检查是否启用了WebSocket心跳功能
         enable_websocket_ping = conn.config.get("enable_websocket_ping", False)
-        if not enable_websocket_ping:
+        if not enable_websocket_ping and not conn.persistent_websocket:
             conn.logger.debug("WebSocket heartbeat is disabled; ignoring PING message")
             return
 
         try:
             conn.logger.debug("Received PING message; sending PONG response")
-            conn.last_activity_time = time.time() * 1000
+            conn.last_transport_activity_time = time.time() * 1000
+            if conn.persistent_websocket:
+                runtime_diagnostics.record_heartbeat(conn.session_id)
             # 构造PONG响应消息
             pong_message = {
                 "type": "pong",

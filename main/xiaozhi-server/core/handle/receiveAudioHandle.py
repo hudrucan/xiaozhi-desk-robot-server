@@ -27,7 +27,8 @@ async def handleAudioMessage(conn: "ConnectionHandler", pcm_frame):
         if conn.client_is_speaking and conn.client_listen_mode != "manual":
             await handleAbortMessage(conn)
     # 设备长时间空闲检测，用于say goodbye
-    await no_voice_close_connect(conn, have_voice)
+    if await no_voice_close_connect(conn, have_voice):
+        return
     # 接收音频
     await conn.asr.receive_audio(conn, pcm_frame, have_voice)
 
@@ -39,6 +40,11 @@ async def resume_vad_detection(conn: "ConnectionHandler"):
 
 
 async def startToChat(conn: "ConnectionHandler", text, check_wakeup_word=True):
+    # Once an input has been accepted, a persistent client must explicitly
+    # start a new listening turn before more binary audio can open ASR again.
+    if conn.persistent_websocket:
+        conn.client_listening = False
+
     if not conn.has_active_turn_metrics():
         conn.start_turn_metrics("text")
         conn.mark_turn_metric("input_ready")
@@ -120,7 +126,7 @@ async def process_pending_typed_input_if_ready(conn: "ConnectionHandler") -> boo
 async def no_voice_close_connect(conn: "ConnectionHandler", have_voice):
     if have_voice:
         conn.last_activity_time = time.time() * 1000
-        return
+        return False
     # 只有在已经初始化过时间戳的情况下才进行超时检查
     if conn.last_activity_time > 0.0:
         no_voice_time = time.time() * 1000 - conn.last_activity_time
@@ -136,9 +142,10 @@ async def no_voice_close_connect(conn: "ConnectionHandler", have_voice):
             end_prompt = conn.config.get("end_prompt", {})
             if end_prompt and end_prompt.get("enable", True) is False:
                 conn.logger.bind(tag=TAG).info("Ending dialogue without a closing prompt")
-                await conn.close()
-                return
+                await conn.end_conversation("no_voice_timeout")
+                return True
             prompt = end_prompt.get("prompt")
             if not prompt:
                 prompt = "请你以```时间过得真快```未来头，用富有感情、依依不舍的话来结束这场对话吧。！"
             await startToChat(conn, prompt)
+    return False

@@ -46,8 +46,31 @@ class RuntimeDiagnostics:
                 "device_id": device_id,
                 "client_ip": client_ip,
                 "connected_at": _utc_now(),
+                "persistent_websocket": False,
+                "last_heartbeat_at": None,
+                "mcp_ready": False,
+                "mcp_tool_count": 0,
                 "active_turn": None,
             }
+
+    def update_connection_transport(self, session_id, persistent_websocket):
+        with self._lock:
+            connection = self._connections.get(session_id)
+            if connection is not None:
+                connection["persistent_websocket"] = bool(persistent_websocket)
+
+    def record_heartbeat(self, session_id):
+        with self._lock:
+            connection = self._connections.get(session_id)
+            if connection is not None:
+                connection["last_heartbeat_at"] = _utc_now()
+
+    def update_mcp(self, session_id, ready, tool_count):
+        with self._lock:
+            connection = self._connections.get(session_id)
+            if connection is not None:
+                connection["mcp_ready"] = bool(ready)
+                connection["mcp_tool_count"] = max(0, int(tool_count))
 
     def unregister_connection(self, session_id):
         with self._lock:

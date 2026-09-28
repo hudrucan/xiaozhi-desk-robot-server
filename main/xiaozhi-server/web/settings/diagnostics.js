@@ -134,6 +134,22 @@ function renderTurnInsights(insights) {
   ).join("")}</div>`;
 }
 
+function timestampAge(value) {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.max(0, Date.now() - timestamp);
+}
+
+function ageLabel(value) {
+  const age = timestampAge(value);
+  if (age === null) return "—";
+  if (age < 60000) return `${Math.floor(age / 1000)}s`;
+  if (age < 3600000) return `${Math.floor(age / 60000)}m`;
+  if (age < 86400000) return `${Math.floor(age / 3600000)}h`;
+  return `${Math.floor(age / 86400000)}d`;
+}
+
 export function renderDiagnostics() {
   const expandedTurns = new Set(
     [...document.querySelectorAll(".turn-details[open][data-turn-id]")]
@@ -144,6 +160,7 @@ export function renderDiagnostics() {
   const turns = runtime.turns || [];
   const events = runtime.device_events || [];
   const connections = runtime.connections || {};
+  const connection = connections.items?.[0] || null;
   const recentTurns = turns.slice(0, 20);
   const flaggedTurns = recentTurns.filter((turn) => turnInsights(turn).length > 0).length;
 
@@ -152,6 +169,31 @@ export function renderDiagnostics() {
     resourceCard("Recent success", summary.sample_size ? `${summary.completed || 0} / ${summary.sample_size}` : "—", `${flaggedTurns} flagged by latency or outcome`),
     resourceCard("Median turn", formatDuration(summary.median_total_ms), "Last 20 completed records"),
     resourceCard("P95 turn", formatDuration(summary.p95_total_ms), "Slow-tail latency"),
+  ].join("");
+
+  const persistentState = !connection
+    ? "Offline"
+    : connection.persistent_websocket ? "Online" : "Legacy";
+  const heartbeat = !connection
+    ? "—"
+    : connection.persistent_websocket
+      ? connection.last_heartbeat_at ? `${ageLabel(connection.last_heartbeat_at)} ago` : "Waiting"
+      : "Not used";
+  const mcpState = !connection
+    ? "Offline"
+    : connection.mcp_ready
+      ? `Ready · ${Number(connection.mcp_tool_count) || 0} tools`
+      : "Initializing";
+  const activeTurn = connection?.active_turn;
+  const conversation = activeTurn
+    ? `Active · ${String(activeTurn.source || "unknown").replaceAll("_", " ")}`
+    : "Idle";
+  $("#transportHealth").innerHTML = [
+    resourceCard("Persistent WS", persistentState, connection?.device_id || "No connected robot"),
+    resourceCard("Session age", connection ? ageLabel(connection.connected_at) : "—", connection?.session_id || "No active session"),
+    resourceCard("Heartbeat", heartbeat, connection?.persistent_websocket ? "Persistent ping path" : "Available in persistent mode"),
+    resourceCard("MCP", mcpState, connection ? "Live firmware inventory" : "No active inventory"),
+    resourceCard("Conversation", conversation, activeTurn?.started_at ? `Started ${ageLabel(activeTurn.started_at)} ago` : "No active turn"),
   ].join("");
 
   const status = $("#diagnosticStatus");

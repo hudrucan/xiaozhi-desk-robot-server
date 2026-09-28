@@ -1,5 +1,4 @@
 import time
-import asyncio
 from typing import Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,6 +28,8 @@ class ListenTextMessageHandler(TextMessageHandler):
                 f"Client listening mode: {conn.client_listen_mode}"
             )
         if msg_json["state"] == "start":
+            conn.client_listening = True
+            conn.last_activity_time = time.time() * 1000
             last_tts_stop_sent_at = getattr(conn, "last_tts_stop_sent_at", None)
             if last_tts_stop_sent_at is not None:
                 resume_delay_ms = (time.monotonic() - last_tts_stop_sent_at) * 1000
@@ -39,6 +40,7 @@ class ListenTextMessageHandler(TextMessageHandler):
             # 设备从播放模式切回录音模式,清除所有音频状态和缓冲区
             conn.reset_audio_states()
         elif msg_json["state"] == "stop":
+            conn.client_listening = False
             # 收到stop但asr未初始化，跳过处理
             if conn.asr is None:
                 return
@@ -48,8 +50,12 @@ class ListenTextMessageHandler(TextMessageHandler):
             conn.mark_turn_metric("speech_end")
             conn.client_voice_stop = True
             if conn.asr.interface_type == InterfaceType.STREAM:
-                # 流式模式下，发送结束请求
-                asyncio.create_task(conn.asr._send_stop_request())
+                # Streaming ASR only has a final transcript when speech
+                # actually started. Release an empty persistent turn now;
+                # active/finalizing turns release after transcript completion.
+                finalization_pending = await conn.asr._send_stop_request()
+                if conn.persistent_websocket and finalization_pending is False:
+                    await conn.release_turn_asr()
             else:
                 # 非流式模式：直接触发ASR识别
                 if len(conn.asr_audio) > 0:

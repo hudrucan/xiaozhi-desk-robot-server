@@ -61,7 +61,7 @@ async def check_direct_exit(conn: "ConnectionHandler", text):
                 f"Detected an explicit exit command: {text}"
             )
             await send_stt_message(conn, text)
-            await conn.close()
+            await conn.end_conversation("direct_exit")
             return True
     return False
 

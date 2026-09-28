@@ -7,6 +7,7 @@ from concurrent.futures import Future
 from core.utils.util import get_vision_url, sanitize_tool_name
 from core.utils.auth import AuthToken
 from config.logger import setup_logging
+from core.utils.runtime_diagnostics import runtime_diagnostics
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -251,6 +252,9 @@ async def handle_mcp_message(
                         mcp_client.cached_fingerprint = actual_fingerprint
 
                     await mcp_client.set_ready(True)
+                    runtime_diagnostics.update_mcp(
+                        conn.session_id, True, len(mcp_client.tools)
+                    )
                     logger.bind(tag=TAG).debug("All tools retrieved; MCP client is ready")
 
                     if getattr(conn, "func_handler", None):

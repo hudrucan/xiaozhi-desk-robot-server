@@ -25,7 +25,7 @@ class TextMessageProcessor:
                 message_type = msg_json.get("type")
 
                 message_logger = conn.logger.bind(tag=TAG)
-                if message_type == "mcp":
+                if message_type in ("mcp", "ping"):
                     message_logger.debug(f"Received {message_type} message: {message}")
                 else:
                     message_logger.info(f"Received {message_type} message: {message}")

@@ -15,6 +15,7 @@ from core.providers.asr.dto.dto import InterfaceType
 
 TAG = __name__
 logger = setup_logging()
+FINALIZATION_TIMEOUT_SECONDS = 5.0
 
 
 class ASRProvider(ASRProviderBase):
@@ -47,6 +48,7 @@ class ASRProvider(ASRProviderBase):
         self._sender_task = None
         self._receiver_task = None
         self._reconnect_task = None
+        self._finalization_watchdog_task = None
         self._closed = False
 
         self._pre_roll = deque(maxlen=10)
@@ -138,8 +140,10 @@ class ASRProvider(ASRProviderBase):
             await self._send_queue.put(("audio", chunk))
 
     async def _send_stop_request(self):
-        if not self._stream_active or self._ending_turn or self._awaiting_final:
-            return
+        if self._ending_turn or self._awaiting_final:
+            return True
+        if not self._stream_active:
+            return False
 
         if self._pcm_buffer:
             await self._send_queue.put(("audio", bytes(self._pcm_buffer)))
@@ -147,6 +151,52 @@ class ASRProvider(ASRProviderBase):
         await self._send_queue.put(("end", self._turn_number))
         self._stream_active = False
         self._ending_turn = True
+        return True
+
+    async def _arm_finalization_watchdog(self, turn_number):
+        await self._cancel_finalization_watchdog()
+        if self._closed:
+            return
+        self._finalization_watchdog_task = asyncio.create_task(
+            self._finalization_watchdog(turn_number)
+        )
+
+    async def _cancel_finalization_watchdog(self, wait=True):
+        task = self._finalization_watchdog_task
+        self._finalization_watchdog_task = None
+        if task is None or task is asyncio.current_task() or task.done():
+            return
+        task.cancel()
+        if wait:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    async def _finalization_watchdog(self, turn_number):
+        try:
+            await asyncio.sleep(FINALIZATION_TIMEOUT_SECONDS)
+            if (
+                self._closed
+                or turn_number != self._turn_number
+                or not (self._ending_turn or self._awaiting_final)
+            ):
+                return
+
+            logger.bind(tag=TAG).warning(
+                f"Gemini ASR finalization timed out for turn {turn_number}; "
+                "resetting the stuck Live session"
+            )
+            # Keep the turn blocked while the old session closes. Once the
+            # stuck state is discarded, the next speech can lazily connect a
+            # fresh Live session through the still-running sender/provider.
+            await self._close_session()
+            await self._discard_active_turn()
+            # Deliberately preserve conn.client_listening: the firmware is
+            # still in Listening and no new listen/start should be required.
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self._finalization_watchdog_task is asyncio.current_task():
+                self._finalization_watchdog_task = None
 
     async def _sender_loop(self):
         while not self._closed:
@@ -170,6 +220,8 @@ class ASRProvider(ASRProviderBase):
                     # All queued audio has been sent when this event is reached.
                     self._ending_turn = False
                     self._awaiting_final = True
+                    if self._conn is not None and self._conn.persistent_websocket:
+                        await self._arm_finalization_watchdog(value)
                     await session.send_realtime_input(
                         activity_end=types.ActivityEnd()
                     )
@@ -191,10 +243,8 @@ class ASRProvider(ASRProviderBase):
                         continue
 
                     final = server_content.input_transcription
-                    if final and final.text and self._awaiting_final:
-                        await self._handle_final_transcript(final.text)
-                    elif server_content.turn_complete and self._awaiting_final:
-                        await self._handle_final_transcript("")
+                    if final is not None and self._awaiting_final:
+                        await self._handle_final_transcript(final.text or "")
         except asyncio.CancelledError:
             pass
         except Exception as error:
@@ -217,6 +267,7 @@ class ASRProvider(ASRProviderBase):
                     logger.bind(tag=TAG).error(
                         f"Gemini ASR receive failed: {error}"
                     )
+                await self._cancel_finalization_watchdog()
                 self._receiver_task = None
                 self._session = None
                 await self._discard_active_turn()
@@ -251,20 +302,33 @@ class ASRProvider(ASRProviderBase):
         if not self._awaiting_final or self._conn is None:
             return
 
+        # Clear ownership synchronously before yielding so a watchdog that is
+        # already due cannot race a valid final response. Cancellation itself
+        # is allowed to finish in the background on this normal receiver path.
+        await self._cancel_finalization_watchdog(wait=False)
+        conn = self._conn
         transcript = text.strip()
-        self._conn.mark_turn_metric("asr_done")
+        conn.mark_turn_metric("asr_done")
         self._awaiting_final = False
         self._ending_turn = False
         self._pre_roll.clear()
-        self._conn.reset_audio_states()
-        if not transcript or self._conn.stop_event.is_set():
-            self._conn.complete_turn_metrics("empty_asr_result")
+        conn.reset_audio_states()
+        if not transcript:
+            conn.complete_turn_metrics("empty_asr_result")
             return
 
-        logger.bind(tag=TAG).info(f"Recognized text: {transcript}")
-        await startToChat(self._conn, transcript)
+        try:
+            if conn.stop_event.is_set():
+                conn.complete_turn_metrics("empty_asr_result")
+                return
+            logger.bind(tag=TAG).info(f"Recognized text: {transcript}")
+            await startToChat(conn, transcript)
+        finally:
+            if conn.persistent_websocket:
+                asyncio.create_task(conn.release_turn_asr())
 
     async def _discard_active_turn(self):
+        await self._cancel_finalization_watchdog()
         had_active_turn = (
             self._stream_active or self._ending_turn or self._awaiting_final
         )
@@ -282,6 +346,7 @@ class ASRProvider(ASRProviderBase):
                 self._conn.complete_turn_metrics("asr_failed")
 
     async def _close_session(self):
+        await self._cancel_finalization_watchdog()
         reconnect_task = self._reconnect_task
         self._reconnect_task = None
         if (
@@ -311,6 +376,7 @@ class ASRProvider(ASRProviderBase):
         if session_context is not None:
             with contextlib.suppress(Exception):
                 await session_context.__aexit__(None, None, None)
+            logger.bind(tag=TAG).info("Gemini ASR session closed")
 
     async def speech_to_text(
         self,

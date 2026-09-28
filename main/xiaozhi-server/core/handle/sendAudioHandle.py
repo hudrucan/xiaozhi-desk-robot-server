@@ -46,9 +46,15 @@ async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text
 
     # End playback after the final text segment.
     if sentenceType == SentenceType.LAST:
-        await send_tts_message(conn, "stop", None)
-        if conn.close_after_chat:
-            await conn.close()
+        end_conversation = bool(conn.close_after_chat)
+        await send_tts_message(
+            conn,
+            "stop",
+            None,
+            end_conversation=end_conversation,
+        )
+        if end_conversation:
+            await conn.end_conversation("close_after_chat")
 
 
 async def _wait_for_audio_completion(conn: "ConnectionHandler"):
@@ -317,13 +323,17 @@ def _wrap_websocket_audio_packet(conn: "ConnectionHandler", opus_packet) -> byte
     return payload
 
 
-async def send_tts_message(conn: "ConnectionHandler", state, text=None):
+async def send_tts_message(
+    conn: "ConnectionHandler", state, text=None, end_conversation=False
+):
     """发送 TTS 状态消息"""
     if text is None and state == "sentence_start":
         return
     message = {"type": "tts", "state": state, "session_id": conn.session_id}
     if text is not None:
         message["text"] = text_utils.remove_emojis(text)
+    if state == "stop" and end_conversation:
+        message["end_conversation"] = True
 
     # TTS播放结束
     if state == "stop":

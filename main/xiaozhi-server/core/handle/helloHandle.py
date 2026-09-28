@@ -22,6 +22,12 @@ from core.utils.util import (
 )
 from core.providers.tools.device_mcp import MCPClient, send_mcp_initialize_message
 from core.providers.tools.device_mcp.tool_cache import load_cached_inventory
+from core.persistent_websocket import (
+    PERSISTENT_WEBSOCKET_FEATURE,
+    negotiate_persistent_websocket,
+)
+from core.connected_devices import register_connected_device_after_hello
+from core.utils.runtime_diagnostics import runtime_diagnostics
 
 TAG = __name__
 
@@ -80,7 +86,32 @@ async def handleHelloMessage(conn: "ConnectionHandler", msg_json):
             conn.logger.bind(tag=TAG).debug("Client enabled server-side AEC")
             conn.client_aec = True
 
+    conn.persistent_websocket = negotiate_persistent_websocket(
+        features, conn.conn_from_mqtt_gateway
+    )
+    if conn.persistent_websocket:
+        server_features = conn.welcome_msg.setdefault("features", {})
+        server_features[PERSISTENT_WEBSOCKET_FEATURE] = True
+        conn.last_activity_time = 0.0
+        conn.logger.bind(tag=TAG).info("Persistent WebSocket v1 negotiated")
+    else:
+        server_features = conn.welcome_msg.get("features")
+        if isinstance(server_features, dict):
+            server_features.pop(PERSISTENT_WEBSOCKET_FEATURE, None)
+
     await conn.websocket.send(json.dumps(conn.welcome_msg))
+    runtime_diagnostics.update_connection_transport(
+        conn.session_id, conn.persistent_websocket
+    )
+
+    if conn.hello_received is not None:
+        conn.hello_received.set()
+
+    previous = await register_connected_device_after_hello(conn.device_id, conn)
+    if previous is not None:
+        conn.logger.bind(tag=TAG).info(
+            f"Replacing older connection for device {conn.device_id} after hello"
+        )
 
     # The device waits for the server hello before processing MCP messages.
     if features and features.get("mcp"):

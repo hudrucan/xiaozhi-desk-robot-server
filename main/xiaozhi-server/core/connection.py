@@ -40,6 +40,7 @@ from core.utils.util import get_system_error_response, get_tool_error_response
 from core.utils import text_utils
 from core.utils.runtime_diagnostics import runtime_diagnostics
 from core.utils.turn_diagnostics import TurnDiagnosticsMixin
+from core.connected_devices import connected_devices
 
 
 TAG = __name__
@@ -79,6 +80,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
         self.client_abort = False
         self.client_is_speaking = False
         self.client_listen_mode = "auto"
+        self.client_listening = False
         self.client_aec = False  # Whether server-side AEC is enabled.
 
         # Worker and event-loop state.
@@ -109,6 +111,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
         self.client_voice_window = deque(maxlen=5)
         self.first_activity_time = 0.0  # 记录首次活动的时间（毫秒）
         self.last_activity_time = 0.0  # 统一的活动时间戳（毫秒）
+        self.last_transport_activity_time = 0.0
         self.vad_last_voice_time = 0.0  # 记录用户最后一次说话的时间（毫秒）
         self.client_voice_stop = False
         self.last_is_voice = False
@@ -139,6 +142,8 @@ class ConnectionHandler(TurnDiagnosticsMixin):
         self.func_handler = None
         self.pending_typed_input = None
         self.components_ready = None
+        self.components_initialization_done = None
+        self.components_initialization_failed = False
 
         self.cmd_exit = self.config["exit_commands"]
 
@@ -151,9 +156,16 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                 int(self.config.get("close_connection_no_voice_time", 120)) + 60
         )  # 在原来第一道关闭的基础上加60秒，进行二道关闭
         self.timeout_task = None
+        self.background_initialize_task = None
+        self.transport_timeout_seconds = 120
 
         # {"mcp":true} 表示启用MCP功能
         self.features = None
+        self.persistent_websocket = False
+        self.hello_received = None
+        self._turn_audio_lock = None
+        self._conversation_reset_lock = None
+        self.asr_channel_open = False
 
         # 标记连接是否来自MQTT
         self.conn_from_mqtt_gateway = False
@@ -209,6 +221,10 @@ class ConnectionHandler(TurnDiagnosticsMixin):
             # 初始化活动时间戳
             self.first_activity_time = time.time() * 1000
             self.last_activity_time = time.time() * 1000
+            self.last_transport_activity_time = time.time() * 1000
+            self.hello_received = asyncio.Event()
+            self._turn_audio_lock = asyncio.Lock()
+            self._conversation_reset_lock = asyncio.Lock()
 
             # 启动超时检查任务
             self.timeout_task = asyncio.create_task(self._check_timeout())
@@ -225,7 +241,10 @@ class ConnectionHandler(TurnDiagnosticsMixin):
 
             # Initialize connection components without blocking the receive loop.
             self.components_ready = asyncio.Event()
-            asyncio.create_task(self._background_initialize())
+            self.components_initialization_done = asyncio.Event()
+            self.background_initialize_task = asyncio.create_task(
+                self._background_initialize()
+            )
 
             try:
                 async for message in self.websocket:
@@ -293,9 +312,16 @@ class ConnectionHandler(TurnDiagnosticsMixin):
         """消息路由"""
         if self.stop_event.is_set():
             return
+        self.last_transport_activity_time = time.time() * 1000
         if isinstance(message, str):
             await handleTextMessage(self, message)
         elif isinstance(message, bytes):
+            if self.persistent_websocket and not self.client_listening:
+                return
+            # Both lifecycle modes must finish their idempotent ASR setup
+            # before accepting binary ingress. Persistent mode still releases
+            # ASR after each turn; legacy mode keeps its existing lifetime.
+            await self.ensure_turn_audio_channels()
             if self.vad is None or self.asr is None:
                 return
 
@@ -556,16 +582,9 @@ class ConnectionHandler(TurnDiagnosticsMixin):
             """初始化本地组件"""
             if self.vad is None:
                 self.vad = self._vad
-            if self.asr is None:
-                self.asr = self._initialize_asr()
 
             # 初始化声纹识别
             self._initialize_voiceprint()
-            # 打开语音识别通道
-            asyncio.run_coroutine_threadsafe(
-                self.asr.open_audio_channels(self), self.loop
-            )
-
             """加载记忆"""
             self._initialize_memory()
             """加载意图识别"""
@@ -702,8 +721,19 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                 self.executor, self._initialize_components
             )
             if not initialized:
+                self.components_initialization_failed = True
+                self.components_initialization_done.set()
                 return
             self.components_ready.set()
+            self.components_initialization_done.set()
+
+            # Legacy connections retain their eager ASR lifetime. Persistent
+            # WebSockets open ASR lazily for a turn so remote streaming
+            # sessions cannot remain connected while the robot is idle.
+            if self.hello_received is not None:
+                await self.hello_received.wait()
+            if not self.persistent_websocket:
+                await self.ensure_turn_audio_channels()
 
             from core.handle.receiveAudioHandle import (
                 process_pending_typed_input_if_ready,
@@ -711,6 +741,9 @@ class ConnectionHandler(TurnDiagnosticsMixin):
 
             await process_pending_typed_input_if_ready(self)
         except Exception as e:
+            self.components_initialization_failed = True
+            if self.components_initialization_done is not None:
+                self.components_initialization_done.set()
             self.logger.bind(tag=TAG).error(f"Background initialization failed: {e}")
 
     def _initialize_memory(self):
@@ -1456,8 +1489,138 @@ class ConnectionHandler(TurnDiagnosticsMixin):
             )
             return False
 
+    async def send_json(self, payload: dict) -> bool:
+        """Send one server-initiated JSON message through the live handler."""
+        if self.websocket is None or self.stop_event.is_set():
+            return False
+        try:
+            await self.websocket.send(json.dumps(payload))
+            return True
+        except Exception as error:
+            self.logger.bind(tag=TAG).warning(
+                f"Failed to send server-initiated message: {error}"
+            )
+            return False
+
+    async def ensure_turn_audio_channels(self):
+        """Open turn-scoped ASR resources once, leaving transport ownership alone."""
+        if self.components_initialization_done is None:
+            return False
+        await self.components_initialization_done.wait()
+        if self.components_initialization_failed:
+            return False
+        if self._turn_audio_lock is None:
+            self._turn_audio_lock = asyncio.Lock()
+        if self._conversation_reset_lock is None:
+            self._conversation_reset_lock = asyncio.Lock()
+        async with self._conversation_reset_lock:
+            async with self._turn_audio_lock:
+                if self.asr_channel_open:
+                    return True
+                if self.asr is None:
+                    self.asr = self._initialize_asr()
+                await self.asr.open_audio_channels(self)
+                self.asr_channel_open = True
+                return True
+
+    async def _close_turn_audio_channels(self):
+        """Release ASR consumers and remote streams without closing the device WS."""
+        task = self.asr_audio_task
+        self.asr_audio_task = None
+        if task is not None and not task.done():
+            if task is asyncio.current_task():
+                self.loop.call_soon(task.cancel)
+            else:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        if self.persistent_websocket:
+            while True:
+                try:
+                    self.asr_audio_queue.get_nowait()
+                    self.asr_audio_queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+
+        asr = self.asr
+        self.asr_channel_open = False
+        if self.persistent_websocket:
+            self.asr = None
+        if asr is not None:
+            try:
+                await asr.close()
+            except Exception as error:
+                self.logger.bind(tag=TAG).warning(
+                    f"Failed to close turn ASR resources: {error}"
+                )
+
+    async def release_turn_asr(self):
+        """Close ASR after input finalization while retaining conversation and WS."""
+        if not self.persistent_websocket:
+            return
+        self.client_listening = False
+        if self._conversation_reset_lock is None:
+            self._conversation_reset_lock = asyncio.Lock()
+        if self._turn_audio_lock is None:
+            self._turn_audio_lock = asyncio.Lock()
+        async with self._conversation_reset_lock:
+            async with self._turn_audio_lock:
+                await self._close_turn_audio_channels()
+
+    async def reset_conversation(self, reason="conversation_ended"):
+        """Clear logical conversation/turn state while retaining the authenticated WS."""
+        self.client_listening = False
+        if not self.persistent_websocket:
+            await self.close()
+            return
+        if self._conversation_reset_lock is None:
+            self._conversation_reset_lock = asyncio.Lock()
+        async with self._conversation_reset_lock:
+            self.cancel_active_llm()
+            self.complete_turn_metrics(reason)
+            self.client_abort = True
+            self.client_is_speaking = False
+            self.client_listen_mode = "auto"
+            self.close_after_chat = False
+            self.pending_typed_input = None
+            self.current_speaker = None
+            self.sentence_id = None
+            self.tts_MessageText = ""
+            self.active_memory_project = None
+            self.last_activity_time = 0.0
+            self.reset_audio_states()
+            self.clear_queues()
+            await self._close_turn_audio_channels()
+
+            # Device MCP inventory, handler registration, provider-independent
+            # diagnostics, authentication, and the transport stay connection-owned.
+            self.dialogue = Dialogue()
+            self.introduced_speakers.clear()
+            self.system_introduced_speakers.clear()
+            if self.prompt:
+                self.change_system_prompt(self.prompt)
+            self._inject_tool_call_fewshot()
+            self.client_abort = False
+            self.logger.bind(tag=TAG).info(
+                f"Conversation reset while persistent WebSocket remains connected: {reason}"
+            )
+
+    async def end_conversation(self, reason="conversation_ended", notify_client=True):
+        if not self.persistent_websocket:
+            await self.close()
+            return
+        if notify_client:
+            await self.send_json(
+                {"type": "goodbye", "session_id": self.session_id, "reason": reason}
+            )
+        await self.reset_conversation(reason)
+
     async def close(self, ws=None):
         """Release connection resources once, even when close paths race."""
+        self.client_listening = False
         if self._close_completed:
             return
         if self.stop_event:
@@ -1473,6 +1636,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
 
     async def _close_resources(self, ws=None):
         """资源清理方法"""
+        self.client_listening = False
         try:
             self.complete_turn_metrics("connection_closed")
             self.cancel_active_llm()
@@ -1504,6 +1668,18 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                     except asyncio.CancelledError:
                         pass
                 self.timeout_task = None
+
+            if (
+                self.background_initialize_task
+                and not self.background_initialize_task.done()
+                and self.background_initialize_task is not asyncio.current_task()
+            ):
+                self.background_initialize_task.cancel()
+                try:
+                    await self.background_initialize_task
+                except asyncio.CancelledError:
+                    pass
+            self.background_initialize_task = None
 
             if self.asr_audio_task and not self.asr_audio_task.done():
                 if self.asr_audio_task is not asyncio.current_task():
@@ -1609,6 +1785,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
             # 确保停止事件被设置
             if self.stop_event:
                 self.stop_event.set()
+            await connected_devices.unregister(self.device_id, self)
             runtime_diagnostics.unregister_connection(self.session_id)
 
     def clear_queues(self):
@@ -1679,12 +1856,21 @@ class ConnectionHandler(TurnDiagnosticsMixin):
         """检查连接超时"""
         try:
             while not self.stop_event.is_set():
-                last_activity_time = self.last_activity_time
+                last_activity_time = (
+                    self.last_transport_activity_time
+                    if self.persistent_websocket
+                    else self.last_activity_time
+                )
+                timeout_seconds = (
+                    self.transport_timeout_seconds
+                    if self.persistent_websocket
+                    else self.timeout_seconds
+                )
 
                 # 检查是否超时（只有在时间戳已初始化的情况下）
                 if last_activity_time > 0.0:
                     current_time = time.time() * 1000
-                    if current_time - last_activity_time > self.timeout_seconds * 1000:
+                    if current_time - last_activity_time > timeout_seconds * 1000:
                         if not self.stop_event.is_set():
                             self.logger.bind(tag=TAG).info("Connection timed out; preparing to close")
                             # 设置停止事件，防止重复处理

@@ -341,7 +341,10 @@ class OTAHandler(BaseHandler):
                 return_json["websocket"] = {
                     "url": self._get_websocket_url(local_ip, websocket_port),
                     "token": token,
-                    "features": {"desk_robot_typed_text_v1": True},
+                    "features": {
+                        "desk_robot_typed_text_v1": True,
+                        "desk_robot_persistent_ws_v1": True,
+                    },
                 }
                 self.logger.bind(tag=TAG).info(
                     f"MQTT gateway is not configured; sending WebSocket configuration to device {device_id}"

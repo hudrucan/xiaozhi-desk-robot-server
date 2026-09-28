@@ -177,6 +177,9 @@ class ASRProviderBase(ABC):
             import traceback
 
             logger.bind(tag=TAG).debug(f"Exception details: {traceback.format_exc()}")
+        finally:
+            if conn.persistent_websocket:
+                asyncio.create_task(conn.release_turn_asr())
 
     def _build_enhanced_text(self, text: str, speaker_name: Optional[str]) -> str:
         """构建包含说话人信息的文本（仅用于纯文本ASR）"""
