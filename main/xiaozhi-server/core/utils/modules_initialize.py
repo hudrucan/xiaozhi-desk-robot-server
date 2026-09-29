@@ -138,7 +138,7 @@ def initialize_asr(config):
         config["ASR"][select_asr_module],
         str(config.get("delete_audio", True)).lower() in ("true", "1", "yes"),
     )
-    logger.bind(tag=TAG).info("ASR module initialization completed")
+    logger.bind(tag=TAG).debug("ASR module initialization completed")
     return new_asr
 
 
