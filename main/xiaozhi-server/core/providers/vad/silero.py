@@ -11,7 +11,7 @@ logger = setup_logging()
 
 class VADProvider(VADProviderBase):
     def __init__(self, config):
-        logger.bind(tag=TAG).info("SileroVAD", config)
+        logger.bind(tag=TAG).debug("SileroVAD", config)
 
         model_path = os.path.join(config["model_dir"], "silero_vad.onnx")
         opts = onnxruntime.SessionOptions()
