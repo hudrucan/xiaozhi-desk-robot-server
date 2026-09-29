@@ -11,6 +11,7 @@ import openai
 
 from config.logger import setup_logging
 from core.providers.vllm.openai import VLLMProvider as OpenAICompatibleVLLM
+from core.utils.managed_process_log import ManagedProcessLogCapture
 
 
 TAG = __name__
@@ -25,7 +26,7 @@ class VLLMProvider(OpenAICompatibleVLLM):
         process_config = dict(llama_config.get("process") or {})
 
         self._process = None
-        self._log_handle = None
+        self._log_capture = None
         self._start_lock = threading.RLock()
         self._managed = bool(process_config.get("managed", True))
         self._lazy_start = bool(process_config.get("lazy_start", True))
@@ -186,13 +187,7 @@ class VLLMProvider(OpenAICompatibleVLLM):
         command.extend(str(value) for value in extra_args)
 
         log_file = process_config.get("log_file", "tmp/llama-vllm-server.log")
-        if log_file:
-            log_path = Path(log_file).expanduser()
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            self._log_handle = log_path.open("a", encoding="utf-8")
-            output = self._log_handle
-        else:
-            output = subprocess.DEVNULL
+        self._log_capture = ManagedProcessLogCapture("local_vllm", log_file)
 
         logger.bind(tag=TAG).info(
             f"Starting managed llama.cpp vision model: {self.model_name}"
@@ -201,10 +196,10 @@ class VLLMProvider(OpenAICompatibleVLLM):
             self._process = subprocess.Popen(
                 command,
                 stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=subprocess.STDOUT,
                 env=os.environ.copy(),
+                **self._log_capture.popen_output_options(),
             )
+            self._log_capture.start(self._process)
             self._wait_until_ready(
                 health_url,
                 float(process_config.get("startup_timeout", 900)),
@@ -283,6 +278,6 @@ class VLLMProvider(OpenAICompatibleVLLM):
                     process.kill()
                     process.wait()
 
-            if self._log_handle is not None:
-                self._log_handle.close()
-                self._log_handle = None
+            if self._log_capture is not None:
+                self._log_capture.close()
+                self._log_capture = None

@@ -4,6 +4,11 @@ import {
 } from "./configuration.js";
 import { renderDiagnostics } from "./diagnostics.js";
 import { initializeMemory, loadMemory, renderMemory } from "./memory.js";
+import {
+  initializeLogs,
+  renderLogs,
+  setLogsActive,
+} from "./logs.js";
 import { initializePushTts } from "./push_tts.js";
 import {
   renderOverview,
@@ -15,6 +20,7 @@ import { $, clone, labelFor, state, toast } from "./shared.js";
 const PAGE_IDS = [
   "overview",
   "diagnostics",
+  "logs",
   "providers",
   "assistant",
   "memory",
@@ -29,6 +35,7 @@ function renderAll() {
   renderConfiguration();
   renderMemory();
   renderDiagnostics();
+  renderLogs();
   renderSidebarLive();
   $("#configPath").textContent = state.configPath || "data/.config.yaml";
   $("#restartPanel").classList.toggle("hidden", !state.restartRequired);
@@ -214,6 +221,7 @@ function setActivePage(page, options = {}) {
   document.title = `${labelFor(nextPage)} · Xiaozhi Server`;
   if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "auto" });
   restartStatusPolling();
+  setLogsActive(nextPage === "logs" && !document.hidden);
   if (nextPage === "memory") loadMemory();
 }
 
@@ -228,8 +236,13 @@ function initializeNavigation() {
   });
   window.addEventListener("popstate", () => setActivePage(pageFromHash()));
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) stopStatusPolling();
-    else restartStatusPolling();
+    if (document.hidden) {
+      stopStatusPolling();
+      setLogsActive(false);
+    } else {
+      restartStatusPolling();
+      setLogsActive(state.activePage === "logs");
+    }
   });
   setActivePage(pageFromHash(), { scroll: false });
 }
@@ -240,6 +253,7 @@ $("#restartButton").addEventListener("click", restartServer);
 $("#restartNowButton").addEventListener("click", restartServer);
 initializeConfiguration(updateDirtyState);
 initializeMemory();
+initializeLogs();
 initializePushTts();
 initializeNavigation();
 loadSettings();

@@ -5,6 +5,7 @@ from loguru import logger
 from config.config_loader import load_config
 from config.settings import check_config_file
 from core.utils.cache.manager import cache_manager, CacheType
+from core.utils.ui_log_buffer import ui_log_buffer
 
 SERVER_VERSION = "0.9.6"
 _logger_initialized = False
@@ -91,6 +92,16 @@ def setup_logging(config=None):
 
         # 输出到控制台
         logger.add(sys.stdout, format=log_format, level=log_level, filter=formatter)
+
+        # Current-process UI log buffer. It starts empty on every server restart
+        # and is independently bounded from the persistent file sink.
+        logger.add(
+            ui_log_buffer.append_loguru,
+            level=log_level,
+            enqueue=False,
+            backtrace=False,
+            diagnose=False,
+        )
 
         # 输出到文件 - 统一目录，按大小轮转
         # 日志文件完整路径

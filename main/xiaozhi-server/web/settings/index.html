@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=23" />
+    <link rel="stylesheet" href="/settings/styles.css?v=24" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -27,12 +27,13 @@
         <nav class="navigation" aria-label="Settings sections">
           <a class="active" href="#overview"><span>01</span>Overview</a>
           <a href="#diagnostics"><span>02</span>Diagnostics</a>
-          <a href="#providers"><span>03</span>Providers</a>
-          <a href="#assistant"><span>04</span>Assistant</a>
-          <a href="#memory"><span>05</span>Memory</a>
-          <a href="#runtime"><span>06</span>Runtime</a>
-          <a href="#integrations"><span>07</span>Integrations</a>
-          <a href="#advanced"><span>08</span>Advanced</a>
+          <a href="#logs"><span>03</span>Logs</a>
+          <a href="#providers"><span>04</span>Providers</a>
+          <a href="#assistant"><span>05</span>Assistant</a>
+          <a href="#memory"><span>06</span>Memory</a>
+          <a href="#runtime"><span>07</span>Runtime</a>
+          <a href="#integrations"><span>08</span>Integrations</a>
+          <a href="#advanced"><span>09</span>Advanced</a>
         </nav>
 
         <div class="sidebar-live" aria-label="Live server status">
@@ -259,6 +260,65 @@
             <div class="turn-feed" id="turnFeed"></div>
           </section>
 
+          <section id="logs" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Current process only</p>
+                <h2>Logs</h2>
+                <p class="section-copy">Live server and managed local-model output. The view starts empty after every server restart.</p>
+              </div>
+              <span class="badge" id="logStatus"><i></i>Current run</span>
+            </div>
+
+            <article class="panel log-panel">
+              <header class="log-toolbar">
+                <div class="log-filters">
+                  <label>
+                    <span>Source</span>
+                    <select id="logSource">
+                      <option value="all">All enabled sources</option>
+                      <option value="server">Server</option>
+                      <option value="local_llm">Local LLM</option>
+                      <option value="local_vllm">Local VLLM</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Minimum level</span>
+                    <select id="logLevel">
+                      <option value="TRACE">Trace</option>
+                      <option value="DEBUG">Debug</option>
+                      <option value="INFO" selected>Info</option>
+                      <option value="WARNING">Warning</option>
+                      <option value="ERROR">Error</option>
+                    </select>
+                  </label>
+                  <label class="log-search-field">
+                    <span>Filter current view</span>
+                    <input id="logSearch" type="search" placeholder="tag, module, or message" />
+                  </label>
+                </div>
+                <div class="log-actions">
+                  <label class="log-autoscroll">
+                    <input id="logAutoscroll" type="checkbox" checked />
+                    <span>Follow</span>
+                  </label>
+                  <button class="button secondary" id="logPauseButton" type="button">Pause</button>
+                  <button class="button secondary" id="logClearButton" type="button">Clear view</button>
+                </div>
+              </header>
+
+              <div class="log-console" id="logViewport" role="log" aria-live="off">
+                <div class="log-feed" id="logFeed"></div>
+              </div>
+
+              <footer class="log-footer">
+                <span id="logCount">0 shown · 0 buffered</span>
+                <span id="logUsage">0 B / 2.0 MB</span>
+                <span id="logDropped">No buffer eviction</span>
+              </footer>
+            </article>
+          </section>
+
           <section id="providers" class="page-section">
             <div class="section-heading">
               <div>
@@ -368,6 +428,6 @@
       </div>
     </div>
 
-    <script type="module" src="/settings/app.js?v=23"></script>
+    <script type="module" src="/settings/app.js?v=24"></script>
   </body>
 </html>

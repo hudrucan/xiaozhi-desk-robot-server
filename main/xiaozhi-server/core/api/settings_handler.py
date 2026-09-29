@@ -14,6 +14,7 @@ from core.notification_audio import (
 from core.utils.config_editor import ConfigEditor
 from core.utils.resource_monitor import ResourceMonitor
 from core.utils.runtime_diagnostics import runtime_diagnostics
+from core.utils.ui_log_buffer import ui_log_buffer
 
 
 class SettingsHandler(BaseHandler):
@@ -97,6 +98,7 @@ class SettingsHandler(BaseHandler):
             "push_tts.js",
             "resources.js",
             "shared.js",
+            "logs.js",
             "styles.css",
         }:
             raise web.HTTPNotFound()
@@ -130,6 +132,14 @@ class SettingsHandler(BaseHandler):
             payload["runtime"] = runtime_diagnostics.snapshot(
                 include_history=scope == "all"
             )
+        return self._disable_cache(web.json_response(payload))
+
+    async def handle_logs(self, request):
+        self._require_access(request)
+        payload = ui_log_buffer.snapshot(
+            after=request.query.get("after", 0),
+            limit=request.query.get("limit", 300),
+        )
         return self._disable_cache(web.json_response(payload))
 
     async def handle_put(self, request):
