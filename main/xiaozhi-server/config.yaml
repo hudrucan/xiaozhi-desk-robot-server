@@ -479,10 +479,13 @@ VLLM:
 TTS:
   GeminiTTS:
     type: gemini
-    model_name: your_gemini_tts_model
+    # Use gemini-3.8-flash-tts when fidelity matters more than cost and latency.
+    model_name: gemini-3.8-flash-lite-tts
     api_key: your_api_key
-    voice: your_gemini_voice
-    language: your_language
+    voice: Aoede
+    language: English
+    # Gemini 3.8 sends delivery guidance separately from the spoken transcript.
+    style: Warm, natural, conversational speech; friendly and slightly playful.
     max_retries: 2
     min_segment_chars: 80
     output_dir: tmp/

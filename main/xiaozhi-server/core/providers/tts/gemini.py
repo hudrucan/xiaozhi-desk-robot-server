@@ -27,9 +27,10 @@ class TTSProvider(TTSProviderBase):
             raise ValueError("Gemini TTS requires a valid API key")
 
         self.model_name = config.get(
-            "model_name", "gemini-3.1-flash-tts-preview"
+            "model_name", "gemini-3.8-flash-lite-tts"
         )
         self.voice = config.get("voice", "Aoede")
+        self.style = str(config.get("style", "")).strip()
         self.max_retries = max(0, int(config.get("max_retries", 1)))
         self.min_segment_chars = max(1, int(config.get("min_segment_chars", 80)))
         self.audio_file_type = "wav"
@@ -45,14 +46,33 @@ class TTSProvider(TTSProviderBase):
         await super().open_audio_channels(conn)
 
     def _build_payload(self, text):
-        return {
-            "model": self.model_name,
-            "input": (
+        if self.model_name.startswith("gemini-3.8-"):
+            speech_metadata = {"type": "speech_metadata"}
+            if self.style:
+                speech_metadata["style"] = self.style
+            model_input = [
+                {
+                    "type": "user_input",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": text,
+                            "annotations": [speech_metadata],
+                        }
+                    ],
+                }
+            ]
+        else:
+            model_input = (
                 "Generate speech for the transcript below in the language in "
                 "which it is written. Read only the transcript exactly as given; "
                 "do not add, omit, or translate any words.\n"
                 f"TRANSCRIPT:\n{text}"
-            ),
+            )
+
+        return {
+            "model": self.model_name,
+            "input": model_input,
             "response_format": {"type": "audio"},
             "generation_config": {
                 "speech_config": [{"voice": self.voice}]
@@ -64,9 +84,10 @@ class TTSProvider(TTSProviderBase):
         timeout = aiohttp.ClientTimeout(total=self.tts_timeout)
         headers = {
             "x-goog-api-key": self.api_key,
-            "Api-Revision": "2026-05-20",
             "Accept": "text/event-stream",
         }
+        if not self.model_name.startswith("gemini-3.8-"):
+            headers["Api-Revision"] = "2026-05-20"
         received_audio = False
         event_types = set()
         delta_types = set()
