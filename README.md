@@ -68,7 +68,7 @@ Desk Robot firmware
 
 ### Requirements
 
-- Python `3.10` (`3.10.14` is pinned in `.tool-versions`)
+- Python `3.11` (`3.11.16` is pinned in `.tool-versions`)
 - FFmpeg
 - Opus / libopus
 - Provider credentials or the required local model runtime

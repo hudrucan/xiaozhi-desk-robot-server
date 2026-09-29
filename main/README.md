@@ -10,7 +10,7 @@ benchmarks, read the [repository README](../README.md).
 
 ```bash
 cd xiaozhi-server
-python3.10 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 mkdir -p data

@@ -274,7 +274,7 @@ Clean these incrementally after confirming they are not required.
 
 Preferred environment:
 
-- Python 3.10
+- Python 3.11
 - FFmpeg installed
 - Opus/libopus installed
 - no Docker required
@@ -284,7 +284,7 @@ Typical setup:
 ```bash
 cd main/xiaozhi-server
 
-python3.10 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
@@ -296,7 +296,7 @@ touch data/.config.yaml
 python app.py
 ```
 
-A Conda Python 3.10 environment is acceptable when native/ML dependencies are easier to install that way.
+A Conda Python 3.11 environment is acceptable when native/ML dependencies are easier to install that way.
 
 ## Validation
 
