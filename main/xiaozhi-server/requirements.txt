@@ -1,5 +1,5 @@
 numpy==1.26.4
-onnxruntime==1.23.2
+onnxruntime==1.30.0
 websockets==14.2
 pyyml==0.0.2
 opuslib_next==1.1.5

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python&logoColor=white" />
+  <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB?style=flat-square&logo=python&logoColor=white" />
   <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-D3A85E?style=flat-square" />
   <img alt="Turn based" src="https://img.shields.io/badge/Conversation-Turn--based-6F5B45?style=flat-square" />
   <img alt="Docker not required" src="https://img.shields.io/badge/Docker-Not%20required-2E7D6B?style=flat-square" />
@@ -85,7 +85,7 @@ Install and start:
 git clone https://github.com/hudrucan/xiaozhi-desk-robot-server.git
 cd xiaozhi-desk-robot-server/main/xiaozhi-server
 
-python3.10 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt

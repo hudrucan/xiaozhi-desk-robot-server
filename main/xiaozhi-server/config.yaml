@@ -512,6 +512,35 @@ TTS:
     split_on_all_punctuations: true
     max_retries: 0
     output_dir: tmp/
+  MatchaTTS:
+    # Local Vietnamese Matcha + Vocos pipeline. ONNX Runtime 1.28+ is
+    # required for the Vocos inverse one-sided DFT; 1.30 is the deployed
+    # RK3528 baseline.
+    type: matcha
+    language: vi
+    model_dir: models/tts/matcha-vi-int8
+    variant: int8
+    encoder: matcha_encoder.onnx
+    decoder: matcha_decoder.onnx
+    vocos: vocos.onnx
+    prompt_encoder: prompt_encoder.onnx
+    symbols: symbols.json
+    provider: CPUExecutionProvider
+    num_threads: 4
+    steps: 2
+    temperature: 0.9
+    length_scale: 1.0
+    sway: -1.0
+    seed: 42
+    number_language: vi
+    first_segment_chars: 32
+    use_prompt: true
+    tail_prompt_words: 10
+    keep_model_warm: true
+    target_peak: 0.96
+    volume_gain: 1.0
+    max_retries: 0
+    output_dir: tmp/
   VieNeuTTS:
     # VieNeu v3 Nano runs locally with ONNX and downloads its model into the
     # Hugging Face cache on first use.

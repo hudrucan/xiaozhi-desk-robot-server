@@ -59,6 +59,6 @@ env/
 /main/xiaozhi-server/config/assets/*.opus
 
 # Additional local model downloads. Keep the bundled defaults versioned.
-/main/xiaozhi-server/models/asr/sherpa/*/
-/main/xiaozhi-server/models/tts/sherpa/*/
+/main/xiaozhi-server/models/asr/*
+/main/xiaozhi-server/models/tts/*
 /main/xiaozhi-server/models/vad/*
