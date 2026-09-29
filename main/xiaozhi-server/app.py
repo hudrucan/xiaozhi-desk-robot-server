@@ -89,19 +89,19 @@ async def main():
 
     port = int(config["server"].get("http_port", 8003))
     logger.bind(tag=TAG).info(
-        "OTA endpoint:\t\thttp://{}:{}/xiaozhi/ota/",
+        "OTA endpoint: http://{}:{}/xiaozhi/ota/",
         get_local_ip(),
         port,
     )
     logger.bind(tag=TAG).info(
-        "Vision endpoint:\thttp://{}:{}/mcp/vision/explain",
+        "Vision endpoint: http://{}:{}/mcp/vision/explain",
         get_local_ip(),
         port,
     )
     settings_config = config.get("server", {}).get("settings", {})
     if settings_config.get("enabled", True):
         logger.bind(tag=TAG).info(
-            "Settings UI:\t\thttp://{}:{}/settings/",
+            "Settings UI: http://{}:{}/settings/",
             (
                 get_local_ip()
                 if settings_config.get("allow_remote", False)
@@ -113,7 +113,7 @@ async def main():
     if mcp_endpoint is not None and "你" not in mcp_endpoint:
         # Validate the MCP endpoint format.
         if validate_mcp_endpoint(mcp_endpoint):
-            logger.bind(tag=TAG).info("MCP endpoint:\t{}", mcp_endpoint)
+            logger.bind(tag=TAG).info("MCP endpoint: {}", mcp_endpoint)
             # Convert the discovery endpoint into its call endpoint.
             mcp_endpoint = mcp_endpoint.replace("/mcp/", "/call/")
             config["mcp_endpoint"] = mcp_endpoint
@@ -128,7 +128,7 @@ async def main():
         websocket_port = int(server_config.get("port", 8000))
 
     logger.bind(tag=TAG).info(
-        "WebSocket endpoint:\tws://{}:{}/xiaozhi/v1/",
+        "WebSocket endpoint: ws://{}:{}/xiaozhi/v1/",
         get_local_ip(),
         websocket_port,
     )
