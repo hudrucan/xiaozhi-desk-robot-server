@@ -539,6 +539,7 @@ TTS:
     keep_model_warm: true
     target_peak: 0.96
     volume_gain: 1.0
+    split_on_all_punctuations: true
     max_retries: 0
     output_dir: tmp/
   VieNeuTTS:
