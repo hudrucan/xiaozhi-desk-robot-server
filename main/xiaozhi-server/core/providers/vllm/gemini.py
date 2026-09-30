@@ -140,7 +140,10 @@ class VLLMProvider(VLLMProviderBase):
                 mime_type="image/jpeg",
             )
             generation_config = types.GenerateContentConfig(
-                **self.generation_kwargs
+                **self.generation_kwargs,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
             )
             response = self.client.models.generate_content(
                 model=self.model_name,
