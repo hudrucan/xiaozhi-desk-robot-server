@@ -168,7 +168,8 @@ class ASRProviderBase(ABC):
                 await startToChat(conn, enhanced_text)
             else:
                 logger.bind(tag=TAG).warning(
-                    f"ASR returned empty text for {audio_duration_ms:.0f} ms of PCM audio"
+                    f"ASR returned empty text for {audio_duration_ms:.0f} ms of PCM audio; "
+                    "continuing current listening turn"
                 )
                 conn.complete_turn_metrics("empty_asr_result")
         except Exception as e:
@@ -178,7 +179,7 @@ class ASRProviderBase(ABC):
 
             logger.bind(tag=TAG).debug(f"Exception details: {traceback.format_exc()}")
         finally:
-            if conn.persistent_websocket:
+            if conn.persistent_websocket and not conn.client_listening:
                 asyncio.create_task(conn.release_turn_asr())
 
     def _build_enhanced_text(self, text: str, speaker_name: Optional[str]) -> str:

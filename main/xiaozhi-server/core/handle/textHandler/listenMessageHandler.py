@@ -65,6 +65,8 @@ class ListenTextMessageHandler(TextMessageHandler):
 
                     if len(asr_audio_task) > 0:
                         await conn.asr.handle_voice_stop(conn, asr_audio_task)
+                elif conn.persistent_websocket:
+                    await conn.release_turn_asr()
         elif msg_json["state"] == "detect":
             conn.client_have_voice = False
             conn.reset_audio_states()
