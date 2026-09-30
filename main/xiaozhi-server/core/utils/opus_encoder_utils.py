@@ -5,10 +5,70 @@ Opus编码工具类
 
 import logging
 import traceback
+from collections.abc import Callable
 import numpy as np
 from opuslib_next import Encoder
 from opuslib_next import constants
-from typing import Optional, Callable, Any
+from typing import Optional, Any
+
+
+def encode_pcm16_to_opus_packets(
+    pcm_data: bytes,
+    *,
+    sample_rate: int,
+    channels: int = 1,
+    frame_size_ms: int = 60,
+):
+    """Strictly encode complete PCM16 audio into fixed-duration Opus packets."""
+    if (
+        isinstance(sample_rate, bool)
+        or not isinstance(sample_rate, int)
+        or sample_rate <= 0
+    ):
+        raise ValueError("Opus sample rate must be a positive integer")
+    if isinstance(channels, bool) or channels not in {1, 2}:
+        raise ValueError("Opus channels must be 1 or 2")
+    if (
+        isinstance(frame_size_ms, bool)
+        or not isinstance(frame_size_ms, int)
+        or frame_size_ms <= 0
+    ):
+        raise ValueError("Opus frame duration must be a positive integer")
+    if not isinstance(pcm_data, (bytes, bytearray, memoryview)):
+        raise TypeError("PCM data must be bytes-like")
+    pcm_bytes = bytes(pcm_data)
+    bytes_per_sample_frame = channels * 2
+    if not pcm_bytes or len(pcm_bytes) % bytes_per_sample_frame:
+        raise ValueError("PCM16 data must contain complete non-empty sample frames")
+
+    samples_per_frame = sample_rate * frame_size_ms // 1000
+    if samples_per_frame <= 0:
+        raise ValueError("Invalid Opus sample rate or frame duration")
+    pcm_sample_count = len(pcm_bytes) // bytes_per_sample_frame
+    expected_packet_count = (
+        pcm_sample_count + samples_per_frame - 1
+    ) // samples_per_frame
+
+    encoder = OpusEncoderUtils(sample_rate, channels, frame_size_ms)
+    packets = []
+    try:
+        encoder.encode_pcm_to_opus_stream(
+            pcm_bytes,
+            end_of_stream=True,
+            callback=packets.append,
+        )
+    finally:
+        encoder.close()
+
+    if len(packets) != expected_packet_count:
+        raise RuntimeError(
+            "Opus encoding produced an incomplete packet sequence: "
+            f"expected {expected_packet_count}, got {len(packets)}"
+        )
+    if any(not isinstance(packet, bytes) or not packet for packet in packets):
+        raise RuntimeError("Opus encoding produced an invalid packet")
+    return packets
+
 
 class OpusEncoderUtils:
     """PCM到Opus的编码器"""

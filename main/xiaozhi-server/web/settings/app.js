@@ -10,7 +10,7 @@ import {
   setLogsActive,
 } from "./logs.js";
 import { initializePushTts } from "./push_tts.js";
-import { renderSoundbank } from "./soundbank.js?v=37";
+import { renderSoundbank } from "./soundbank.js?v=38";
 import {
   renderOverview,
   renderResources,
@@ -128,6 +128,12 @@ async function loadSettings() {
     state.startupSoundbankDirectory = payload.soundbank_runtime_directory
       || payload.config?.static_soundbank?.directory
       || "data/soundbank";
+    state.startupSoundbankAudio = payload.soundbank_runtime_audio || {
+      codec: "opus",
+      sample_rate: Number(payload.config?.xiaozhi?.audio_params?.sample_rate || 0),
+      channels: 1,
+      frame_duration_ms: 60,
+    };
     state.restartRequired = Boolean(payload.restart_required);
     $("#apiStatus").textContent = "Ready";
     renderAll();

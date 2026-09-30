@@ -102,6 +102,10 @@ class SimpleHttpServer:
                                 "/api/settings/soundbank/generate",
                                 self.settings_handler.handle_soundbank_generate,
                             ),
+                            web.post(
+                                "/api/settings/soundbank/optimize",
+                                self.settings_handler.handle_soundbank_optimize,
+                            ),
                             web.get(
                                 "/api/settings/soundbank/audio/{filename:.*}",
                                 self.settings_handler.handle_soundbank_audio,

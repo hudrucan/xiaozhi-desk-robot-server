@@ -385,10 +385,14 @@ main { grid-column: 2; min-width: 0; }
 .soundbank-entry-fields { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(220px, 1fr); gap: 10px; }
 .soundbank-entry-fields input { min-width: 0; min-height: 39px; height: 39px; font-size: 11px; }
 .soundbank-entry-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.soundbank-entry-metadata { display: grid; gap: 6px; }
 .soundbank-provenance { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; color: var(--faint); font-size: 9px; }
 .soundbank-provenance strong { color: var(--green); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
 .soundbank-provenance.manual strong { color: var(--muted); }
 .soundbank-provenance code { color: var(--muted); font: inherit; }
+.soundbank-optimization { color: var(--faint); font-size: 9px; }
+.soundbank-optimization.ready { color: var(--green); }
+.soundbank-optimization.stale { color: var(--red); }
 .soundbank-entry-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .soundbank-entry-actions .button { min-height: 34px; padding: 0 11px; font-size: 10px; }
 .soundbank-entry-actions .soundbank-remove { margin-left: auto; color: var(--red); }

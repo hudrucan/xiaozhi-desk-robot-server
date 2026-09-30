@@ -4,7 +4,10 @@ from collections.abc import Callable, Iterable
 
 
 P3_HEADER = struct.Struct(">BBH")
+P3_RESERVED_BYTE_1 = 0
+P3_RESERVED_BYTE_2 = 0
 P3_FRAME_DURATION_MS = 60
+P3_MAX_PACKET_LENGTH = (1 << 16) - 1
 
 
 def _read_packets(stream, *, allow_empty=True):
@@ -31,6 +34,42 @@ def _read_packets(stream, *, allow_empty=True):
     if not allow_empty and not packets:
         raise ValueError("Empty p3 file")
     return packets
+
+
+def encode_opus_packets(packets: Iterable[bytes]) -> bytes:
+    """Serialize a complete non-empty Opus packet sequence as p3 bytes."""
+    output = io.BytesIO()
+    packet_count = 0
+    for index, packet in enumerate(packets):
+        if not isinstance(packet, (bytes, bytearray, memoryview)):
+            raise TypeError(f"P3 packet {index} must be bytes-like")
+        packet_bytes = bytes(packet)
+        if not packet_bytes:
+            raise ValueError(f"P3 packet {index} is empty")
+        if len(packet_bytes) > P3_MAX_PACKET_LENGTH:
+            raise ValueError(
+                f"P3 packet {index} exceeds {P3_MAX_PACKET_LENGTH} bytes"
+            )
+        output.write(
+            P3_HEADER.pack(
+                P3_RESERVED_BYTE_1,
+                P3_RESERVED_BYTE_2,
+                len(packet_bytes),
+            )
+        )
+        output.write(packet_bytes)
+        packet_count += 1
+
+    if packet_count == 0:
+        raise ValueError("Cannot write an empty p3 file")
+    return output.getvalue()
+
+
+def write_opus_file(output_file, packets: Iterable[bytes]) -> None:
+    """Validate and write a complete p3 packet sequence to a file."""
+    payload = encode_opus_packets(packets)
+    with open(output_file, "wb") as stream:
+        stream.write(payload)
 
 
 def _duration_seconds(packets):

@@ -4,6 +4,12 @@ export const state = {
   patch: {},
   configuredSecrets: new Set(),
   startupSoundbankDirectory: "data/soundbank",
+  startupSoundbankAudio: {
+    codec: "opus",
+    sample_rate: 0,
+    channels: 1,
+    frame_duration_ms: 60,
+  },
   restartRequired: false,
   resources: null,
   activePage: "overview",

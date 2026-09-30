@@ -18,7 +18,7 @@ import unicodedata
 import wave
 
 from config.config_loader import get_project_dir
-from core.utils import p3, text_utils
+from core.utils import opus_encoder_utils, p3, text_utils
 from core.utils.config_secrets import is_credential_name, normalize_config_name
 
 
@@ -28,6 +28,8 @@ SOUNDBANK_MIME_TYPES = {
     ".p3": "application/octet-stream",
     ".wav": "audio/wav",
 }
+SOUNDBANK_OPTIMIZED_CODEC = "opus"
+SOUNDBANK_OPTIMIZED_CHANNELS = 1
 MAX_GENERATION_TEXT_LENGTH = 512
 _SAFE_SOURCE_EXTENSION = re.compile(r"^[a-z0-9]{1,8}$")
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^[a-zA-Z]:[\\/]")
@@ -108,6 +110,14 @@ def soundbank_entry_filename(entry):
             return filename.strip()
         raise SoundbankError("soundbank entry object must contain a non-empty file")
     raise SoundbankError("soundbank entry must be a filename string or object")
+
+
+def soundbank_entry_optimized(entry):
+    """Return optional optimized metadata without changing legacy entry rules."""
+    if not isinstance(entry, Mapping):
+        return None
+    optimized = entry.get("optimized")
+    return optimized if isinstance(optimized, Mapping) else None
 
 
 def resolve_soundbank_root(config, create=False):
@@ -356,12 +366,17 @@ class SoundbankAuthoringService:
         settings = sanitize_generation_settings(provider_config)
         fingerprint = generation_fingerprint(provider_name, settings)
         sample_rate = self._sample_rate()
+        audio_contract = self._audio_contract(sample_rate)
         soundbank_config = self.config.get("static_soundbank", {})
         soundbank_root = resolve_soundbank_root(soundbank_config, create=True)
         filename = self._generated_filename(
-            text, provider_name, fingerprint
+            text, provider_name, fingerprint, audio_contract
         )
         final_path = resolve_soundbank_asset(soundbank_root, filename)
+        optimized_filename = Path(filename).with_suffix(".p3").as_posix()
+        optimized_path = resolve_soundbank_asset(
+            soundbank_root, optimized_filename
+        )
 
         isolated_config = copy.deepcopy(self.config)
         selected_modules = isolated_config.setdefault("selected_module", {})
@@ -369,12 +384,13 @@ class SoundbankAuthoringService:
         isolated_config.setdefault("TTS", {})[provider_name] = provider_config
 
         try:
-            self._generate_wav(
+            self._generate_artifacts(
                 isolated_config,
                 text,
                 sample_rate,
                 soundbank_root,
                 final_path,
+                optimized_path,
             )
         except SoundbankError:
             raise
@@ -397,7 +413,63 @@ class SoundbankAuthoringService:
             provenance["model"] = model
         if voice is not None:
             provenance["voice"] = voice
-        return {"file": filename, "generated_by": provenance}
+        return {
+            "file": filename,
+            "optimized": {
+                "file": optimized_filename,
+                **audio_contract,
+            },
+            "generated_by": provenance,
+        }
+
+    def optimize(self, filename):
+        """Compile an existing canonical WAV/MP3 asset into validated p3."""
+        soundbank_root = resolve_soundbank_root(
+            self.config.get("static_soundbank", {}), create=True
+        )
+        canonical_path = resolve_soundbank_asset(
+            soundbank_root, filename, require_file=True
+        )
+        if canonical_path.suffix.lower() == ".p3":
+            raise SoundbankError(
+                "canonical p3 assets are already direct-playable", status=422
+            )
+
+        sample_rate = self._sample_rate()
+        audio_contract = self._audio_contract(sample_rate)
+        optimized_filename = self._optimized_filename(
+            filename,
+            canonical_path,
+            audio_contract,
+        )
+        optimized_path = resolve_soundbank_asset(
+            soundbank_root, optimized_filename
+        )
+
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix=".optimize-", dir=soundbank_root
+            ) as temporary_directory:
+                temp_root = Path(temporary_directory)
+                normalized_path = temp_root / "normalized.wav"
+                temporary_p3_path = temp_root / "optimized.p3"
+                self._normalize_wav(
+                    canonical_path, normalized_path, sample_rate
+                )
+                self._compile_p3(
+                    normalized_path,
+                    temporary_p3_path,
+                    sample_rate,
+                )
+                os.replace(temporary_p3_path, optimized_path)
+        except SoundbankError:
+            raise
+        except Exception as error:
+            raise SoundbankError(
+                f"soundbank optimization failed: {error}", status=502
+            ) from error
+
+        return {"file": optimized_filename, **audio_contract}
 
     def preview_path(self, filename):
         soundbank_root = resolve_soundbank_root(
@@ -422,6 +494,10 @@ class SoundbankAuthoringService:
             return "data/soundbank"
         directory = soundbank_config.get("directory", "data/soundbank")
         return directory if isinstance(directory, str) else "data/soundbank"
+
+    def runtime_audio_contract(self):
+        """Return the fixed optimized-audio contract of the running server."""
+        return self._audio_contract(self._sample_rate())
 
     def _p3_preview_wav(self, path):
         sample_rate = self._sample_rate()
@@ -529,7 +605,16 @@ class SoundbankAuthoringService:
         return sample_rate
 
     @staticmethod
-    def _generated_filename(text, provider, fingerprint):
+    def _audio_contract(sample_rate):
+        return {
+            "codec": SOUNDBANK_OPTIMIZED_CODEC,
+            "sample_rate": sample_rate,
+            "channels": SOUNDBANK_OPTIMIZED_CHANNELS,
+            "frame_duration_ms": p3.P3_FRAME_DURATION_MS,
+        }
+
+    @staticmethod
+    def _generated_filename(text, provider, fingerprint, audio_contract):
         normalized_text = normalize_soundbank_text(text)
         slug_source = unicodedata.normalize("NFKD", normalized_text)
         slug_source = slug_source.encode("ascii", "ignore").decode("ascii")
@@ -540,6 +625,7 @@ class SoundbankAuthoringService:
                 "text": normalized_text,
                 "provider": provider,
                 "config_fingerprint": fingerprint,
+                "audio_contract": audio_contract,
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -549,6 +635,32 @@ class SoundbankAuthoringService:
         return f"{slug}-{short_hash}.wav"
 
     @staticmethod
+    def _optimized_filename(filename, canonical_path, audio_contract):
+        identity = hashlib.sha256()
+        identity.update(
+            json.dumps(
+                {
+                    "file": filename,
+                    "audio_contract": audio_contract,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        with open(canonical_path, "rb") as canonical_file:
+            while True:
+                chunk = canonical_file.read(1024 * 1024)
+                if not chunk:
+                    break
+                identity.update(chunk)
+        short_hash = identity.hexdigest()[:8]
+        relative_path = Path(*re.split(r"[\\/]+", filename.strip()))
+        return relative_path.with_name(
+            f"{relative_path.stem}-{short_hash}.p3"
+        ).as_posix()
+
+    @staticmethod
     def _first_setting(config, *keys):
         for key in keys:
             value = config.get(key)
@@ -556,13 +668,14 @@ class SoundbankAuthoringService:
                 return value
         return None
 
-    def _generate_wav(
+    def _generate_artifacts(
         self,
         isolated_config,
         text,
         sample_rate,
         soundbank_root,
         final_path,
+        optimized_path,
     ):
         from core.utils.modules_initialize import initialize_tts
 
@@ -586,6 +699,7 @@ class SoundbankAuthoringService:
                 extension = "bin"
             source_path = temp_root / f"source.{extension}"
             normalized_path = temp_root / "normalized.wav"
+            temporary_p3_path = temp_root / "optimized.p3"
 
             try:
                 result = asyncio.run(
@@ -600,8 +714,17 @@ class SoundbankAuthoringService:
                         "TTS provider returned no audio", status=502
                     )
                 self._normalize_wav(source_path, normalized_path, sample_rate)
-                self._validate_wav(normalized_path, sample_rate)
-                os.replace(normalized_path, final_path)
+                self._compile_p3(
+                    normalized_path,
+                    temporary_p3_path,
+                    sample_rate,
+                )
+                self._publish_artifact_pair(
+                    normalized_path,
+                    temporary_p3_path,
+                    final_path,
+                    optimized_path,
+                )
             except SoundbankError:
                 raise
             except Exception as error:
@@ -619,6 +742,91 @@ class SoundbankAuthoringService:
                 result = close()
                 if inspect.isawaitable(result):
                     await result
+
+    @staticmethod
+    def _compile_p3(normalized_path, output_path, sample_rate):
+        frame_count, pcm_data = SoundbankAuthoringService._validate_wav(
+            normalized_path, sample_rate
+        )
+        samples_per_frame = (
+            sample_rate * p3.P3_FRAME_DURATION_MS // 1000
+        )
+        expected_packet_count = (
+            frame_count + samples_per_frame - 1
+        ) // samples_per_frame
+        try:
+            packets = opus_encoder_utils.encode_pcm16_to_opus_packets(
+                pcm_data,
+                sample_rate=sample_rate,
+                channels=SOUNDBANK_OPTIMIZED_CHANNELS,
+                frame_size_ms=p3.P3_FRAME_DURATION_MS,
+            )
+            if len(packets) != expected_packet_count:
+                raise ValueError(
+                    "optimized p3 packet count mismatch: "
+                    f"expected {expected_packet_count}, got {len(packets)}"
+                )
+            p3.validate_opus_packets(
+                packets,
+                sample_rate=sample_rate,
+                frame_duration_ms=p3.P3_FRAME_DURATION_MS,
+            )
+            p3.write_opus_file(output_path, packets)
+            loaded_packets = p3.load_validated_opus_file(
+                output_path,
+                sample_rate=sample_rate,
+                frame_duration_ms=p3.P3_FRAME_DURATION_MS,
+            )
+        except Exception as error:
+            raise SoundbankError(
+                f"optimized p3 compilation failed: {error}", status=502
+            ) from error
+        if len(loaded_packets) != expected_packet_count:
+            raise SoundbankError(
+                "optimized p3 validation found an incomplete packet sequence",
+                status=502,
+            )
+        if loaded_packets != packets:
+            raise SoundbankError(
+                "optimized p3 did not round-trip through its reader",
+                status=502,
+            )
+
+    @staticmethod
+    def _publish_artifact_pair(
+        temporary_wav,
+        temporary_p3,
+        final_wav,
+        final_p3,
+    ):
+        """Publish a validated pair while retaining prior files for rollback."""
+        backups = {}
+        published = []
+        try:
+            for index, final_path in enumerate((final_wav, final_p3)):
+                if final_path.exists():
+                    backup_path = temporary_wav.parent / (
+                        f"previous-{index}{final_path.suffix}"
+                    )
+                    os.replace(final_path, backup_path)
+                    backups[final_path] = backup_path
+
+            for temporary_path, final_path in (
+                (temporary_wav, final_wav),
+                (temporary_p3, final_p3),
+            ):
+                os.replace(temporary_path, final_path)
+                published.append(final_path)
+        except Exception:
+            for final_path in published:
+                try:
+                    final_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            for final_path, backup_path in backups.items():
+                if backup_path.exists():
+                    os.replace(backup_path, final_path)
+            raise
 
     @staticmethod
     def _normalize_wav(source_path, output_path, sample_rate):
@@ -689,3 +897,4 @@ class SoundbankAuthoringService:
             )
         if frame_count <= 0 or len(audio_data) < frame_count * sample_width:
             raise SoundbankError("generated WAV contains no audio", status=502)
+        return frame_count, audio_data

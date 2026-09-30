@@ -20,6 +20,7 @@ from core.soundbank import (
     resolve_soundbank_asset,
     resolve_soundbank_root,
     soundbank_entry_filename,
+    soundbank_entry_optimized,
     validate_soundbank_file,
 )
 from core.utils import opus_encoder_utils
@@ -348,7 +349,61 @@ class TTSProviderBase(ABC):
                     f"Ignoring invalid static soundbank entry {source_text}: {error}"
                 )
                 continue
-            resolved_entries[normalized_text] = asset_path
+            runtime_entry = {
+                "canonical_path": asset_path,
+                "canonical_packets": None,
+                "canonical_sample_rate": None,
+                "optimized_path": None,
+                "optimized_packets": None,
+                "optimized_metadata": None,
+            }
+            if (
+                asset_path.suffix.lower() == ".p3"
+                and self.conn.audio_format == "opus"
+            ):
+                try:
+                    runtime_entry["canonical_packets"] = tuple(
+                        self._preload_static_p3(
+                            soundbank_root, asset_path
+                        )
+                    )
+                    runtime_entry["canonical_sample_rate"] = self.conn.sample_rate
+                except Exception as error:
+                    logger.bind(tag=TAG).warning(
+                        "Static soundbank canonical p3 preload failed for "
+                        f"{source_text}: {error}"
+                    )
+
+            optimized = soundbank_entry_optimized(entry)
+            if optimized is not None:
+                if self._optimized_soundbank_compatible(optimized):
+                    try:
+                        optimized_path = resolve_soundbank_asset(
+                            soundbank_root,
+                            optimized.get("file"),
+                        )
+                        if optimized_path.suffix.lower() != ".p3":
+                            raise SoundbankError(
+                                "optimized soundbank asset must use .p3"
+                            )
+                        runtime_entry["optimized_path"] = optimized_path
+                        runtime_entry["optimized_packets"] = tuple(
+                            self._preload_static_p3(
+                                soundbank_root, optimized_path
+                            )
+                        )
+                        runtime_entry["optimized_metadata"] = dict(optimized)
+                    except Exception as error:
+                        logger.bind(tag=TAG).warning(
+                            "Static soundbank optimized p3 preload failed for "
+                            f"{source_text}; using canonical asset: {error}"
+                        )
+                else:
+                    logger.bind(tag=TAG).warning(
+                        "Static soundbank optimized metadata is incompatible for "
+                        f"{source_text}; using canonical asset"
+                    )
+            resolved_entries[normalized_text] = runtime_entry
 
         self._static_soundbank_root = soundbank_root
         self._static_soundbank_entries = resolved_entries
@@ -359,30 +414,91 @@ class TTSProviderBase(ABC):
             return None
 
         normalized_text = normalize_soundbank_text(segment_text)
-        asset_path = self._static_soundbank_entries.get(normalized_text)
-        if asset_path is None:
+        runtime_entry = self._static_soundbank_entries.get(normalized_text)
+        if runtime_entry is None:
             return None
 
-        try:
-            return validate_soundbank_file(
-                self._static_soundbank_root, asset_path
+        if (
+            runtime_entry["optimized_packets"]
+            and self._optimized_soundbank_compatible(
+                runtime_entry["optimized_metadata"]
             )
+        ):
+            return {
+                "path": runtime_entry["optimized_path"],
+                "packets": runtime_entry["optimized_packets"],
+                "optimized": True,
+            }
+        if (
+            runtime_entry["canonical_packets"]
+            and self.conn.audio_format == "opus"
+            and runtime_entry["canonical_sample_rate"] == self.conn.sample_rate
+        ):
+            return {
+                "path": runtime_entry["canonical_path"],
+                "packets": runtime_entry["canonical_packets"],
+                "optimized": False,
+            }
+
+        try:
+            canonical_path = validate_soundbank_file(
+                self._static_soundbank_root,
+                runtime_entry["canonical_path"],
+            )
+            return {
+                "path": canonical_path,
+                "packets": None,
+                "optimized": False,
+            }
         except SoundbankError as error:
             logger.bind(tag=TAG).warning(
                 f"Static soundbank asset is unavailable for {segment_text}: {error}"
             )
             return None
 
-    def _prepare_static_soundbank_audio(self, asset_path):
+    def _optimized_soundbank_compatible(self, optimized):
+        if not isinstance(optimized, Mapping):
+            return False
+        sample_rate = optimized.get("sample_rate")
+        channels = optimized.get("channels")
+        frame_duration_ms = optimized.get("frame_duration_ms")
+        return (
+            self.conn.audio_format == "opus"
+            and optimized.get("codec") == "opus"
+            and isinstance(sample_rate, int)
+            and not isinstance(sample_rate, bool)
+            and sample_rate == self.conn.sample_rate
+            and isinstance(channels, int)
+            and not isinstance(channels, bool)
+            and channels == 1
+            and isinstance(frame_duration_ms, int)
+            and not isinstance(frame_duration_ms, bool)
+            and frame_duration_ms == p3.P3_FRAME_DURATION_MS
+            and isinstance(optimized.get("file"), str)
+            and bool(optimized["file"].strip())
+        )
+
+    def _preload_static_p3(self, soundbank_root, asset_path):
+        validated_path = validate_soundbank_file(
+            soundbank_root, asset_path
+        )
+        return p3.load_validated_opus_file(
+            os.fspath(validated_path),
+            sample_rate=self.conn.sample_rate,
+            frame_duration_ms=p3.P3_FRAME_DURATION_MS,
+        )
+
+    def _prepare_static_soundbank_audio(self, asset):
+        cached_packets = asset.get("packets")
+        if cached_packets:
+            return cached_packets
+
+        asset_path = asset["path"]
         extension = asset_path.suffix.lower()
         if extension == ".p3":
             if self.conn.audio_format != "opus":
                 raise ValueError("p3 direct playback requires negotiated Opus audio")
-            return p3.load_validated_opus_file(
-                os.fspath(asset_path),
-                sample_rate=self.conn.sample_rate,
-                frame_duration_ms=60,
-            )
+            raise ValueError("p3 asset was unavailable during preload")
 
         audio_frames = []
         if self.conn.audio_format == "pcm":
@@ -399,10 +515,10 @@ class TTSProviderBase(ABC):
 
     def _try_process_static_soundbank(self, segment_text, opus_handler):
         try:
-            asset_path = self._resolve_static_soundbank_asset(segment_text)
-            if asset_path is None:
+            asset = self._resolve_static_soundbank_asset(segment_text)
+            if asset is None:
                 return False
-            audio_frames = self._prepare_static_soundbank_audio(asset_path)
+            audio_frames = self._prepare_static_soundbank_audio(asset)
         except Exception as error:
             logger.bind(tag=TAG).warning(
                 f"Static soundbank asset failed for {segment_text}; falling back to TTS: {error}"

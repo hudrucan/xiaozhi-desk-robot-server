@@ -114,6 +114,7 @@ class SettingsHandler(BaseHandler):
         payload = self.editor.read_public()
         payload["restart_required"] = self.restart_required
         payload["soundbank_runtime_directory"] = self.soundbank.runtime_directory()
+        payload["soundbank_runtime_audio"] = self.soundbank.runtime_audio_contract()
         return self._disable_cache(web.json_response(payload))
 
     async def handle_status(self, request):
@@ -163,6 +164,7 @@ class SettingsHandler(BaseHandler):
         )
         payload["restart_required"] = self.restart_required
         payload["soundbank_runtime_directory"] = self.soundbank.runtime_directory()
+        payload["soundbank_runtime_audio"] = self.soundbank.runtime_audio_contract()
         return self._disable_cache(web.json_response(payload))
 
     async def handle_restart(self, request):
@@ -241,6 +243,32 @@ class SettingsHandler(BaseHandler):
 
         return self._disable_cache(
             web.json_response({"success": True, "entry": entry})
+        )
+
+    async def handle_soundbank_optimize(self, request):
+        self._require_access(request)
+        self._require_json(request)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise SoundbankError("Request body must be an object")
+            optimized = await asyncio.to_thread(
+                self.soundbank.optimize,
+                body.get("file"),
+            )
+        except SoundbankError as error:
+            return self._disable_cache(
+                web.json_response({"error": str(error)}, status=error.status)
+            )
+        except (ValueError, TypeError) as error:
+            return self._disable_cache(
+                web.json_response({"error": str(error)}, status=400)
+            )
+
+        return self._disable_cache(
+            web.json_response(
+                {"success": True, "optimized": optimized}
+            )
         )
 
     async def handle_soundbank_audio(self, request):

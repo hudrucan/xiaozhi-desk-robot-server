@@ -2,6 +2,7 @@ import { updateValue } from "./configuration.js?v=34";
 import { $, escapeHtml, getPath, state, toast } from "./shared.js";
 
 const NEW_ENTRY_KEY = "__soundbank_new_entry__";
+const P3_FRAME_DURATION_MS = 60;
 const EMOJI_CODE_POINT_RANGES = [
   [0x1F1E6, 0x1F1FF],
   [0x1F300, 0x1F5FF],
@@ -14,10 +15,12 @@ const EMOJI_CODE_POINT_RANGES = [
 ];
 const EMOJI_SEQUENCE_CODE_POINTS = new Set([0x200D, 0x20E3, 0xFE0F]);
 const activeGenerations = new Map();
+const activeOptimizations = new Set();
 const generationErrors = new Map();
 
 let newPhraseDraft = "";
 let previewAsset = "";
+let previewFallbackAsset = "";
 
 function entries() {
   const value = getPath(state.config, "static_soundbank.entries", {});
@@ -38,6 +41,62 @@ function entryProvenance(entry) {
   return provenance && typeof provenance === "object" && !Array.isArray(provenance)
     ? provenance
     : null;
+}
+
+function entryOptimized(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const optimized = entry.optimized;
+  return optimized && typeof optimized === "object" && !Array.isArray(optimized)
+    ? optimized
+    : null;
+}
+
+function hasOptimized(entry) {
+  return Boolean(
+    entry
+    && typeof entry === "object"
+    && !Array.isArray(entry)
+    && Object.prototype.hasOwnProperty.call(entry, "optimized"),
+  );
+}
+
+function optimizedApplicable(entry) {
+  const optimized = entryOptimized(entry);
+  const runtimeAudio = state.startupSoundbankAudio || {};
+  return Boolean(
+    optimized
+    && typeof optimized.file === "string"
+    && /\.p3$/i.test(optimized.file)
+    && optimized.codec === runtimeAudio.codec
+    && Number.isInteger(optimized.sample_rate)
+    && optimized.sample_rate === runtimeAudio.sample_rate
+    && Number.isInteger(optimized.channels)
+    && optimized.channels === runtimeAudio.channels
+    && Number.isInteger(optimized.frame_duration_ms)
+    && optimized.frame_duration_ms === runtimeAudio.frame_duration_ms
+    && optimized.frame_duration_ms === P3_FRAME_DURATION_MS,
+  );
+}
+
+function previewFile(entry) {
+  const optimized = entryOptimized(entry);
+  return optimizedApplicable(entry) ? optimized.file : entryFile(entry);
+}
+
+function optimizationMarkup(entry) {
+  const optimized = entryOptimized(entry);
+  const canonicalFile = entryFile(entry);
+  if (optimizedApplicable(entry)) {
+    const sampleRateKhz = Number(optimized.sample_rate) / 1000;
+    return `<div class="soundbank-optimization ready">P3 optimized · Opus ${escapeHtml(sampleRateKhz)} kHz · ${escapeHtml(optimized.frame_duration_ms)} ms</div>`;
+  }
+  if (hasOptimized(entry)) {
+    return '<div class="soundbank-optimization stale">P3 optimization is stale or incompatible</div>';
+  }
+  if (/\.p3$/i.test(canonicalFile)) {
+    return '<div class="soundbank-optimization ready">P3 direct · prevalidated at server startup</div>';
+  }
+  return '<div class="soundbank-optimization">Canonical asset · P3 optimization available</div>';
 }
 
 function assetError(asset) {
@@ -168,10 +227,22 @@ function generationButton(label, action, key, mode, disabled = false) {
     </button>`;
 }
 
+function optimizationButton(entry, key, disabled = false) {
+  const canonicalFile = entryFile(entry);
+  if (/\.p3$/i.test(canonicalFile)) return "";
+  const loading = activeOptimizations.has(key);
+  const label = hasOptimized(entry) ? "Re-optimize" : "Optimize";
+  return `
+    <button class="button secondary${loading ? " loading" : ""}" data-soundbank-action="optimize" type="button" ${disabled || loading ? "disabled" : ""}>
+      <span class="soundbank-button-spinner" aria-hidden="true"></span>
+      <span>${escapeHtml(loading ? "Optimizing…" : label)}</span>
+    </button>`;
+}
+
 function entryCard(phrase, entry, index) {
   const file = entryFile(entry);
   const provenance = entryProvenance(entry);
-  const busy = activeGenerations.has(phrase);
+  const busy = activeGenerations.has(phrase) || activeOptimizations.has(phrase);
   const error = generationErrors.get(phrase) || "";
   const invalid = Boolean(phraseError(phrase, phrase) || assetError(file));
   const generationLocked = generationDirectoryLocked();
@@ -189,11 +260,15 @@ function entryCard(phrase, entry, index) {
         </label>
       </div>
       <footer class="soundbank-entry-footer">
-        ${provenanceMarkup(entry)}
+        <div class="soundbank-entry-metadata">
+          ${provenanceMarkup(entry)}
+          ${optimizationMarkup(entry)}
+        </div>
         <div class="soundbank-entry-actions">
           <button class="button secondary" data-soundbank-action="preview" type="button" ${busy || invalid ? "disabled" : ""}>Preview</button>
-          ${generationButton("Regenerate same", "regenerate-same", phrase, "same", generationLocked || invalid || !provenance)}
-          ${generationButton("Generate with current TTS", "generate-current", phrase, "current", generationLocked || invalid)}
+          ${optimizationButton(entry, phrase, generationLocked || invalid || busy)}
+          ${generationButton("Regenerate same", "regenerate-same", phrase, "same", generationLocked || invalid || !provenance || busy)}
+          ${generationButton("Generate with current TTS", "generate-current", phrase, "current", generationLocked || invalid || busy)}
           <button class="button secondary soundbank-remove" data-soundbank-action="remove" type="button" ${busy ? "disabled" : ""}>Remove</button>
         </div>
       </footer>
@@ -252,7 +327,7 @@ function renderWorkspace() {
           </article>
           <article class="field-card">
             <label for="soundbankDirectory">Directory <small>static_soundbank.directory</small></label>
-            <input id="soundbankDirectory" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" ${activeGenerations.size ? "disabled" : ""} />
+            <input id="soundbankDirectory" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" ${activeGenerations.size || activeOptimizations.size ? "disabled" : ""} />
             <p class="field-help">Entry paths are relative to this directory. Generated filenames are assigned by the server.</p>
           </article>
         </div>
@@ -336,6 +411,9 @@ function validateRow(row) {
   row.querySelectorAll('[data-soundbank-action="preview"]').forEach((button) => {
     button.disabled = Boolean(message);
   });
+  row.querySelectorAll('[data-soundbank-action="optimize"]').forEach((button) => {
+    button.disabled = generationLocked || Boolean(message) || !/\.(?:wav|mp3)$/i.test(file);
+  });
   return { valid: !message, phrase, file, originalKey, originalEntry };
 }
 
@@ -356,6 +434,7 @@ function commitRow(row, reportInvalid = false) {
   if (result.originalEntry && typeof result.originalEntry === "object" && !Array.isArray(result.originalEntry)) {
     updatedEntry = { ...result.originalEntry, file: result.file };
     if (phraseChanged || fileChanged) delete updatedEntry.generated_by;
+    if (fileChanged) delete updatedEntry.optimized;
   } else {
     updatedEntry = result.file;
   }
@@ -374,16 +453,26 @@ function commitRow(row, reportInvalid = false) {
   if (phraseChanged || fileChanged) {
     row.querySelector(".soundbank-provenance").outerHTML = provenanceMarkup(updatedEntry);
   }
+  if (fileChanged) {
+    row.querySelector(".soundbank-optimization").outerHTML = optimizationMarkup(updatedEntry);
+  }
   validateRow(row);
   return { phrase: result.phrase, entry: updatedEntry };
 }
 
 function removeEntry(phrase) {
+  const removedEntry = entries()[phrase];
   const updatedEntries = {};
   Object.entries(entries()).forEach(([candidate, entry]) => {
     if (candidate !== phrase) updatedEntries[candidate] = entry;
   });
-  if (previewAsset === entryFile(entries()[phrase])) previewAsset = "";
+  if (
+    previewAsset === entryFile(removedEntry)
+    || previewAsset === previewFile(removedEntry)
+  ) {
+    previewAsset = "";
+    previewFallbackAsset = "";
+  }
   generationErrors.delete(phrase);
   updateValue("static_soundbank.entries", updatedEntries);
   renderSoundbank();
@@ -443,6 +532,57 @@ async function generateEntry(key, phrase, mode, generatedBy = null) {
   }
 }
 
+async function optimizeEntry(key, entry) {
+  if (generationDirectoryLocked()) {
+    generationErrors.set(
+      key,
+      "Save and restart the server before optimizing in the new soundbank directory.",
+    );
+    renderSoundbank();
+    return;
+  }
+  if (activeOptimizations.has(key)) return;
+  activeOptimizations.add(key);
+  generationErrors.delete(key);
+  renderSoundbank();
+
+  try {
+    const response = await fetch("/api/settings/soundbank/optimize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file: entryFile(entry) }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Soundbank optimization failed");
+    if (!payload.optimized || typeof payload.optimized !== "object" || Array.isArray(payload.optimized)) {
+      throw new Error("Soundbank optimization returned invalid metadata");
+    }
+    if (generationDirectoryLocked()) {
+      throw new Error(
+        "Soundbank directory changed while optimizing; the optimized asset was not added.",
+      );
+    }
+
+    const updatedEntries = {};
+    Object.entries(entries()).forEach(([candidate, currentEntry]) => {
+      if (candidate !== key) {
+        updatedEntries[candidate] = currentEntry;
+        return;
+      }
+      updatedEntries[candidate] = currentEntry && typeof currentEntry === "object" && !Array.isArray(currentEntry)
+        ? { ...currentEntry, optimized: payload.optimized }
+        : { file: entryFile(currentEntry), optimized: payload.optimized };
+    });
+    updateValue("static_soundbank.entries", updatedEntries);
+    toast(`Optimized soundbank audio for “${key}”. Save changes to persist the metadata.`);
+  } catch (error) {
+    generationErrors.set(key, error.message || "Soundbank optimization failed");
+  } finally {
+    activeOptimizations.delete(key);
+    renderSoundbank();
+  }
+}
+
 function attachRowListeners(row) {
   row.querySelectorAll("[data-soundbank-phrase], [data-soundbank-file]").forEach((input) => {
     input.addEventListener("input", () => {
@@ -463,7 +603,10 @@ function attachRowListeners(row) {
       if (!committed) return;
 
       if (action === "preview") {
-        previewAsset = entryFile(committed.entry);
+        previewAsset = previewFile(committed.entry);
+        previewFallbackAsset = previewAsset !== entryFile(committed.entry)
+          ? entryFile(committed.entry)
+          : "";
         renderSoundbank();
         const audio = $("#soundbankAudio");
         audio?.play().catch(() => {
@@ -472,6 +615,8 @@ function attachRowListeners(row) {
         });
       } else if (action === "generate-current") {
         generateEntry(committed.phrase, committed.phrase, "current");
+      } else if (action === "optimize") {
+        optimizeEntry(committed.phrase, committed.entry);
       } else if (action === "regenerate-same") {
         const provenance = entryProvenance(committed.entry);
         if (!provenance) {
@@ -530,6 +675,17 @@ function attachListeners() {
 
   const audio = $("#soundbankAudio");
   audio?.addEventListener("error", () => {
+    if (previewFallbackAsset) {
+      previewAsset = previewFallbackAsset;
+      previewFallbackAsset = "";
+      renderSoundbank();
+      const fallbackStatus = $("#soundbankPreviewStatus");
+      if (fallbackStatus) {
+        fallbackStatus.textContent = "Optimized preview was unavailable; using the canonical asset.";
+      }
+      $("#soundbankAudio")?.play().catch(() => {});
+      return;
+    }
     const status = $("#soundbankPreviewStatus");
     if (status) {
       status.textContent = "Preview failed. Check that the asset exists in the configured directory.";
