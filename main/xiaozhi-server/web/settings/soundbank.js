@@ -133,13 +133,15 @@ function entryCard(phrase, entry, index) {
           <input id="${rowId}-file" data-soundbank-file value="${escapeHtml(file)}" spellcheck="false" ${busy ? "disabled" : ""} />
         </label>
       </div>
-      ${provenanceMarkup(entry)}
-      <div class="soundbank-entry-actions">
-        <button class="button secondary" data-soundbank-action="preview" type="button" ${busy || invalid ? "disabled" : ""}>Preview</button>
-        ${generationButton("Regenerate same", "regenerate-same", phrase, "same", invalid || !provenance)}
-        ${generationButton("Generate with current TTS", "generate-current", phrase, "current", invalid)}
-        <button class="button secondary soundbank-remove" data-soundbank-action="remove" type="button" ${busy ? "disabled" : ""}>Remove</button>
-      </div>
+      <footer class="soundbank-entry-footer">
+        ${provenanceMarkup(entry)}
+        <div class="soundbank-entry-actions">
+          <button class="button secondary" data-soundbank-action="preview" type="button" ${busy || invalid ? "disabled" : ""}>Preview</button>
+          ${generationButton("Regenerate same", "regenerate-same", phrase, "same", invalid || !provenance)}
+          ${generationButton("Generate with current TTS", "generate-current", phrase, "current", invalid)}
+          <button class="button secondary soundbank-remove" data-soundbank-action="remove" type="button" ${busy ? "disabled" : ""}>Remove</button>
+        </div>
+      </footer>
       <p class="soundbank-row-error${error ? " visible" : ""}" data-soundbank-error aria-live="polite">${escapeHtml(error)}</p>
     </article>`;
 }
@@ -168,43 +170,47 @@ function renderWorkspace() {
 
   return `
     <div class="soundbank-layout">
-      <section class="panel soundbank-status-panel">
-        <div class="soundbank-status-card soundbank-status-enabled">
+      <section class="settings-group panel soundbank-settings-panel">
+        <header>
           <div>
-            <span class="soundbank-label">Status</span>
-            <strong>${enabled ? "Enabled" : "Disabled"}</strong>
-            <small>Use matching local audio before the configured TTS provider.</small>
+            <h3>Soundbank settings</h3>
+            <p>Exact-match responses served from local audio assets.</p>
           </div>
-          <label class="toggle" aria-label="Enable static soundbank">
-            <input id="soundbankEnabled" type="checkbox" ${enabled ? "checked" : ""} />
-            <span class="toggle-track"></span>
-          </label>
+          <span>${entryList.length}</span>
+        </header>
+        <div class="form-grid">
+          <article class="field-card toggle-card">
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <div class="field-label"><span>Enabled</span><small>static_soundbank.enabled</small></div>
+                <p class="field-help">Use matching local audio before the configured TTS provider.</p>
+              </div>
+              <label class="toggle" aria-label="Enable static soundbank">
+                <input id="soundbankEnabled" type="checkbox" ${enabled ? "checked" : ""} />
+                <span class="toggle-track"></span>
+              </label>
+            </div>
+          </article>
+          <article class="field-card">
+            <label for="soundbankDirectory">Directory <small>static_soundbank.directory</small></label>
+            <input id="soundbankDirectory" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" />
+            <p class="field-help">Entry paths are relative to this directory. Generated filenames are assigned by the server.</p>
+          </article>
         </div>
-        <label class="soundbank-status-card soundbank-directory" for="soundbankDirectory">
-          <span class="soundbank-label">Directory</span>
-          <input id="soundbankDirectory" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" />
-          <small>Entry paths are relative to this directory.</small>
-        </label>
-        <div class="soundbank-status-card">
-          <span class="soundbank-label">Entries</span>
-          <strong>${entryList.length}</strong>
-          <small>Generated filenames are assigned by the server.</small>
-        </div>
-        <div class="soundbank-status-card">
-          <span class="soundbank-label">Apply changes</span>
+        <footer class="soundbank-settings-footer">
           <span class="badge ${restart.className}" id="soundbankApplyStatus"><i></i>${escapeHtml(restart.label)}</span>
-          <small>Generation uses the TTS configuration loaded at server startup.</small>
-        </div>
+          <p>Generation uses the TTS configuration loaded at server startup.</p>
+        </footer>
       </section>
 
-      <section class="panel soundbank-new-panel">
-        <header>
+      <section class="panel soundbank-compose-panel">
+        <div class="panel-heading">
           <div>
             <p class="eyebrow">New entry</p>
             <h3>Generate a local response</h3>
             <p class="field-help">Save and restart provider changes before generating with the newly configured TTS.</p>
           </div>
-        </header>
+        </div>
         <form id="soundbankNewForm" class="soundbank-new-form">
           <label for="soundbankNewPhrase">
             <span>Phrase</span>
@@ -213,26 +219,25 @@ function renderWorkspace() {
           ${generationButton("Generate with current TTS", "generate-new", NEW_ENTRY_KEY, "current", newDisabled)}
           <p class="soundbank-row-error${newError || newPhraseValidation ? " visible" : ""}" id="soundbankNewError" aria-live="polite">${escapeHtml(newError || newPhraseValidation)}</p>
         </form>
-      </section>
-
-      <section class="panel soundbank-preview-panel">
-        <div>
-          <p class="eyebrow">Shared preview</p>
-          <strong>${previewAsset ? escapeHtml(previewAsset) : "Select an entry to preview"}</strong>
+        <div class="soundbank-preview">
+          <div>
+            <span class="soundbank-label">Shared preview</span>
+            <strong>${previewAsset ? escapeHtml(previewAsset) : "Select an entry to preview"}</strong>
+          </div>
+          <audio id="soundbankAudio" controls preload="none" ${previewAsset ? `src="${escapeHtml(previewUrl(previewAsset))}"` : ""}></audio>
+          <p id="soundbankPreviewStatus" class="field-help" aria-live="polite">${previewAsset ? "Ready to play." : "Preview uses the saved/generated file in the running server's soundbank directory."}</p>
         </div>
-        <audio id="soundbankAudio" controls preload="none" ${previewAsset ? `src="${escapeHtml(previewUrl(previewAsset))}"` : ""}></audio>
-        <p id="soundbankPreviewStatus" class="field-help" aria-live="polite">${previewAsset ? "Ready to play." : "Preview uses the saved/generated file in the running server's soundbank directory."}</p>
       </section>
 
-      <section class="panel soundbank-entries-panel">
-        <header>
+      <section class="panel soundbank-list-panel">
+        <div class="panel-heading">
           <div>
             <p class="eyebrow">Authoring</p>
             <h3>Entries</h3>
             <p class="field-help">Phrase and asset edits update local Settings state. Paths must be relative, exclude <code>..</code>, and use <code>.p3</code>, <code>.wav</code>, or <code>.mp3</code>.</p>
           </div>
           <span class="badge">${entryList.length} ${entryList.length === 1 ? "entry" : "entries"}</span>
-        </header>
+        </div>
         <div class="soundbank-entry-list" id="soundbankEntries">
           ${entryList.length
             ? entryList.map(([phrase, entry], index) => entryCard(phrase, entry, index)).join("")

@@ -361,36 +361,29 @@ main { grid-column: 2; min-width: 0; }
 .field-help { margin: 8px 0 0; color: var(--faint); font-size: 11px; }
 
 .soundbank-layout { display: grid; gap: 16px; }
-.soundbank-status-panel { display: grid; grid-template-columns: 1fr 1.5fr 0.72fr 1.15fr; gap: 1px; padding: 0; overflow: hidden; background: var(--border); }
-.soundbank-status-card { min-width: 0; min-height: 128px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 6px; padding: 18px; background: var(--surface-panel); }
-.soundbank-status-card strong { display: block; overflow: hidden; color: var(--text); font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.soundbank-status-card small { color: var(--faint); font-size: 10px; line-height: 1.45; }
-.soundbank-status-enabled { flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.soundbank-status-enabled > div { min-width: 0; }
 .soundbank-label { color: var(--faint); font-size: 9px; font-weight: 750; letter-spacing: 0.11em; text-transform: uppercase; }
-.soundbank-directory input { min-height: 36px; height: 36px; padding: 0 10px; background: rgba(9, 7, 5, 0.48); font-size: 11px; }
-
-.soundbank-new-panel { padding: 0; overflow: hidden; }
-.soundbank-new-panel > header, .soundbank-entries-panel > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 18px 20px; border-bottom: 1px solid rgba(94, 75, 49, 0.34); }
-.soundbank-new-panel > header h3, .soundbank-entries-panel > header h3 { margin-top: 3px; }
-.soundbank-new-panel > header .field-help, .soundbank-entries-panel > header .field-help { margin-top: 5px; }
-.soundbank-new-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; padding: 16px 20px 18px; }
+.soundbank-settings-footer { display: flex; align-items: center; gap: 12px; padding: 0 15px 15px; }
+.soundbank-settings-footer p { margin: 0; color: var(--faint); font-size: 10px; }
+.soundbank-compose-panel > .panel-heading, .soundbank-list-panel > .panel-heading { padding-bottom: 15px; border-bottom: 1px solid rgba(94, 75, 49, 0.34); }
+.soundbank-compose-panel > .panel-heading h3, .soundbank-list-panel > .panel-heading h3 { margin-top: 3px; }
+.soundbank-compose-panel > .panel-heading .field-help, .soundbank-list-panel > .panel-heading .field-help { margin-top: 5px; }
+.soundbank-new-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
 .soundbank-new-form > label, .soundbank-entry-fields label { min-width: 0; display: grid; gap: 6px; color: var(--faint); font-size: 9px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; }
 .soundbank-new-form .button { min-height: 42px; }
 .soundbank-new-form .soundbank-row-error { grid-column: 1 / -1; }
-
-.soundbank-preview-panel { display: grid; grid-template-columns: minmax(190px, 0.7fr) minmax(260px, 1.3fr); align-items: center; gap: 16px 22px; padding: 17px 20px; }
-.soundbank-preview-panel strong { display: block; margin-top: 4px; overflow-wrap: anywhere; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.soundbank-preview-panel audio { width: 100%; height: 38px; opacity: 0.82; }
-.soundbank-preview-panel .field-help { grid-column: 1 / -1; margin: -5px 0 0; }
-
-.soundbank-entries-panel { padding: 0; overflow: hidden; }
-.soundbank-entry-list { display: grid; gap: 10px; padding: 14px; }
+.soundbank-preview { display: grid; grid-template-columns: minmax(190px, 0.7fr) minmax(260px, 1.3fr); align-items: center; gap: 12px 20px; margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(94, 75, 49, 0.3); }
+.soundbank-preview strong { display: block; margin-top: 4px; overflow-wrap: anywhere; font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.soundbank-preview audio { width: 100%; height: 38px; opacity: 0.82; }
+.soundbank-preview .field-help { grid-column: 1 / -1; margin: -3px 0 0; }
+.soundbank-list-panel > .panel-heading { align-items: flex-start; }
+.soundbank-list-panel > .panel-heading .field-help { max-width: 760px; }
+.soundbank-entry-list { display: grid; gap: 10px; }
 .soundbank-entry-card { display: grid; gap: 11px; padding: 13px; border: 1px solid rgba(94, 75, 49, 0.42); border-radius: 13px; background: rgba(9, 7, 5, 0.28); transition: border-color 150ms ease, opacity 150ms ease; }
 .soundbank-entry-card.invalid { border-color: rgba(225, 123, 109, 0.58); }
 .soundbank-entry-card.generating { border-color: rgba(213, 168, 94, 0.64); }
 .soundbank-entry-fields { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(220px, 1fr); gap: 10px; }
 .soundbank-entry-fields input { min-width: 0; min-height: 39px; height: 39px; font-size: 11px; }
+.soundbank-entry-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .soundbank-provenance { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; color: var(--faint); font-size: 9px; }
 .soundbank-provenance strong { color: var(--green); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
 .soundbank-provenance.manual strong { color: var(--muted); }
@@ -499,7 +492,7 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
   .resource-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .log-toolbar { align-items: stretch; flex-direction: column; }
   .log-actions { justify-content: flex-end; }
-  .soundbank-status-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .soundbank-entry-footer { align-items: flex-start; flex-direction: column; }
 }
 
 @media (max-width: 780px) {
@@ -529,8 +522,8 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
   .turn-transcript, .tool-payloads { grid-template-columns: 1fr; }
   .field-card.wide { grid-column: auto; }
   .soundbank-entry-fields { grid-template-columns: 1fr; }
-  .soundbank-new-form, .soundbank-preview-panel { grid-template-columns: 1fr; }
-  .soundbank-preview-panel .field-help { grid-column: auto; }
+  .soundbank-new-form, .soundbank-preview { grid-template-columns: 1fr; }
+  .soundbank-preview .field-help { grid-column: auto; }
   .memory-create-fields, .memory-entry-fields { grid-template-columns: 1fr; }
   .memory-compose .button { min-height: 42px; }
   .log-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -552,7 +545,7 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
   .metric-card { min-height: 96px; }
   .metric-card strong { margin-top: 12px; }
   .provider-fields { grid-template-columns: 1fr; }
-  .soundbank-status-panel { grid-template-columns: 1fr; }
+  .soundbank-settings-footer { align-items: flex-start; flex-direction: column; }
   .soundbank-entry-actions { align-items: stretch; flex-direction: column; }
   .soundbank-entry-actions .soundbank-remove { margin-left: 0; }
   .restart-panel { grid-template-columns: auto 1fr; }
