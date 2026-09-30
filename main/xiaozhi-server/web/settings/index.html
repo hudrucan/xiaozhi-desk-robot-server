@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=31" />
+    <link rel="stylesheet" href="/settings/styles.css?v=34" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -30,10 +30,11 @@
           <a href="#logs"><span>03</span>Logs</a>
           <a href="#providers"><span>04</span>Providers</a>
           <a href="#assistant"><span>05</span>Assistant</a>
-          <a href="#memory"><span>06</span>Memory</a>
-          <a href="#runtime"><span>07</span>Runtime</a>
-          <a href="#integrations"><span>08</span>Integrations</a>
-          <a href="#advanced"><span>09</span>Advanced</a>
+          <a href="#soundbank"><span>06</span>Soundbank</a>
+          <a href="#memory"><span>07</span>Memory</a>
+          <a href="#runtime"><span>08</span>Runtime</a>
+          <a href="#integrations"><span>09</span>Integrations</a>
+          <a href="#advanced"><span>10</span>Advanced</a>
         </nav>
 
         <div class="sidebar-live" aria-label="Live server status">
@@ -343,6 +344,17 @@
             <div class="settings-groups" id="assistantFields"></div>
           </section>
 
+          <section id="soundbank" class="page-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Local speech assets</p>
+                <h2>Soundbank</h2>
+                <p class="section-copy">Manage exact-match phrases, generate canonical audio, and preview local responses.</p>
+              </div>
+            </div>
+            <div id="soundbankWorkspace"></div>
+          </section>
+
           <section id="memory" class="page-section">
             <div class="section-heading">
               <div>
@@ -428,6 +440,6 @@
       </div>
     </div>
 
-    <script type="module" src="/settings/app.js?v=33"></script>
+    <script type="module" src="/settings/app.js?v=34"></script>
   </body>
 </html>

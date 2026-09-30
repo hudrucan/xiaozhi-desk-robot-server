@@ -100,6 +100,7 @@ class SettingsHandler(BaseHandler):
             "push_tts.js",
             "resources.js",
             "shared.js",
+            "soundbank.js",
             "logs.js",
             "styles.css",
         }:

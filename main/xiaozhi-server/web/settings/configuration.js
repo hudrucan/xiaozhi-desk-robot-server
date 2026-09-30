@@ -17,13 +17,12 @@ const SECRET_NAMES = new Set([
 ]);
 
 let dirtyStateHandler = () => {};
-let soundbankRowSequence = 0;
 
 export function initializeConfiguration(onDirtyStateChange) {
   dirtyStateHandler = onDirtyStateChange;
 }
 
-function updateValue(path, value) {
+export function updateValue(path, value) {
   setPath(state.config, path, value);
   setPath(state.patch, path, value);
   dirtyStateHandler();
@@ -134,227 +133,6 @@ function attachFieldListeners(root = document) {
   });
 }
 
-function getStaticSoundbankEntries() {
-  const entries = getPath(state.config, "static_soundbank.entries", {});
-  return entries && typeof entries === "object" && !Array.isArray(entries) ? entries : {};
-}
-
-function staticSoundbankEntryFile(entry) {
-  if (typeof entry === "string") return entry;
-  if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-    return typeof entry.file === "string" ? entry.file : "";
-  }
-  return "";
-}
-
-function staticSoundbankEntryRow(phrase = "", asset = "") {
-  soundbankRowSequence += 1;
-  const rowId = `soundbank-entry-${soundbankRowSequence}`;
-  return `
-    <div class="soundbank-entry-row" data-soundbank-entry data-original-key="${escapeHtml(phrase)}">
-      <label class="soundbank-entry-field soundbank-phrase" for="${rowId}-phrase">
-        <span>Text</span>
-        <input id="${rowId}-phrase" data-soundbank-phrase type="text" value="${escapeHtml(phrase)}" placeholder="Hello" />
-      </label>
-      <label class="soundbank-entry-field" for="${rowId}-asset">
-        <span>Audio file</span>
-        <input id="${rowId}-asset" data-soundbank-asset type="text" value="${escapeHtml(asset)}" placeholder="hello.p3" spellcheck="false" />
-      </label>
-      <button class="button secondary soundbank-remove" data-soundbank-remove type="button" aria-label="Remove static soundbank entry">Remove</button>
-      <p class="soundbank-row-error" data-soundbank-error aria-live="polite"></p>
-    </div>`;
-}
-
-function staticSoundbankPanel() {
-  const enabled = getPath(state.config, "static_soundbank.enabled", false);
-  const directory = getPath(state.config, "static_soundbank.directory", "data/soundbank");
-  const entries = getStaticSoundbankEntries();
-  const rows = Object.entries(entries)
-    .map(([phrase, entry]) => staticSoundbankEntryRow(phrase, staticSoundbankEntryFile(entry)))
-    .join("");
-
-  return `
-    <section class="settings-group panel soundbank-panel" data-soundbank-panel>
-      <header>
-        <div>
-          <h3>Static soundbank</h3>
-          <p>Exact-match phrases mapped to local audio assets.</p>
-        </div>
-        <span data-soundbank-count>${Object.keys(entries).length}</span>
-      </header>
-      <div class="soundbank-editor">
-        <div class="soundbank-controls">
-          <div class="soundbank-enabled">
-            <div>
-              <div class="field-label"><span>Enabled</span> ${pathHint("static_soundbank.enabled")}</div>
-              <p class="field-help">Use matching local audio before the configured TTS provider.</p>
-            </div>
-            <label class="toggle" aria-label="Enable static soundbank">
-              <input data-path="static_soundbank.enabled" type="checkbox" ${enabled ? "checked" : ""} />
-              <span class="toggle-track"></span>
-            </label>
-          </div>
-          <div class="soundbank-directory">
-            <label for="field-static-soundbank-directory">Directory ${pathHint("static_soundbank.directory")}</label>
-            <input id="field-static-soundbank-directory" data-path="static_soundbank.directory" type="text" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" />
-          </div>
-        </div>
-        <section class="soundbank-entries-section">
-          <header>
-            <div>
-              <h4>Entries</h4>
-              <p class="field-help">Audio files must be relative paths without <code>..</code> and use <code>.p3</code>, <code>.wav</code>, or <code>.mp3</code>.</p>
-            </div>
-            <button class="button secondary" data-soundbank-add type="button">Add entry</button>
-          </header>
-          <div class="soundbank-entry-list" data-soundbank-entries>
-            ${rows || '<p class="soundbank-empty" data-soundbank-empty>No static soundbank entries configured.</p>'}
-          </div>
-          <p class="field-help">Incomplete or invalid draft rows are not added to the saved entries. Restart the server after changing files or configuration.</p>
-        </section>
-      </div>
-    </section>`;
-}
-
-function staticSoundbankAssetError(asset) {
-  if (!asset) return "Audio file is required.";
-  if (/^(?:[a-zA-Z]:[\\/]|[\\/])/.test(asset) || /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(asset)) {
-    return "Use a relative audio path.";
-  }
-  if (asset.split(/[\\/]+/).includes("..")) {
-    return "Audio path cannot contain '..'.";
-  }
-  if (!/\.(?:p3|wav|mp3)$/i.test(asset)) {
-    return "Use a .p3, .wav, or .mp3 audio file.";
-  }
-  return "";
-}
-
-function validateStaticSoundbankRow(row) {
-  const phraseInput = row.querySelector("[data-soundbank-phrase]");
-  const assetInput = row.querySelector("[data-soundbank-asset]");
-  const errorElement = row.querySelector("[data-soundbank-error]");
-  const phrase = phraseInput.value.trim();
-  const asset = assetInput.value.trim();
-  const isEmptyDraft = !row.dataset.originalKey && !phrase && !asset;
-  let message = "";
-  let invalidControl = null;
-
-  phraseInput.setCustomValidity("");
-  assetInput.setCustomValidity("");
-
-  if (!isEmptyDraft && !phrase) {
-    message = "Text is required.";
-    invalidControl = phraseInput;
-  } else if (phrase) {
-    const duplicate = [...row.parentElement.querySelectorAll("[data-soundbank-entry]")]
-      .some((candidate) => candidate !== row
-        && candidate.querySelector("[data-soundbank-phrase]").value.trim() === phrase);
-    if (duplicate) {
-      message = "Text must be unique.";
-      invalidControl = phraseInput;
-    }
-  }
-
-  if (!message && !isEmptyDraft) {
-    message = staticSoundbankAssetError(asset);
-    if (message) invalidControl = assetInput;
-  }
-
-  if (invalidControl) invalidControl.setCustomValidity(message);
-  errorElement.textContent = message;
-  row.classList.toggle("invalid", Boolean(message));
-  return { valid: !message && !isEmptyDraft, phrase, asset };
-}
-
-function commitStaticSoundbankRow(row) {
-  const result = validateStaticSoundbankRow(row);
-  if (!result.valid) return;
-
-  const originalKey = row.dataset.originalKey;
-  const updatedEntries = {};
-  let replaced = false;
-  Object.entries(getStaticSoundbankEntries()).forEach(([phrase, entry]) => {
-    if (phrase === originalKey) {
-      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-        const updatedEntry = { ...entry, file: result.asset };
-        const phraseChanged = result.phrase !== originalKey;
-        const fileChanged = result.asset !== staticSoundbankEntryFile(entry).trim();
-        if (phraseChanged || fileChanged) delete updatedEntry.generated_by;
-        updatedEntries[result.phrase] = updatedEntry;
-      } else {
-        updatedEntries[result.phrase] = result.asset;
-      }
-      replaced = true;
-    } else {
-      updatedEntries[phrase] = entry;
-    }
-  });
-  if (!replaced) updatedEntries[result.phrase] = result.asset;
-
-  row.dataset.originalKey = result.phrase;
-  row.querySelector("[data-soundbank-phrase]").value = result.phrase;
-  row.querySelector("[data-soundbank-asset]").value = result.asset;
-  updateValue("static_soundbank.entries", updatedEntries);
-  refreshStaticSoundbankEmptyState(row.parentElement);
-}
-
-function refreshStaticSoundbankEmptyState(container) {
-  const emptyState = container.querySelector("[data-soundbank-empty]");
-  const hasRows = Boolean(container.querySelector("[data-soundbank-entry]"));
-  const count = container.closest("[data-soundbank-panel]")?.querySelector("[data-soundbank-count]");
-  if (count) count.textContent = Object.keys(getStaticSoundbankEntries()).length;
-  if (hasRows) {
-    emptyState?.remove();
-  } else if (!emptyState) {
-    container.insertAdjacentHTML("beforeend", '<p class="soundbank-empty" data-soundbank-empty>No static soundbank entries configured.</p>');
-  }
-}
-
-function attachStaticSoundbankRowListeners(row, container) {
-  row.querySelectorAll("[data-soundbank-phrase], [data-soundbank-asset]").forEach((input) => {
-    input.addEventListener("input", () => validateStaticSoundbankRow(row));
-    input.addEventListener("change", () => commitStaticSoundbankRow(row));
-  });
-
-  row.querySelector("[data-soundbank-remove]").addEventListener("click", () => {
-    const originalKey = row.dataset.originalKey;
-    if (originalKey) {
-      const updatedEntries = {};
-      Object.entries(getStaticSoundbankEntries()).forEach(([phrase, asset]) => {
-        if (phrase !== originalKey) updatedEntries[phrase] = asset;
-      });
-      updateValue("static_soundbank.entries", updatedEntries);
-    }
-    row.remove();
-    refreshStaticSoundbankEmptyState(container);
-  });
-}
-
-function attachStaticSoundbankListeners(root) {
-  const container = root.querySelector("[data-soundbank-entries]");
-  if (!container) return;
-
-  container.querySelectorAll("[data-soundbank-entry]").forEach((row) => {
-    attachStaticSoundbankRowListeners(row, container);
-  });
-
-  root.querySelector("[data-soundbank-add]").addEventListener("click", () => {
-    const existingDraft = [...container.querySelectorAll("[data-soundbank-entry]")]
-      .find((row) => !row.dataset.originalKey);
-    if (existingDraft) {
-      existingDraft.querySelector("[data-soundbank-phrase]").focus();
-      return;
-    }
-
-    container.insertAdjacentHTML("beforeend", staticSoundbankEntryRow());
-    refreshStaticSoundbankEmptyState(container);
-    const row = container.lastElementChild;
-    attachStaticSoundbankRowListeners(row, container);
-    row.querySelector("[data-soundbank-phrase]").focus();
-  });
-}
-
 function renderProviders() {
   const selected = state.config.selected_module || {};
   $("#providerSelectors").innerHTML = PROVIDER_GROUPS.map((group) => {
@@ -417,7 +195,6 @@ function renderAssistant() {
       field("tool_error_response", "Tool error response", { multiline: true }),
       field("tool_timeout_response", "Tool timeout response", { multiline: true }),
     ]),
-    staticSoundbankPanel(),
     settingsGroup("Conversation control", "Wake and exit matching for the turn-based interaction model.", [
       field("exit_commands", "Exit commands", { help: "JSON list matched before intent processing." }),
       field("end_prompt", "Conversation ending", { help: "JSON object controlling idle conversation closure." }),
@@ -431,7 +208,6 @@ function renderAssistant() {
     ]),
   ].join("");
   attachFieldListeners($("#assistantFields"));
-  attachStaticSoundbankListeners($("#assistantFields"));
 }
 
 function renderRuntime() {

@@ -1,7 +1,7 @@
 import {
   initializeConfiguration,
   renderConfiguration,
-} from "./configuration.js?v=33";
+} from "./configuration.js?v=34";
 import { renderDiagnostics } from "./diagnostics.js";
 import { initializeMemory, loadMemory, renderMemory } from "./memory.js";
 import {
@@ -10,6 +10,7 @@ import {
   setLogsActive,
 } from "./logs.js";
 import { initializePushTts } from "./push_tts.js";
+import { renderSoundbank } from "./soundbank.js?v=34";
 import {
   renderOverview,
   renderResources,
@@ -23,6 +24,7 @@ const PAGE_IDS = [
   "logs",
   "providers",
   "assistant",
+  "soundbank",
   "memory",
   "runtime",
   "integrations",
@@ -33,6 +35,7 @@ const STATUS_SCOPES = { overview: "overview", diagnostics: "diagnostics" };
 function renderAll() {
   renderOverview();
   renderConfiguration();
+  renderSoundbank();
   renderMemory();
   renderDiagnostics();
   renderLogs();
