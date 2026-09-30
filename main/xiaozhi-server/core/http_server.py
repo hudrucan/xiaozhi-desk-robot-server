@@ -98,6 +98,14 @@ class SimpleHttpServer:
                                 "/api/settings/push-tts",
                                 self.settings_handler.handle_push_tts,
                             ),
+                            web.post(
+                                "/api/settings/soundbank/generate",
+                                self.settings_handler.handle_soundbank_generate,
+                            ),
+                            web.get(
+                                "/api/settings/soundbank/audio/{filename:.*}",
+                                self.settings_handler.handle_soundbank_audio,
+                            ),
                             web.get(
                                 "/api/notify/audio/{token}.ogg",
                                 self.settings_handler.handle_notify_audio,

@@ -11,6 +11,7 @@ from core.notification_audio import (
     PushTtsError,
     TemporaryNotificationAudioService,
 )
+from core.soundbank import SoundbankAuthoringService, SoundbankError
 from core.utils.config_editor import ConfigEditor
 from core.utils.resource_monitor import ResourceMonitor
 from core.utils.runtime_diagnostics import runtime_diagnostics
@@ -28,6 +29,7 @@ class SettingsHandler(BaseHandler):
         self.allow_remote = bool(settings_config.get("allow_remote", False))
         self.restart_required = False
         self.notification_audio = TemporaryNotificationAudioService(config)
+        self.soundbank = SoundbankAuthoringService(config)
 
     @staticmethod
     def _disable_cache(response):
@@ -211,6 +213,47 @@ class SettingsHandler(BaseHandler):
         response.content_type = "audio/ogg"
         response.headers["Cache-Control"] = "no-store, max-age=0"
         return response
+
+    async def handle_soundbank_generate(self, request):
+        self._require_access(request)
+        self._require_json(request)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise SoundbankError("Request body must be an object")
+            entry = await asyncio.to_thread(
+                self.soundbank.generate,
+                body.get("text"),
+                body.get("mode", "current"),
+                body.get("generated_by"),
+            )
+        except SoundbankError as error:
+            return self._disable_cache(
+                web.json_response({"error": str(error)}, status=error.status)
+            )
+        except (ValueError, TypeError) as error:
+            return self._disable_cache(
+                web.json_response({"error": str(error)}, status=400)
+            )
+
+        return self._disable_cache(
+            web.json_response({"success": True, "entry": entry})
+        )
+
+    async def handle_soundbank_audio(self, request):
+        self._require_access(request)
+        try:
+            path, content_type = self.soundbank.preview_path(
+                request.match_info.get("filename", "")
+            )
+        except SoundbankError as error:
+            return self._disable_cache(
+                web.json_response({"error": str(error)}, status=error.status)
+            )
+
+        response = web.FileResponse(path)
+        response.content_type = content_type
+        return self._disable_cache(response)
 
     def close(self):
         self.notification_audio.close()

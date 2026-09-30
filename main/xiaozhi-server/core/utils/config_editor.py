@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import yaml
 
 from config.config_loader import get_project_dir, merge_configs, read_config
+from core.utils.config_secrets import is_secret_name
 
 
 EDITABLE_ROOTS = {
@@ -56,24 +57,6 @@ EDITABLE_ROOTS = {
     "xiaozhi",
 }
 
-SECRET_NAMES = {
-    "access_key",
-    "access_key_secret",
-    "access_token",
-    "api_key",
-    "auth_key",
-    "authorization",
-    "client_secret",
-    "mcp_endpoint",
-    "mqtt_signature_key",
-    "password",
-    "personal_access_token",
-    "private_key",
-    "secret",
-    "secret_key",
-    "token",
-}
-
 PROVIDER_GROUPS = ("VAD", "ASR", "LLM", "VLLM", "TTS", "Memory", "Intent")
 DIAGNOSTIC_THRESHOLD_KEYS = {
     "first_audio",
@@ -83,11 +66,6 @@ DIAGNOSTIC_THRESHOLD_KEYS = {
     "total",
     "tts_first",
 }
-
-
-def _is_secret(key):
-    normalized = str(key).lower()
-    return normalized in SECRET_NAMES or normalized.endswith(("_token", "_secret"))
 
 
 def _is_configured_secret(value):
@@ -107,7 +85,7 @@ def _public_copy(value, path=(), configured_secrets=None):
         result = {}
         for key, child in value.items():
             child_path = (*path, str(key))
-            if _is_secret(key):
+            if is_secret_name(key):
                 result[key] = ""
                 if _is_configured_secret(child):
                     configured_secrets.append(".".join(child_path))
@@ -155,7 +133,7 @@ def _drop_blank_secrets(value, existing=None):
 
     cleaned = {}
     for key, child in value.items():
-        if _is_secret(key) and (child is None or str(child).strip() == ""):
+        if is_secret_name(key) and (child is None or str(child).strip() == ""):
             if isinstance(existing, Mapping) and _is_configured_secret(
                 existing.get(key)
             ):

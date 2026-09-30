@@ -6,18 +6,22 @@ import queue
 import asyncio
 import threading
 import traceback
-import unicodedata
 import concurrent.futures
 from collections.abc import Mapping
-from pathlib import Path
 
 from core.utils import p3
 from datetime import datetime
-from core.utils import text_utils
 from typing import Callable, Any
 from abc import ABC, abstractmethod
-from config.config_loader import get_project_dir
 from config.logger import setup_logging
+from core.soundbank import (
+    SoundbankError,
+    normalize_soundbank_text,
+    resolve_soundbank_asset,
+    resolve_soundbank_root,
+    soundbank_entry_filename,
+    validate_soundbank_file,
+)
 from core.utils import opus_encoder_utils
 from core.utils.tts import MarkdownCleaner, convert_percentage_to_range
 from core.handle.sendAudioHandle import sendAudioMessage
@@ -31,19 +35,6 @@ from core.providers.tts.dto.dto import (
 
 TAG = __name__
 logger = setup_logging()
-
-STATIC_SOUNDBANK_EXTENSIONS = {".p3", ".wav", ".mp3"}
-
-
-def normalize_static_soundbank_text(text):
-    """Normalize only stable segment-edge and whitespace differences."""
-    if not isinstance(text, str):
-        return ""
-    normalized = unicodedata.normalize("NFC", text)
-    normalized = text_utils.strip_edge_separators(normalized)
-    normalized = " ".join(normalized.split()).strip()
-    return normalized.casefold()
-
 
 class TTSProviderBase(ABC):
     def __init__(self, config, delete_audio_file):
@@ -319,19 +310,9 @@ class TTSProviderBase(ABC):
         if not isinstance(config, Mapping) or not config.get("enabled", False):
             return
 
-        directory = config.get("directory", "data/soundbank")
-        if not isinstance(directory, str) or not directory.strip():
-            logger.bind(tag=TAG).warning(
-                "Static soundbank is enabled but its directory is invalid"
-            )
-            return
-
         try:
-            directory_path = Path(directory.strip()).expanduser()
-            if not directory_path.is_absolute():
-                directory_path = Path(get_project_dir()) / directory_path
-            soundbank_root = directory_path.resolve()
-        except (OSError, RuntimeError) as error:
+            soundbank_root = resolve_soundbank_root(config)
+        except SoundbankError as error:
             logger.bind(tag=TAG).warning(
                 f"Static soundbank directory is invalid: {error}"
             )
@@ -345,8 +326,8 @@ class TTSProviderBase(ABC):
             return
 
         resolved_entries = {}
-        for source_text, asset_name in entries.items():
-            normalized_text = normalize_static_soundbank_text(source_text)
+        for source_text, entry in entries.items():
+            normalized_text = normalize_soundbank_text(source_text)
             if not normalized_text:
                 logger.bind(tag=TAG).warning(
                     "Ignoring a static soundbank entry with an empty normalized key"
@@ -357,34 +338,14 @@ class TTSProviderBase(ABC):
                     f"Ignoring duplicate normalized static soundbank key: {source_text}"
                 )
                 continue
-            if not isinstance(asset_name, str) or not asset_name.strip():
-                logger.bind(tag=TAG).warning(
-                    f"Ignoring static soundbank entry with an invalid asset: {source_text}"
-                )
-                continue
-
-            relative_path = Path(asset_name.strip())
-            if relative_path.is_absolute() or ".." in relative_path.parts:
-                logger.bind(tag=TAG).warning(
-                    f"Ignoring unsafe static soundbank asset path: {asset_name}"
-                )
-                continue
-
             try:
-                asset_path = (soundbank_root / relative_path).resolve()
-            except (OSError, RuntimeError) as error:
-                logger.bind(tag=TAG).warning(
-                    f"Ignoring invalid static soundbank asset {asset_name}: {error}"
+                asset_name = soundbank_entry_filename(entry)
+                asset_path = resolve_soundbank_asset(
+                    soundbank_root, asset_name
                 )
-                continue
-            if not asset_path.is_relative_to(soundbank_root):
+            except SoundbankError as error:
                 logger.bind(tag=TAG).warning(
-                    f"Ignoring static soundbank asset outside its directory: {asset_name}"
-                )
-                continue
-            if asset_path.suffix.lower() not in STATIC_SOUNDBANK_EXTENSIONS:
-                logger.bind(tag=TAG).warning(
-                    f"Ignoring unsupported static soundbank asset: {asset_name}"
+                    f"Ignoring invalid static soundbank entry {source_text}: {error}"
                 )
                 continue
             resolved_entries[normalized_text] = asset_path
@@ -397,19 +358,16 @@ class TTSProviderBase(ABC):
         if not self._static_soundbank_enabled:
             return None
 
-        normalized_text = normalize_static_soundbank_text(segment_text)
+        normalized_text = normalize_soundbank_text(segment_text)
         asset_path = self._static_soundbank_entries.get(normalized_text)
         if asset_path is None:
             return None
 
         try:
-            resolved_path = asset_path.resolve(strict=True)
-            if not resolved_path.is_relative_to(self._static_soundbank_root):
-                raise ValueError("asset resolves outside the soundbank directory")
-            if not resolved_path.is_file() or resolved_path.stat().st_size <= 0:
-                raise ValueError("asset is missing or empty")
-            return resolved_path
-        except (OSError, RuntimeError, ValueError) as error:
+            return validate_soundbank_file(
+                self._static_soundbank_root, asset_path
+            )
+        except SoundbankError as error:
             logger.bind(tag=TAG).warning(
                 f"Static soundbank asset is unavailable for {segment_text}: {error}"
             )

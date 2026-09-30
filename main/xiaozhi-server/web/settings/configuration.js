@@ -139,6 +139,14 @@ function getStaticSoundbankEntries() {
   return entries && typeof entries === "object" && !Array.isArray(entries) ? entries : {};
 }
 
+function staticSoundbankEntryFile(entry) {
+  if (typeof entry === "string") return entry;
+  if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+    return typeof entry.file === "string" ? entry.file : "";
+  }
+  return "";
+}
+
 function staticSoundbankEntryRow(phrase = "", asset = "") {
   soundbankRowSequence += 1;
   const rowId = `soundbank-entry-${soundbankRowSequence}`;
@@ -162,7 +170,7 @@ function staticSoundbankPanel() {
   const directory = getPath(state.config, "static_soundbank.directory", "data/soundbank");
   const entries = getStaticSoundbankEntries();
   const rows = Object.entries(entries)
-    .map(([phrase, asset]) => staticSoundbankEntryRow(phrase, asset))
+    .map(([phrase, entry]) => staticSoundbankEntryRow(phrase, staticSoundbankEntryFile(entry)))
     .join("");
 
   return `
@@ -266,12 +274,20 @@ function commitStaticSoundbankRow(row) {
   const originalKey = row.dataset.originalKey;
   const updatedEntries = {};
   let replaced = false;
-  Object.entries(getStaticSoundbankEntries()).forEach(([phrase, asset]) => {
+  Object.entries(getStaticSoundbankEntries()).forEach(([phrase, entry]) => {
     if (phrase === originalKey) {
-      updatedEntries[result.phrase] = result.asset;
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        const updatedEntry = { ...entry, file: result.asset };
+        const phraseChanged = result.phrase !== originalKey;
+        const fileChanged = result.asset !== staticSoundbankEntryFile(entry).trim();
+        if (phraseChanged || fileChanged) delete updatedEntry.generated_by;
+        updatedEntries[result.phrase] = updatedEntry;
+      } else {
+        updatedEntries[result.phrase] = result.asset;
+      }
       replaced = true;
     } else {
-      updatedEntries[phrase] = asset;
+      updatedEntries[phrase] = entry;
     }
   });
   if (!replaced) updatedEntries[result.phrase] = result.asset;
