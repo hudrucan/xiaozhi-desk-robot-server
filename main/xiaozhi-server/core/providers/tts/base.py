@@ -9,7 +9,7 @@ import traceback
 import concurrent.futures
 from collections.abc import Mapping
 
-from core.utils import p3
+from core.utils import p3, text_utils
 from datetime import datetime
 from typing import Callable, Any
 from abc import ABC, abstractmethod
