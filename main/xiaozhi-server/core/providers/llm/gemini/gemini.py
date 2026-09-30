@@ -1,5 +1,6 @@
 import asyncio
 import os, json, uuid
+import math
 import queue
 import threading
 from concurrent.futures import Future
@@ -18,6 +19,29 @@ from .tooling import GeminiTooling
 
 log = setup_logging()
 TAG = __name__
+_THINKING_LEVELS = ("minimal", "low", "medium", "high")
+
+
+def _optional_number(cfg, name, minimum, maximum):
+    value = cfg.get(name)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Gemini {name} must be a number")
+    if not math.isfinite(value) or value < minimum or value > maximum:
+        raise ValueError(
+            f"Gemini {name} must be between {minimum} and {maximum}"
+        )
+    return value
+
+
+def _optional_positive_integer(cfg, name):
+    value = cfg.get(name)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"Gemini {name} must be a positive integer")
+    return value
 
 
 def test_proxy(proxy_url: str, test_url: str) -> bool:
@@ -71,6 +95,50 @@ class LLMProvider(LLMProviderBase):
     def __init__(self, cfg: Dict[str, Any]):
         self.model_name = cfg.get("model_name", "gemini-2.0-flash")
         self.api_key = cfg["api_key"]
+        self.max_output_tokens = cfg.get("max_output_tokens", 2048)
+        if (
+            isinstance(self.max_output_tokens, bool)
+            or not isinstance(self.max_output_tokens, int)
+            or self.max_output_tokens <= 0
+        ):
+            raise ValueError(
+                "Gemini max_output_tokens must be a positive integer"
+            )
+
+        thinking_level = cfg.get("thinking_level")
+        if thinking_level is None:
+            self.thinking_level = None
+        elif not isinstance(thinking_level, str):
+            raise ValueError("Gemini thinking_level must be a string")
+        else:
+            self.thinking_level = thinking_level.strip().lower() or None
+            if (
+                self.thinking_level is not None
+                and self.thinking_level not in _THINKING_LEVELS
+            ):
+                allowed = ", ".join(_THINKING_LEVELS)
+                raise ValueError(
+                    f"Gemini thinking_level must be one of: {allowed}"
+                )
+
+        self.temperature = _optional_number(cfg, "temperature", 0, 2)
+        self.top_p = _optional_number(cfg, "top_p", 0, 1)
+        self.top_k = _optional_positive_integer(cfg, "top_k")
+
+        self.generation_kwargs = {
+            "max_output_tokens": self.max_output_tokens,
+        }
+        if self.temperature is not None:
+            self.generation_kwargs["temperature"] = self.temperature
+        if self.top_p is not None:
+            self.generation_kwargs["top_p"] = self.top_p
+        if self.top_k is not None:
+            self.generation_kwargs["top_k"] = self.top_k
+        if self.thinking_level is not None:
+            self.generation_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_level=self.thinking_level
+            )
+
         http_proxy = cfg.get("http_proxy")
         https_proxy = cfg.get("https_proxy")
 
@@ -97,13 +165,6 @@ class LLMProvider(LLMProviderBase):
         self.client = genai.Client(api_key=self.api_key)
         self._active_requests: Dict[str, Future] = {}
         self._active_requests_lock = threading.Lock()
-
-        self.gen_cfg = {
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "top_k": 40,
-            "max_output_tokens": 2048,
-        }
 
     # Gemini receives the complete dialogue, so no provider session ID is needed.
     def response(self, session_id, dialogue, **kwargs):
@@ -218,7 +279,7 @@ class LLMProvider(LLMProviderBase):
             )
 
         config = types.GenerateContentConfig(
-            **self.gen_cfg,
+            **self.generation_kwargs,
             tools=tools,
             tool_config=tool_config,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
