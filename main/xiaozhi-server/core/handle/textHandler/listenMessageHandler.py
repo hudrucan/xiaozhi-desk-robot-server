@@ -5,6 +5,7 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 
 from core.providers.asr.dto.dto import InterfaceType
+from core.handle.fixedTtsResponse import send_fixed_tts_response
 from core.handle.receiveAudioHandle import startToChat
 from core.handle.sendAudioHandle import send_stt_message, send_tts_message
 from core.handle.textMessageHandler import TextMessageHandler
@@ -119,9 +120,9 @@ class ListenTextMessageHandler(TextMessageHandler):
                     conn.logger.bind(tag=TAG).info(
                         f"Wake word detected: {original_text}"
                     )
-                    conn.just_woken_up = True
-                    await startToChat(
-                        conn, conn.config.get("wakeup_greeting", "Hello")
+                    await send_fixed_tts_response(
+                        conn,
+                        conn.config.get("wakeup_greeting", "Hello"),
                     )
                 else:
                     conn.just_woken_up = True

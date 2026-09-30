@@ -1,7 +1,7 @@
 import {
   initializeConfiguration,
   renderConfiguration,
-} from "./configuration.js";
+} from "./configuration.js?v=31";
 import { renderDiagnostics } from "./diagnostics.js";
 import { initializeMemory, loadMemory, renderMemory } from "./memory.js";
 import {

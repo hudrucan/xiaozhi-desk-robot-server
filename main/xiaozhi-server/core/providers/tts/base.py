@@ -6,13 +6,17 @@ import queue
 import asyncio
 import threading
 import traceback
+import unicodedata
 import concurrent.futures
+from collections.abc import Mapping
+from pathlib import Path
 
 from core.utils import p3
 from datetime import datetime
 from core.utils import text_utils
 from typing import Callable, Any
 from abc import ABC, abstractmethod
+from config.config_loader import get_project_dir
 from config.logger import setup_logging
 from core.utils import opus_encoder_utils
 from core.utils.tts import MarkdownCleaner, convert_percentage_to_range
@@ -27,6 +31,18 @@ from core.providers.tts.dto.dto import (
 
 TAG = __name__
 logger = setup_logging()
+
+STATIC_SOUNDBANK_EXTENSIONS = {".p3", ".wav", ".mp3"}
+
+
+def normalize_static_soundbank_text(text):
+    """Normalize only stable segment-edge and whitespace differences."""
+    if not isinstance(text, str):
+        return ""
+    normalized = unicodedata.normalize("NFC", text)
+    normalized = text_utils.strip_edge_separators(normalized)
+    normalized = " ".join(normalized.split()).strip()
+    return normalized.casefold()
 
 
 class TTSProviderBase(ABC):
@@ -103,6 +119,9 @@ class TTSProviderBase(ABC):
         self.tts_stop_request = False
         self.processed_chars = 0
         self.is_first_sentence = True
+        self._static_soundbank_enabled = False
+        self._static_soundbank_root = None
+        self._static_soundbank_entries = {}
 
     def generate_filename(self, extension=".wav"):
         return os.path.join(
@@ -292,6 +311,198 @@ class TTSProviderBase(ABC):
         """音频文件转换为Opus编码"""
         return audio_to_data_stream(audio_file_path, is_opus=True, callback=callback, sample_rate=self.conn.sample_rate, opus_encoder=self.opus_encoder)
 
+    def _configure_static_soundbank(self, config):
+        self._static_soundbank_enabled = False
+        self._static_soundbank_root = None
+        self._static_soundbank_entries = {}
+
+        if not isinstance(config, Mapping) or not config.get("enabled", False):
+            return
+
+        directory = config.get("directory", "data/soundbank")
+        if not isinstance(directory, str) or not directory.strip():
+            logger.bind(tag=TAG).warning(
+                "Static soundbank is enabled but its directory is invalid"
+            )
+            return
+
+        try:
+            directory_path = Path(directory.strip()).expanduser()
+            if not directory_path.is_absolute():
+                directory_path = Path(get_project_dir()) / directory_path
+            soundbank_root = directory_path.resolve()
+        except (OSError, RuntimeError) as error:
+            logger.bind(tag=TAG).warning(
+                f"Static soundbank directory is invalid: {error}"
+            )
+            return
+
+        entries = config.get("entries", {})
+        if not isinstance(entries, Mapping):
+            logger.bind(tag=TAG).warning(
+                "Static soundbank entries must be a mapping"
+            )
+            return
+
+        resolved_entries = {}
+        for source_text, asset_name in entries.items():
+            normalized_text = normalize_static_soundbank_text(source_text)
+            if not normalized_text:
+                logger.bind(tag=TAG).warning(
+                    "Ignoring a static soundbank entry with an empty normalized key"
+                )
+                continue
+            if normalized_text in resolved_entries:
+                logger.bind(tag=TAG).warning(
+                    f"Ignoring duplicate normalized static soundbank key: {source_text}"
+                )
+                continue
+            if not isinstance(asset_name, str) or not asset_name.strip():
+                logger.bind(tag=TAG).warning(
+                    f"Ignoring static soundbank entry with an invalid asset: {source_text}"
+                )
+                continue
+
+            relative_path = Path(asset_name.strip())
+            if relative_path.is_absolute() or ".." in relative_path.parts:
+                logger.bind(tag=TAG).warning(
+                    f"Ignoring unsafe static soundbank asset path: {asset_name}"
+                )
+                continue
+
+            try:
+                asset_path = (soundbank_root / relative_path).resolve()
+            except (OSError, RuntimeError) as error:
+                logger.bind(tag=TAG).warning(
+                    f"Ignoring invalid static soundbank asset {asset_name}: {error}"
+                )
+                continue
+            if not asset_path.is_relative_to(soundbank_root):
+                logger.bind(tag=TAG).warning(
+                    f"Ignoring static soundbank asset outside its directory: {asset_name}"
+                )
+                continue
+            if asset_path.suffix.lower() not in STATIC_SOUNDBANK_EXTENSIONS:
+                logger.bind(tag=TAG).warning(
+                    f"Ignoring unsupported static soundbank asset: {asset_name}"
+                )
+                continue
+            resolved_entries[normalized_text] = asset_path
+
+        self._static_soundbank_root = soundbank_root
+        self._static_soundbank_entries = resolved_entries
+        self._static_soundbank_enabled = True
+
+    def _resolve_static_soundbank_asset(self, segment_text):
+        if not self._static_soundbank_enabled:
+            return None
+
+        normalized_text = normalize_static_soundbank_text(segment_text)
+        asset_path = self._static_soundbank_entries.get(normalized_text)
+        if asset_path is None:
+            return None
+
+        try:
+            resolved_path = asset_path.resolve(strict=True)
+            if not resolved_path.is_relative_to(self._static_soundbank_root):
+                raise ValueError("asset resolves outside the soundbank directory")
+            if not resolved_path.is_file() or resolved_path.stat().st_size <= 0:
+                raise ValueError("asset is missing or empty")
+            return resolved_path
+        except (OSError, RuntimeError, ValueError) as error:
+            logger.bind(tag=TAG).warning(
+                f"Static soundbank asset is unavailable for {segment_text}: {error}"
+            )
+            return None
+
+    def _prepare_static_soundbank_audio(self, asset_path):
+        extension = asset_path.suffix.lower()
+        if extension == ".p3":
+            if self.conn.audio_format != "opus":
+                raise ValueError("p3 direct playback requires negotiated Opus audio")
+            return p3.load_validated_opus_file(
+                os.fspath(asset_path),
+                sample_rate=self.conn.sample_rate,
+                frame_duration_ms=60,
+            )
+
+        audio_frames = []
+        if self.conn.audio_format == "pcm":
+            self.audio_to_pcm_data_stream(
+                os.fspath(asset_path), callback=audio_frames.append
+            )
+        else:
+            self.audio_to_opus_data_stream(
+                os.fspath(asset_path), callback=audio_frames.append
+            )
+        if not audio_frames:
+            raise ValueError("decoded asset contains no audio frames")
+        return audio_frames
+
+    def _try_process_static_soundbank(self, segment_text, opus_handler):
+        try:
+            asset_path = self._resolve_static_soundbank_asset(segment_text)
+            if asset_path is None:
+                return False
+            audio_frames = self._prepare_static_soundbank_audio(asset_path)
+        except Exception as error:
+            logger.bind(tag=TAG).warning(
+                f"Static soundbank asset failed for {segment_text}; falling back to TTS: {error}"
+            )
+            return False
+
+        first_enqueued = False
+        audio_emitted = False
+        try:
+            sentence_id = getattr(self, "current_sentence_id", None)
+            if self.conn.client_abort or sentence_id != self.conn.sentence_id:
+                return True
+
+            logger.bind(tag=TAG).debug(
+                f"Static soundbank hit for segment: {segment_text}"
+            )
+            self.tts_audio_queue.put(
+                (SentenceType.FIRST, None, segment_text, sentence_id)
+            )
+            first_enqueued = True
+
+            for audio_frame in audio_frames:
+                if self.conn.client_abort or sentence_id != self.conn.sentence_id:
+                    break
+                try:
+                    opus_handler(audio_frame)
+                except Exception as error:
+                    # The callback may enqueue the frame before a later side
+                    # effect raises, so provider fallback is no longer safe.
+                    logger.bind(tag=TAG).warning(
+                        "Static soundbank audio emission failed after handoff; "
+                        f"suppressing provider fallback: {error}"
+                    )
+                    return True
+                audio_emitted = True
+            return True
+        except Exception as error:
+            if audio_emitted or first_enqueued:
+                logger.bind(tag=TAG).warning(
+                    "Static soundbank emission failed after response enqueue; "
+                    f"suppressing provider fallback: {error}"
+                )
+                return True
+            logger.bind(tag=TAG).warning(
+                "Static soundbank emission failed before enqueue; "
+                f"falling back to TTS: {error}"
+            )
+            return False
+
+    def _process_segment_stream(
+        self, segment_text, opus_handler: Callable[[bytes], None]
+    ):
+        if self._try_process_static_soundbank(segment_text, opus_handler):
+            return
+        if self.conn:
+            self.conn.mark_turn_metric("tts_infer_start")
+        self.to_tts_stream(segment_text, opus_handler=opus_handler)
+
     def tts_one_sentence(
         self,
         conn,
@@ -322,6 +533,9 @@ class TTSProviderBase(ABC):
 
     async def open_audio_channels(self, conn):
         self.conn = conn
+        self._configure_static_soundbank(
+            conn.config.get("static_soundbank", {})
+        )
 
         # 根据conn的sample_rate创建编码器，如果子类已经创建则不覆盖（IndexTTS接口返回为24kHZ-待重采样处理）
         if not hasattr(self, 'opus_encoder') or self.opus_encoder is None:
@@ -409,8 +623,9 @@ class TTSProviderBase(ABC):
                     self.tts_text_buff.append(message.content_detail)
                     segment_text = self._get_segment_text()
                     if segment_text:
-                        self.conn.mark_turn_metric("tts_infer_start")
-                        self.to_tts_stream(segment_text, opus_handler=self.handle_opus)
+                        self._process_segment_stream(
+                            segment_text, opus_handler=self.handle_opus
+                        )
                 elif ContentType.FILE == message.content_type:
                     self._process_remaining_text_stream(opus_handler=self.handle_opus)
                     tts_file = message.content_file
@@ -605,9 +820,9 @@ class TTSProviderBase(ABC):
         if remaining_text:
             segment_text = text_utils.strip_edge_separators(remaining_text)
             if segment_text:
-                if self.conn:
-                    self.conn.mark_turn_metric("tts_infer_start")
-                self.to_tts_stream(segment_text, opus_handler=opus_handler)
+                self._process_segment_stream(
+                    segment_text, opus_handler=opus_handler
+                )
                 self.processed_chars += len(full_text)
                 return True
         return False

@@ -42,6 +42,7 @@ EDITABLE_ROOTS = {
     "prompt_template",
     "selected_module",
     "server",
+    "static_soundbank",
     "stop_tts_notify_voice",
     "system_error_response",
     "tool_error_response",

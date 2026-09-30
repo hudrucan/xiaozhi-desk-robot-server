@@ -95,8 +95,13 @@ asr_audio_queue_max_frames: 200
 enable_wakeup_words_response_cache: true
 # Respond when a wake word starts a conversation.
 enable_greeting: true
-# Short acknowledgement requested from the LLM after wake-word detection.
+# Fixed spoken acknowledgement played after native wake-word detection.
 wakeup_greeting: "Hello"
+# Optional exact-match audio assets resolved relative to this server directory.
+static_soundbank:
+  enabled: false
+  directory: data/soundbank
+  entries: {}
 # Play a notification sound after speech finishes.
 enable_stop_tts_notify: false
 # Notification sound path.
