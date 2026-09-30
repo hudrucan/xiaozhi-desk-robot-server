@@ -10,7 +10,7 @@ import {
   setLogsActive,
 } from "./logs.js";
 import { initializePushTts } from "./push_tts.js";
-import { renderSoundbank } from "./soundbank.js?v=35";
+import { renderSoundbank } from "./soundbank.js?v=37";
 import {
   renderOverview,
   renderResources,
@@ -125,6 +125,9 @@ async function loadSettings() {
     state.patch = {};
     state.configuredSecrets = new Set(payload.configured_secrets || []);
     state.configPath = payload.config_path;
+    state.startupSoundbankDirectory = payload.soundbank_runtime_directory
+      || payload.config?.static_soundbank?.directory
+      || "data/soundbank";
     state.restartRequired = Boolean(payload.restart_required);
     $("#apiStatus").textContent = "Ready";
     renderAll();

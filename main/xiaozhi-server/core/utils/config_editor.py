@@ -8,6 +8,7 @@ from collections.abc import Mapping
 import yaml
 
 from config.config_loader import get_project_dir, merge_configs, read_config
+from core.soundbank import normalize_soundbank_text
 from core.utils.config_secrets import is_secret_name
 
 
@@ -266,6 +267,26 @@ class ConfigEditor:
             raise ValueError("asr_min_audio_ms must not be negative")
         if int(config.get("asr_audio_queue_max_frames", 200)) < 1:
             raise ValueError("asr_audio_queue_max_frames must be at least 1")
+
+        soundbank_config = config.get("static_soundbank", {})
+        if not isinstance(soundbank_config, Mapping):
+            raise ValueError("static_soundbank must be an object")
+        soundbank_entries = soundbank_config.get("entries", {})
+        if not isinstance(soundbank_entries, Mapping):
+            raise ValueError("static_soundbank.entries must be an object")
+
+        normalized_phrases = {}
+        for phrase in soundbank_entries:
+            normalized = normalize_soundbank_text(phrase)
+            if not normalized:
+                raise ValueError("Soundbank phrase must contain matchable text")
+            previous = normalized_phrases.get(normalized)
+            if previous is not None:
+                raise ValueError(
+                    "Soundbank phrases normalize to the same key: "
+                    f"{previous!r} and {phrase!r}"
+                )
+            normalized_phrases[normalized] = phrase
 
     def _write_atomic(self, config):
         directory = os.path.dirname(self.local_path)

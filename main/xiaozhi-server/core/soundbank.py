@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import hashlib
+import io
 import inspect
 import json
 import math
@@ -17,7 +18,7 @@ import unicodedata
 import wave
 
 from config.config_loader import get_project_dir
-from core.utils import text_utils
+from core.utils import p3, text_utils
 from core.utils.config_secrets import is_credential_name, normalize_config_name
 
 
@@ -406,6 +407,57 @@ class SoundbankAuthoringService:
             soundbank_root, filename, require_file=True
         )
         return path, SOUNDBANK_MIME_TYPES[path.suffix.lower()]
+
+    def preview_audio(self, filename):
+        """Return a browser-playable asset, transcoding packetized Opus to WAV."""
+        path, content_type = self.preview_path(filename)
+        if path.suffix.lower() != ".p3":
+            return path, content_type
+        return self._p3_preview_wav(path), "audio/wav"
+
+    def runtime_directory(self):
+        """Return the soundbank directory loaded by the running server."""
+        soundbank_config = self.config.get("static_soundbank", {})
+        if not isinstance(soundbank_config, Mapping):
+            return "data/soundbank"
+        directory = soundbank_config.get("directory", "data/soundbank")
+        return directory if isinstance(directory, str) else "data/soundbank"
+
+    def _p3_preview_wav(self, path):
+        sample_rate = self._sample_rate()
+        try:
+            import opuslib_next
+
+            packets = p3.load_validated_opus_file(
+                path,
+                sample_rate=sample_rate,
+            )
+            frame_samples = sample_rate * p3.P3_FRAME_DURATION_MS // 1000
+            decoder = opuslib_next.Decoder(sample_rate, 1)
+            expected_frame_bytes = frame_samples * 2
+            pcm_frames = []
+            for index, packet in enumerate(packets):
+                pcm_frame = decoder.decode(packet, frame_samples)
+                if len(pcm_frame) != expected_frame_bytes:
+                    raise SoundbankError(
+                        "p3 preview decoded an unexpected frame size "
+                        f"at packet {index}",
+                        status=422,
+                    )
+                pcm_frames.append(pcm_frame)
+            output = io.BytesIO()
+            with wave.open(output, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(b"".join(pcm_frames))
+            return output.getvalue()
+        except SoundbankError:
+            raise
+        except Exception as error:
+            raise SoundbankError(
+                f"p3 preview could not be decoded: {error}", status=422
+            ) from error
 
     @staticmethod
     def _validate_text(text):

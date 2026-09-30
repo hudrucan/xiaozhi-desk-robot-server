@@ -3,6 +3,7 @@ export const state = {
   original: {},
   patch: {},
   configuredSecrets: new Set(),
+  startupSoundbankDirectory: "data/soundbank",
   restartRequired: false,
   resources: null,
   activePage: "overview",

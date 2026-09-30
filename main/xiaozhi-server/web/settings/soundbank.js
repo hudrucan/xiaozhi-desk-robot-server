@@ -2,6 +2,17 @@ import { updateValue } from "./configuration.js?v=34";
 import { $, escapeHtml, getPath, state, toast } from "./shared.js";
 
 const NEW_ENTRY_KEY = "__soundbank_new_entry__";
+const EMOJI_CODE_POINT_RANGES = [
+  [0x1F1E6, 0x1F1FF],
+  [0x1F300, 0x1F5FF],
+  [0x1F600, 0x1F64F],
+  [0x1F680, 0x1F6FF],
+  [0x1F900, 0x1F9FF],
+  [0x1FA70, 0x1FAFF],
+  [0x2600, 0x26FF],
+  [0x2700, 0x27BF],
+];
+const EMOJI_SEQUENCE_CODE_POINTS = new Set([0x200D, 0x20E3, 0xFE0F]);
 const activeGenerations = new Map();
 const generationErrors = new Map();
 
@@ -43,15 +54,58 @@ function assetError(asset) {
   return "";
 }
 
+function isSoundbankEmoji(character) {
+  const codePoint = character.codePointAt(0);
+  return EMOJI_SEQUENCE_CODE_POINTS.has(codePoint)
+    || EMOJI_CODE_POINT_RANGES.some(
+      ([start, end]) => codePoint >= start && codePoint <= end,
+    );
+}
+
+function isSoundbankEdgeSeparator(character) {
+  return /\s/u.test(character) || /\p{P}/u.test(character) || isSoundbankEmoji(character);
+}
+
+function normalizeSoundbankPhrase(phrase) {
+  const characters = Array.from(String(phrase || "").normalize("NFC"));
+  let start = 0;
+  let end = characters.length;
+  while (start < end && isSoundbankEdgeSeparator(characters[start])) start += 1;
+  while (end > start && isSoundbankEdgeSeparator(characters[end - 1])) end -= 1;
+  return characters.slice(start, end).join("").replace(/\s+/gu, " ").trim().toLowerCase();
+}
+
 function phraseError(phrase, originalKey = "") {
-  if (!phrase) return "Phrase is required.";
+  const normalizedPhrase = normalizeSoundbankPhrase(phrase);
+  if (!normalizedPhrase) return "Phrase must contain matchable text.";
   const duplicate = Object.keys(entries()).some(
-    (candidate) => candidate !== originalKey && candidate === phrase,
+    (candidate) => candidate !== originalKey
+      && normalizeSoundbankPhrase(candidate) === normalizedPhrase,
   );
-  return duplicate ? "Phrase must be unique." : "";
+  return duplicate ? "Phrase duplicates another entry after runtime normalization." : "";
+}
+
+function normalizedDirectory(directory) {
+  return String(directory || "data/soundbank")
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "");
+}
+
+function generationDirectoryLocked() {
+  const currentDirectory = getPath(
+    state.config,
+    "static_soundbank.directory",
+    "data/soundbank",
+  );
+  return normalizedDirectory(currentDirectory)
+    !== normalizedDirectory(state.startupSoundbankDirectory);
 }
 
 function generationStatus() {
+  if (generationDirectoryLocked()) {
+    return { label: "Save + restart before generating", className: "attention" };
+  }
   const soundbankDirty = Object.prototype.hasOwnProperty.call(
     state.patch,
     "static_soundbank",
@@ -120,6 +174,7 @@ function entryCard(phrase, entry, index) {
   const busy = activeGenerations.has(phrase);
   const error = generationErrors.get(phrase) || "";
   const invalid = Boolean(phraseError(phrase, phrase) || assetError(file));
+  const generationLocked = generationDirectoryLocked();
   const rowId = `soundbank-entry-${index}`;
   return `
     <article class="soundbank-entry-card${busy ? " generating" : ""}" data-soundbank-entry data-original-key="${escapeHtml(phrase)}">
@@ -137,8 +192,8 @@ function entryCard(phrase, entry, index) {
         ${provenanceMarkup(entry)}
         <div class="soundbank-entry-actions">
           <button class="button secondary" data-soundbank-action="preview" type="button" ${busy || invalid ? "disabled" : ""}>Preview</button>
-          ${generationButton("Regenerate same", "regenerate-same", phrase, "same", invalid || !provenance)}
-          ${generationButton("Generate with current TTS", "generate-current", phrase, "current", invalid)}
+          ${generationButton("Regenerate same", "regenerate-same", phrase, "same", generationLocked || invalid || !provenance)}
+          ${generationButton("Generate with current TTS", "generate-current", phrase, "current", generationLocked || invalid)}
           <button class="button secondary soundbank-remove" data-soundbank-action="remove" type="button" ${busy ? "disabled" : ""}>Remove</button>
         </div>
       </footer>
@@ -163,10 +218,14 @@ function renderWorkspace() {
   const restart = generationStatus();
   const newBusy = activeGenerations.has(NEW_ENTRY_KEY);
   const newError = generationErrors.get(NEW_ENTRY_KEY) || "";
+  const generationLocked = generationDirectoryLocked();
   const newPhraseValidation = newPhraseDraft.trim()
     ? phraseError(newPhraseDraft.trim())
     : "";
-  const newDisabled = !newPhraseDraft.trim() || Boolean(newPhraseValidation) || newBusy;
+  const newDisabled = generationLocked
+    || !newPhraseDraft.trim()
+    || Boolean(newPhraseValidation)
+    || newBusy;
 
   return `
     <div class="soundbank-layout">
@@ -193,7 +252,7 @@ function renderWorkspace() {
           </article>
           <article class="field-card">
             <label for="soundbankDirectory">Directory <small>static_soundbank.directory</small></label>
-            <input id="soundbankDirectory" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" />
+            <input id="soundbankDirectory" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" ${activeGenerations.size ? "disabled" : ""} />
             <p class="field-help">Entry paths are relative to this directory. Generated filenames are assigned by the server.</p>
           </article>
         </div>
@@ -208,7 +267,7 @@ function renderWorkspace() {
           <div>
             <p class="eyebrow">New entry</p>
             <h3>Generate a local response</h3>
-            <p class="field-help">Save and restart provider changes before generating with the newly configured TTS.</p>
+            <p class="field-help${generationLocked ? " soundbank-warning-text" : ""}">${generationLocked ? "Soundbank directory differs from the running server. Save and restart before generating." : "Save and restart provider changes before generating with the newly configured TTS."}</p>
           </div>
         </div>
         <form id="soundbankNewForm" class="soundbank-new-form">
@@ -267,11 +326,12 @@ function validateRow(row) {
   const originalEntry = entries()[originalKey];
   const manuallyChanged = phrase !== originalKey || file !== entryFile(originalEntry).trim();
   const canRegenerateSame = Boolean(entryProvenance(originalEntry)) && !manuallyChanged;
+  const generationLocked = generationDirectoryLocked();
   row.querySelectorAll('[data-soundbank-action="generate-current"]').forEach((button) => {
-    button.disabled = Boolean(message);
+    button.disabled = generationLocked || Boolean(message);
   });
   row.querySelectorAll('[data-soundbank-action="regenerate-same"]').forEach((button) => {
-    button.disabled = Boolean(message) || !canRegenerateSame;
+    button.disabled = generationLocked || Boolean(message) || !canRegenerateSame;
   });
   row.querySelectorAll('[data-soundbank-action="preview"]').forEach((button) => {
     button.disabled = Boolean(message);
@@ -330,6 +390,14 @@ function removeEntry(phrase) {
 }
 
 async function generateEntry(key, phrase, mode, generatedBy = null) {
+  if (generationDirectoryLocked()) {
+    generationErrors.set(
+      key,
+      "Save and restart the server before generating in the new soundbank directory.",
+    );
+    renderSoundbank();
+    return;
+  }
   if (activeGenerations.has(key)) return;
   activeGenerations.set(key, mode);
   generationErrors.delete(key);
@@ -349,6 +417,11 @@ async function generateEntry(key, phrase, mode, generatedBy = null) {
     if (!response.ok) throw new Error(payload.error || "Soundbank generation failed");
     if (!payload.entry || typeof payload.entry !== "object" || Array.isArray(payload.entry)) {
       throw new Error("Soundbank generation returned an invalid entry");
+    }
+    if (generationDirectoryLocked()) {
+      throw new Error(
+        "Soundbank directory changed while generating; the generated entry was not added.",
+      );
     }
 
     const updatedEntries = {};
@@ -434,7 +507,11 @@ function attachListeners() {
     $("#soundbankNewError").textContent = message;
     $("#soundbankNewError").classList.toggle("visible", Boolean(message));
     const button = $('#soundbankNewForm [data-soundbank-action="generate-new"]');
-    if (button) button.disabled = !newPhraseDraft.trim() || Boolean(message);
+    if (button) {
+      button.disabled = generationDirectoryLocked()
+        || !newPhraseDraft.trim()
+        || Boolean(message);
+    }
   });
   $('#soundbankNewForm [data-soundbank-action="generate-new"]')?.addEventListener("click", () => {
     $("#soundbankNewForm")?.requestSubmit();

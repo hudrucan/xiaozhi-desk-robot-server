@@ -113,6 +113,7 @@ class SettingsHandler(BaseHandler):
         self._require_access(request)
         payload = self.editor.read_public()
         payload["restart_required"] = self.restart_required
+        payload["soundbank_runtime_directory"] = self.soundbank.runtime_directory()
         return self._disable_cache(web.json_response(payload))
 
     async def handle_status(self, request):
@@ -161,6 +162,7 @@ class SettingsHandler(BaseHandler):
             self.restart_required or self._patch_requires_restart(patch)
         )
         payload["restart_required"] = self.restart_required
+        payload["soundbank_runtime_directory"] = self.soundbank.runtime_directory()
         return self._disable_cache(web.json_response(payload))
 
     async def handle_restart(self, request):
@@ -244,16 +246,20 @@ class SettingsHandler(BaseHandler):
     async def handle_soundbank_audio(self, request):
         self._require_access(request)
         try:
-            path, content_type = self.soundbank.preview_path(
-                request.match_info.get("filename", "")
+            content, content_type = await asyncio.to_thread(
+                self.soundbank.preview_audio,
+                request.match_info.get("filename", ""),
             )
         except SoundbankError as error:
             return self._disable_cache(
                 web.json_response({"error": str(error)}, status=error.status)
             )
 
-        response = web.FileResponse(path)
-        response.content_type = content_type
+        if isinstance(content, bytes):
+            response = web.Response(body=content, content_type=content_type)
+        else:
+            response = web.FileResponse(content)
+            response.content_type = content_type
         return self._disable_cache(response)
 
     def close(self):
