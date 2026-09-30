@@ -10,7 +10,7 @@ import {
   setLogsActive,
 } from "./logs.js";
 import { initializePushTts } from "./push_tts.js";
-import { renderSoundbank } from "./soundbank.js?v=38";
+import { renderSoundbank } from "./soundbank.js?v=39";
 import {
   renderOverview,
   renderResources,

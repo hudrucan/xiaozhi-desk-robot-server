@@ -19,6 +19,8 @@ const activeOptimizations = new Set();
 const generationErrors = new Map();
 
 let newPhraseDraft = "";
+let newSpokenTextDraft = "";
+let newSpokenTextTouched = false;
 let previewAsset = "";
 let previewFallbackAsset = "";
 
@@ -33,6 +35,14 @@ function entryFile(entry) {
     return typeof entry.file === "string" ? entry.file : "";
   }
   return "";
+}
+
+function entryText(entry, fallbackPhrase) {
+  if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+    const text = entry.text;
+    if (typeof text === "string" && text.trim()) return text.trim();
+  }
+  return fallbackPhrase;
 }
 
 function entryProvenance(entry) {
@@ -144,6 +154,12 @@ function phraseError(phrase, originalKey = "") {
   return duplicate ? "Phrase duplicates another entry after runtime normalization." : "";
 }
 
+function spokenTextError(text) {
+  if (!String(text || "").trim()) return "Spoken text is required for generation.";
+  if (String(text).trim().length > 512) return "Spoken text must not exceed 512 characters.";
+  return "";
+}
+
 function normalizedDirectory(directory) {
   return String(directory || "data/soundbank")
     .trim()
@@ -241,6 +257,14 @@ function optimizationButton(entry, key, disabled = false) {
 
 function entryCard(phrase, entry, index) {
   const file = entryFile(entry);
+  const spokenText = entryText(entry, phrase);
+  const explicitText = Boolean(
+    entry
+    && typeof entry === "object"
+    && !Array.isArray(entry)
+    && typeof entry.text === "string"
+    && entry.text.trim(),
+  );
   const provenance = entryProvenance(entry);
   const busy = activeGenerations.has(phrase) || activeOptimizations.has(phrase);
   const error = generationErrors.get(phrase) || "";
@@ -251,14 +275,19 @@ function entryCard(phrase, entry, index) {
     <article class="soundbank-entry-card${busy ? " generating" : ""}" data-soundbank-entry data-original-key="${escapeHtml(phrase)}">
       <div class="soundbank-entry-fields">
         <label class="soundbank-entry-phrase" for="${rowId}-phrase">
-          <span>Phrase</span>
+          <span>Match phrase</span>
           <input id="${rowId}-phrase" data-soundbank-phrase value="${escapeHtml(phrase)}" ${busy ? "disabled" : ""} />
+        </label>
+        <label class="soundbank-entry-spoken" for="${rowId}-text">
+          <span>Spoken text / subtitle</span>
+          <input id="${rowId}-text" data-soundbank-text data-explicit-text="${explicitText}" data-spoken-dirty="false" value="${escapeHtml(spokenText)}" maxlength="512" ${busy ? "disabled" : ""} />
         </label>
         <label for="${rowId}-file">
           <span>Asset filename</span>
           <input id="${rowId}-file" data-soundbank-file value="${escapeHtml(file)}" spellcheck="false" ${busy ? "disabled" : ""} />
         </label>
       </div>
+      <p class="soundbank-spoken-note" data-soundbank-spoken-note>Generate with current TTS to apply this spoken-text change.</p>
       <footer class="soundbank-entry-footer">
         <div class="soundbank-entry-metadata">
           ${provenanceMarkup(entry)}
@@ -297,9 +326,14 @@ function renderWorkspace() {
   const newPhraseValidation = newPhraseDraft.trim()
     ? phraseError(newPhraseDraft.trim())
     : "";
+  const newSpokenValidation = newSpokenTextDraft.trim()
+    ? spokenTextError(newSpokenTextDraft)
+    : "";
   const newDisabled = generationLocked
     || !newPhraseDraft.trim()
+    || !newSpokenTextDraft.trim()
     || Boolean(newPhraseValidation)
+    || Boolean(newSpokenValidation)
     || newBusy;
 
   return `
@@ -347,11 +381,15 @@ function renderWorkspace() {
         </div>
         <form id="soundbankNewForm" class="soundbank-new-form">
           <label for="soundbankNewPhrase">
-            <span>Phrase</span>
-            <input id="soundbankNewPhrase" value="${escapeHtml(newPhraseDraft)}" placeholder="What should trigger this audio?" maxlength="512" ${newBusy ? "disabled" : ""} />
+            <span>Match phrase</span>
+            <input id="soundbankNewPhrase" value="${escapeHtml(newPhraseDraft)}" placeholder="What should trigger this audio?" maxlength="512" required ${newBusy ? "disabled" : ""} />
+          </label>
+          <label for="soundbankNewText">
+            <span>Spoken text / subtitle</span>
+            <input id="soundbankNewText" value="${escapeHtml(newSpokenTextDraft)}" placeholder="What should the robot say?" maxlength="512" required ${newBusy ? "disabled" : ""} />
           </label>
           ${generationButton("Generate with current TTS", "generate-new", NEW_ENTRY_KEY, "current", newDisabled)}
-          <p class="soundbank-row-error${newError || newPhraseValidation ? " visible" : ""}" id="soundbankNewError" aria-live="polite">${escapeHtml(newError || newPhraseValidation)}</p>
+          <p class="soundbank-row-error${newError || newPhraseValidation || newSpokenValidation ? " visible" : ""}" id="soundbankNewError" aria-live="polite">${escapeHtml(newError || newPhraseValidation || newSpokenValidation)}</p>
         </form>
         <div class="soundbank-preview">
           <div>
@@ -368,7 +406,7 @@ function renderWorkspace() {
           <div>
             <p class="eyebrow">Authoring</p>
             <h3>Entries</h3>
-            <p class="field-help">Phrase and asset edits update local Settings state. Paths must be relative, exclude <code>..</code>, and use <code>.p3</code>, <code>.wav</code>, or <code>.mp3</code>.</p>
+            <p class="field-help">Match phrase and asset edits update local Settings state. Spoken-text edits are applied only by generation so metadata cannot drift from the audio. Paths must be relative, exclude <code>..</code>, and use <code>.p3</code>, <code>.wav</code>, or <code>.mp3</code>.</p>
           </div>
           <span class="badge">${entryList.length} ${entryList.length === 1 ? "entry" : "entries"}</span>
         </div>
@@ -384,23 +422,31 @@ function renderWorkspace() {
 function validateRow(row) {
   const originalKey = row.dataset.originalKey;
   const phraseInput = row.querySelector("[data-soundbank-phrase]");
+  const textInput = row.querySelector("[data-soundbank-text]");
   const fileInput = row.querySelector("[data-soundbank-file]");
   const errorElement = row.querySelector("[data-soundbank-error]");
   const phrase = phraseInput.value.trim();
+  const spokenText = textInput.value.trim();
   const file = fileInput.value.trim();
   const phraseMessage = phraseError(phrase, originalKey);
-  const fileMessage = phraseMessage ? "" : assetError(file);
-  const message = phraseMessage || fileMessage;
+  const spokenMessage = phraseMessage ? "" : spokenTextError(spokenText);
+  const fileMessage = phraseMessage || spokenMessage ? "" : assetError(file);
+  const message = phraseMessage || spokenMessage || fileMessage;
 
   phraseInput.setCustomValidity(phraseMessage);
+  textInput.setCustomValidity(spokenMessage);
   fileInput.setCustomValidity(fileMessage);
   errorElement.textContent = message;
   errorElement.classList.toggle("visible", Boolean(message));
   row.classList.toggle("invalid", Boolean(message));
 
   const originalEntry = entries()[originalKey];
-  const manuallyChanged = phrase !== originalKey || file !== entryFile(originalEntry).trim();
-  const canRegenerateSame = Boolean(entryProvenance(originalEntry)) && !manuallyChanged;
+  const fileChanged = file !== entryFile(originalEntry).trim();
+  const effectiveStoredText = entryText(originalEntry, phrase);
+  const spokenChanged = spokenText !== effectiveStoredText;
+  textInput.dataset.spokenDirty = String(spokenChanged);
+  row.querySelector("[data-soundbank-spoken-note]")?.classList.toggle("visible", spokenChanged);
+  const canRegenerateSame = Boolean(entryProvenance(originalEntry)) && !fileChanged;
   const generationLocked = generationDirectoryLocked();
   row.querySelectorAll('[data-soundbank-action="generate-current"]').forEach((button) => {
     button.disabled = generationLocked || Boolean(message);
@@ -414,7 +460,14 @@ function validateRow(row) {
   row.querySelectorAll('[data-soundbank-action="optimize"]').forEach((button) => {
     button.disabled = generationLocked || Boolean(message) || !/\.(?:wav|mp3)$/i.test(file);
   });
-  return { valid: !message, phrase, file, originalKey, originalEntry };
+  return {
+    valid: !message,
+    phrase,
+    spokenText,
+    file,
+    originalKey,
+    originalEntry,
+  };
 }
 
 function commitRow(row, reportInvalid = false) {
@@ -429,12 +482,19 @@ function commitRow(row, reportInvalid = false) {
   const phraseChanged = result.phrase !== result.originalKey;
   const fileChanged = result.file !== entryFile(result.originalEntry).trim();
   if (!phraseChanged && !fileChanged) {
-    return { phrase: result.phrase, entry: result.originalEntry };
+    return {
+      phrase: result.phrase,
+      spokenText: result.spokenText,
+      entry: result.originalEntry,
+    };
   }
   if (result.originalEntry && typeof result.originalEntry === "object" && !Array.isArray(result.originalEntry)) {
-    updatedEntry = { ...result.originalEntry, file: result.file };
-    if (phraseChanged || fileChanged) delete updatedEntry.generated_by;
-    if (fileChanged) delete updatedEntry.optimized;
+    if (fileChanged) {
+      updatedEntry = { ...result.originalEntry, file: result.file };
+      delete updatedEntry.generated_by;
+      delete updatedEntry.optimized;
+      delete updatedEntry.text;
+    }
   } else {
     updatedEntry = result.file;
   }
@@ -448,16 +508,22 @@ function commitRow(row, reportInvalid = false) {
   row.dataset.originalKey = result.phrase;
   row.querySelector("[data-soundbank-phrase]").value = result.phrase;
   row.querySelector("[data-soundbank-file]").value = result.file;
+  if (fileChanged && row.querySelector("[data-soundbank-text]").dataset.spokenDirty !== "true") {
+    row.querySelector("[data-soundbank-text]").value = result.phrase;
+    row.querySelector("[data-soundbank-text]").dataset.explicitText = "false";
+  }
   refreshApplyStatus();
 
-  if (phraseChanged || fileChanged) {
-    row.querySelector(".soundbank-provenance").outerHTML = provenanceMarkup(updatedEntry);
-  }
   if (fileChanged) {
+    row.querySelector(".soundbank-provenance").outerHTML = provenanceMarkup(updatedEntry);
     row.querySelector(".soundbank-optimization").outerHTML = optimizationMarkup(updatedEntry);
   }
-  validateRow(row);
-  return { phrase: result.phrase, entry: updatedEntry };
+  const validated = validateRow(row);
+  return {
+    phrase: result.phrase,
+    spokenText: validated.spokenText,
+    entry: updatedEntry,
+  };
 }
 
 function removeEntry(phrase) {
@@ -478,7 +544,7 @@ function removeEntry(phrase) {
   renderSoundbank();
 }
 
-async function generateEntry(key, phrase, mode, generatedBy = null) {
+async function generateEntry(key, title, text, mode, generatedBy = null) {
   if (generationDirectoryLocked()) {
     generationErrors.set(
       key,
@@ -497,7 +563,8 @@ async function generateEntry(key, phrase, mode, generatedBy = null) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        text: phrase,
+        title,
+        text,
         mode,
         ...(mode === "same" ? { generated_by: generatedBy } : {}),
       }),
@@ -515,15 +582,17 @@ async function generateEntry(key, phrase, mode, generatedBy = null) {
 
     const updatedEntries = {};
     if (key === NEW_ENTRY_KEY) {
-      Object.assign(updatedEntries, entries(), { [phrase]: payload.entry });
+      Object.assign(updatedEntries, entries(), { [title]: payload.entry });
       newPhraseDraft = "";
+      newSpokenTextDraft = "";
+      newSpokenTextTouched = false;
     } else {
       Object.entries(entries()).forEach(([candidate, entry]) => {
         updatedEntries[candidate] = candidate === key ? payload.entry : entry;
       });
     }
     updateValue("static_soundbank.entries", updatedEntries);
-    toast(`Generated soundbank audio for “${phrase}”. Save changes to persist the entry.`);
+    toast(`Generated soundbank audio for “${title}”. Save changes to persist the entry.`);
   } catch (error) {
     generationErrors.set(key, error.message || "Soundbank generation failed");
   } finally {
@@ -584,13 +653,33 @@ async function optimizeEntry(key, entry) {
 }
 
 function attachRowListeners(row) {
-  row.querySelectorAll("[data-soundbank-phrase], [data-soundbank-file]").forEach((input) => {
-    input.addEventListener("input", () => {
-      generationErrors.delete(row.dataset.originalKey);
-      validateRow(row);
-    });
-    input.addEventListener("change", () => commitRow(row));
+  const phraseInput = row.querySelector("[data-soundbank-phrase]");
+  const textInput = row.querySelector("[data-soundbank-text]");
+  const fileInput = row.querySelector("[data-soundbank-file]");
+
+  phraseInput.addEventListener("input", () => {
+    generationErrors.delete(row.dataset.originalKey);
+    if (
+      textInput.dataset.explicitText !== "true"
+      && textInput.dataset.spokenDirty !== "true"
+    ) {
+      textInput.value = phraseInput.value;
+    }
+    validateRow(row);
   });
+  phraseInput.addEventListener("change", () => commitRow(row));
+
+  textInput.addEventListener("input", () => {
+    generationErrors.delete(row.dataset.originalKey);
+    textInput.dataset.spokenDirty = "true";
+    validateRow(row);
+  });
+
+  fileInput.addEventListener("input", () => {
+    generationErrors.delete(row.dataset.originalKey);
+    validateRow(row);
+  });
+  fileInput.addEventListener("change", () => commitRow(row));
 
   row.querySelectorAll("[data-soundbank-action]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -614,7 +703,12 @@ function attachRowListeners(row) {
           if (status) status.textContent = "Preview is ready; press play to start audio.";
         });
       } else if (action === "generate-current") {
-        generateEntry(committed.phrase, committed.phrase, "current");
+        generateEntry(
+          committed.phrase,
+          committed.phrase,
+          committed.spokenText,
+          "current",
+        );
       } else if (action === "optimize") {
         optimizeEntry(committed.phrase, committed.entry);
       } else if (action === "regenerate-same") {
@@ -624,7 +718,13 @@ function attachRowListeners(row) {
           renderSoundbank();
           return;
         }
-        generateEntry(committed.phrase, committed.phrase, "same", provenance);
+        generateEntry(
+          committed.phrase,
+          committed.phrase,
+          entryText(committed.entry, committed.phrase),
+          "same",
+          provenance,
+        );
       }
     });
   });
@@ -644,19 +744,41 @@ function attachListeners() {
   document.querySelectorAll("[data-soundbank-entry]").forEach(attachRowListeners);
 
   const newInput = $("#soundbankNewPhrase");
-  newInput?.addEventListener("input", () => {
-    newPhraseDraft = newInput.value;
-    generationErrors.delete(NEW_ENTRY_KEY);
-    const message = phraseError(newPhraseDraft.trim());
-    newInput.setCustomValidity(message);
+  const newTextInput = $("#soundbankNewText");
+  const refreshNewEntryValidation = () => {
+    const phraseMessage = newPhraseDraft.trim()
+      ? phraseError(newPhraseDraft.trim())
+      : "";
+    const spokenMessage = newSpokenTextDraft.trim()
+      ? spokenTextError(newSpokenTextDraft)
+      : "";
+    const message = phraseMessage || spokenMessage;
+    newInput.setCustomValidity(phraseMessage);
+    newTextInput.setCustomValidity(spokenMessage);
     $("#soundbankNewError").textContent = message;
     $("#soundbankNewError").classList.toggle("visible", Boolean(message));
     const button = $('#soundbankNewForm [data-soundbank-action="generate-new"]');
     if (button) {
       button.disabled = generationDirectoryLocked()
         || !newPhraseDraft.trim()
+        || !newSpokenTextDraft.trim()
         || Boolean(message);
     }
+  };
+  newInput?.addEventListener("input", () => {
+    newPhraseDraft = newInput.value;
+    if (!newSpokenTextTouched) {
+      newSpokenTextDraft = newPhraseDraft;
+      newTextInput.value = newSpokenTextDraft;
+    }
+    generationErrors.delete(NEW_ENTRY_KEY);
+    refreshNewEntryValidation();
+  });
+  newTextInput?.addEventListener("input", () => {
+    newSpokenTextDraft = newTextInput.value;
+    newSpokenTextTouched = newSpokenTextDraft !== newPhraseDraft;
+    generationErrors.delete(NEW_ENTRY_KEY);
+    refreshNewEntryValidation();
   });
   $('#soundbankNewForm [data-soundbank-action="generate-new"]')?.addEventListener("click", () => {
     $("#soundbankNewForm")?.requestSubmit();
@@ -664,13 +786,14 @@ function attachListeners() {
   $("#soundbankNewForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const phrase = newPhraseDraft.trim();
-    const message = phraseError(phrase);
+    const spokenText = newSpokenTextDraft.trim();
+    const message = phraseError(phrase) || spokenTextError(spokenText);
     if (message) {
-      newInput.setCustomValidity(message);
-      newInput.reportValidity();
+      refreshNewEntryValidation();
+      $("#soundbankNewForm")?.querySelector(":invalid")?.reportValidity();
       return;
     }
-    generateEntry(NEW_ENTRY_KEY, phrase, "current");
+    generateEntry(NEW_ENTRY_KEY, phrase, spokenText, "current");
   });
 
   const audio = $("#soundbankAudio");

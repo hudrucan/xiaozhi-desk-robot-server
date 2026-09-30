@@ -120,6 +120,16 @@ def soundbank_entry_optimized(entry):
     return optimized if isinstance(optimized, Mapping) else None
 
 
+def soundbank_entry_text(entry):
+    """Return an explicit spoken transcript from a metadata entry, if valid."""
+    if not isinstance(entry, Mapping):
+        return None
+    text = entry.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    return text.strip()
+
+
 def resolve_soundbank_root(config, create=False):
     """Resolve the configured soundbank directory against the server root."""
     if not isinstance(config, Mapping):
@@ -358,8 +368,13 @@ class SoundbankAuthoringService:
         # remain restart-required and are deliberately not hot-reloaded here.
         self.config = config
 
-    def generate(self, text, mode="current", generated_by=None):
+    def generate(self, text, mode="current", generated_by=None, title=None):
         text = self._validate_text(text)
+        if title is None or (isinstance(title, str) and not title.strip()):
+            title = text
+        elif not isinstance(title, str):
+            raise SoundbankError("title must be a string")
+        title = self._validate_title(title)
         provider_name, provider_config = self._generation_config(
             mode, generated_by
         )
@@ -370,7 +385,7 @@ class SoundbankAuthoringService:
         soundbank_config = self.config.get("static_soundbank", {})
         soundbank_root = resolve_soundbank_root(soundbank_config, create=True)
         filename = self._generated_filename(
-            text, provider_name, fingerprint, audio_contract
+            title, text, provider_name, fingerprint, audio_contract
         )
         final_path = resolve_soundbank_asset(soundbank_root, filename)
         optimized_filename = Path(filename).with_suffix(".p3").as_posix()
@@ -415,6 +430,7 @@ class SoundbankAuthoringService:
             provenance["voice"] = voice
         return {
             "file": filename,
+            "text": text,
             "optimized": {
                 "file": optimized_filename,
                 **audio_contract,
@@ -544,8 +560,19 @@ class SoundbankAuthoringService:
             raise SoundbankError(
                 f"text must not exceed {MAX_GENERATION_TEXT_LENGTH} characters"
             )
+        return normalized
+
+    @staticmethod
+    def _validate_title(title):
+        if not isinstance(title, str) or not title.strip():
+            raise SoundbankError("title must be a non-empty string")
+        normalized = title.strip()
+        if len(normalized) > MAX_GENERATION_TEXT_LENGTH:
+            raise SoundbankError(
+                f"title must not exceed {MAX_GENERATION_TEXT_LENGTH} characters"
+            )
         if not normalize_soundbank_text(normalized):
-            raise SoundbankError("text must contain a matchable phrase")
+            raise SoundbankError("title must contain a matchable phrase")
         return normalized
 
     def _generation_config(self, mode, generated_by):
@@ -614,15 +641,18 @@ class SoundbankAuthoringService:
         }
 
     @staticmethod
-    def _generated_filename(text, provider, fingerprint, audio_contract):
-        normalized_text = normalize_soundbank_text(text)
-        slug_source = unicodedata.normalize("NFKD", normalized_text)
+    def _generated_filename(
+        title, text, provider, fingerprint, audio_contract
+    ):
+        normalized_title = normalize_soundbank_text(title)
+        slug_source = unicodedata.normalize("NFKD", normalized_title)
         slug_source = slug_source.encode("ascii", "ignore").decode("ascii")
         slug = re.sub(r"[^a-z0-9]+", "-", slug_source.lower()).strip("-")
         slug = (slug[:48].rstrip("-") or "speech")
         identity = json.dumps(
             {
-                "text": normalized_text,
+                "title": normalized_title,
+                "text": text,
                 "provider": provider,
                 "config_fingerprint": fingerprint,
                 "audio_contract": audio_contract,

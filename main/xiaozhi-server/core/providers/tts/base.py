@@ -21,6 +21,7 @@ from core.soundbank import (
     resolve_soundbank_root,
     soundbank_entry_filename,
     soundbank_entry_optimized,
+    soundbank_entry_text,
     validate_soundbank_file,
 )
 from core.utils import opus_encoder_utils
@@ -356,6 +357,7 @@ class TTSProviderBase(ABC):
                 "optimized_path": None,
                 "optimized_packets": None,
                 "optimized_metadata": None,
+                "text": soundbank_entry_text(entry),
             }
             if (
                 asset_path.suffix.lower() == ".p3"
@@ -428,6 +430,7 @@ class TTSProviderBase(ABC):
                 "path": runtime_entry["optimized_path"],
                 "packets": runtime_entry["optimized_packets"],
                 "optimized": True,
+                "text": runtime_entry["text"],
             }
         if (
             runtime_entry["canonical_packets"]
@@ -438,6 +441,7 @@ class TTSProviderBase(ABC):
                 "path": runtime_entry["canonical_path"],
                 "packets": runtime_entry["canonical_packets"],
                 "optimized": False,
+                "text": runtime_entry["text"],
             }
 
         try:
@@ -449,6 +453,7 @@ class TTSProviderBase(ABC):
                 "path": canonical_path,
                 "packets": None,
                 "optimized": False,
+                "text": runtime_entry["text"],
             }
         except SoundbankError as error:
             logger.bind(tag=TAG).warning(
@@ -535,8 +540,9 @@ class TTSProviderBase(ABC):
             logger.bind(tag=TAG).debug(
                 f"Static soundbank hit for segment: {segment_text}"
             )
+            display_text = asset.get("text") or segment_text
             self.tts_audio_queue.put(
-                (SentenceType.FIRST, None, segment_text, sentence_id)
+                (SentenceType.FIRST, None, display_text, sentence_id)
             )
             first_enqueued = True
 

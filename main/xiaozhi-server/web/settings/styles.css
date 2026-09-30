@@ -368,7 +368,7 @@ main { grid-column: 2; min-width: 0; }
 .soundbank-compose-panel > .panel-heading, .soundbank-list-panel > .panel-heading { padding-bottom: 15px; border-bottom: 1px solid rgba(94, 75, 49, 0.34); }
 .soundbank-compose-panel > .panel-heading h3, .soundbank-list-panel > .panel-heading h3 { margin-top: 3px; }
 .soundbank-compose-panel > .panel-heading .field-help, .soundbank-list-panel > .panel-heading .field-help { margin-top: 5px; }
-.soundbank-new-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.soundbank-new-form { display: grid; grid-template-columns: minmax(190px, 0.85fr) minmax(260px, 1.35fr) auto; align-items: end; gap: 10px; }
 .soundbank-new-form > label, .soundbank-entry-fields label { min-width: 0; display: grid; gap: 6px; color: var(--faint); font-size: 9px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; }
 .soundbank-new-form .button { min-height: 42px; }
 .soundbank-new-form .soundbank-row-error { grid-column: 1 / -1; }
@@ -382,8 +382,10 @@ main { grid-column: 2; min-width: 0; }
 .soundbank-entry-card { display: grid; gap: 11px; padding: 13px; border: 1px solid rgba(94, 75, 49, 0.42); border-radius: 13px; background: rgba(9, 7, 5, 0.28); transition: border-color 150ms ease, opacity 150ms ease; }
 .soundbank-entry-card.invalid { border-color: rgba(225, 123, 109, 0.58); }
 .soundbank-entry-card.generating { border-color: rgba(213, 168, 94, 0.64); }
-.soundbank-entry-fields { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(220px, 1fr); gap: 10px; }
+.soundbank-entry-fields { display: grid; grid-template-columns: minmax(180px, 0.9fr) minmax(260px, 1.35fr) minmax(210px, 0.9fr); gap: 10px; }
 .soundbank-entry-fields input { min-width: 0; min-height: 39px; height: 39px; font-size: 11px; }
+.soundbank-spoken-note { display: none; margin: -2px 0 0; color: var(--accent); font-size: 9px; }
+.soundbank-spoken-note.visible { display: block; }
 .soundbank-entry-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .soundbank-entry-metadata { display: grid; gap: 6px; }
 .soundbank-provenance { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; color: var(--faint); font-size: 9px; }

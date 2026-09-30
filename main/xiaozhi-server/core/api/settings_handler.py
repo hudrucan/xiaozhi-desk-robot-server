@@ -231,6 +231,7 @@ class SettingsHandler(BaseHandler):
                 body.get("text"),
                 body.get("mode", "current"),
                 body.get("generated_by"),
+                body.get("title"),
             )
         except SoundbankError as error:
             return self._disable_cache(
