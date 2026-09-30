@@ -443,15 +443,19 @@ LLM:
       write: 5
       read: 120
 
-# Vision-language provider using an OpenAI-compatible API.
+# Vision-language providers.
 VLLM:
   GeminiVLLM:
-    # Gemini vision through its OpenAI-compatible endpoint.
-    type: openai
+    type: gemini
     api_key: your_api_key
-    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     model_name: your_gemini_vision_model
     response_language: English
+    thinking_level: ""
+    media_resolution: medium
+    max_output_tokens: 256
+    # temperature: 0.7
+    # top_p: 0.95
+    # top_k: 40
   OpenAIVLLM:
     type: openai
     api_key: your_api_key
