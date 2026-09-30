@@ -362,6 +362,7 @@ main { grid-column: 2; min-width: 0; }
 
 .soundbank-layout { display: grid; gap: 16px; }
 .soundbank-label { color: var(--faint); font-size: 9px; font-weight: 750; letter-spacing: 0.11em; text-transform: uppercase; }
+.soundbank-settings-panel .toggle-card { align-self: stretch; }
 .soundbank-settings-footer { display: flex; align-items: center; gap: 12px; padding: 0 15px 15px; }
 .soundbank-settings-footer p { margin: 0; color: var(--faint); font-size: 10px; }
 .soundbank-compose-panel > .panel-heading, .soundbank-list-panel > .panel-heading { padding-bottom: 15px; border-bottom: 1px solid rgba(94, 75, 49, 0.34); }
