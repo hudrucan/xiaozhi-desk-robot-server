@@ -226,11 +226,11 @@ class SettingsHandler(BaseHandler):
             body = await request.json()
             if not isinstance(body, dict):
                 raise SoundbankError("Request body must be an object")
+            if body.get("mode", "current") != "current":
+                raise SoundbankError("only current TTS generation is supported")
             entry = await asyncio.to_thread(
                 self.soundbank.generate,
                 body.get("text"),
-                body.get("mode", "current"),
-                body.get("generated_by"),
                 body.get("title"),
             )
         except SoundbankError as error:

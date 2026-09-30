@@ -284,7 +284,7 @@ def _sanitize_value(value, field_name=None):
 
 
 def sanitize_generation_settings(config):
-    """Return a JSON-safe provider snapshot without secrets or runtime controls."""
+    """Return a safe provider snapshot used only for artifact identity."""
     if not isinstance(config, Mapping):
         raise SoundbankError("TTS provider configuration must be an object")
     sanitized = {}
@@ -299,54 +299,6 @@ def sanitize_generation_settings(config):
         if sanitized_value is not _DROP_SETTING:
             sanitized[str(key)] = sanitized_value
     return sanitized
-
-
-def _merge_safe_settings(current, overlay):
-    if isinstance(current, Mapping) and isinstance(overlay, Mapping):
-        merged = copy.deepcopy(dict(current))
-        for key, value in overlay.items():
-            if is_credential_name(key) or _is_transport_setting(key):
-                continue
-            if key in merged:
-                merged[key] = _merge_safe_settings(merged[key], value)
-            else:
-                merged[key] = copy.deepcopy(value)
-        return merged
-    if isinstance(current, list) and isinstance(overlay, list):
-        merged = copy.deepcopy(current)
-        for index, value in enumerate(overlay):
-            if index < len(merged):
-                merged[index] = _merge_safe_settings(merged[index], value)
-            else:
-                merged.append(copy.deepcopy(value))
-        return merged
-    return copy.deepcopy(overlay)
-
-
-def _overlay_generation_settings(current_config, stored_settings):
-    """Overlay safe provenance while retaining current secrets and transports."""
-    safe_settings = sanitize_generation_settings(stored_settings)
-    merged = copy.deepcopy(dict(current_config))
-    for key, value in safe_settings.items():
-        current_value = merged.get(key, _DROP_SETTING)
-        if isinstance(current_value, str) and isinstance(value, (Mapping, list)):
-            try:
-                parsed_current = json.loads(current_value)
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(parsed_current, type(value)):
-                continue
-            merged_value = _merge_safe_settings(parsed_current, value)
-            merged[key] = json.dumps(
-                merged_value,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-        elif current_value is _DROP_SETTING:
-            merged[key] = copy.deepcopy(value)
-        else:
-            merged[key] = _merge_safe_settings(current_value, value)
-    return merged
 
 
 def generation_fingerprint(provider, settings):
@@ -368,16 +320,14 @@ class SoundbankAuthoringService:
         # remain restart-required and are deliberately not hot-reloaded here.
         self.config = config
 
-    def generate(self, text, mode="current", generated_by=None, title=None):
+    def generate(self, text, title=None):
         text = self._validate_text(text)
         if title is None or (isinstance(title, str) and not title.strip()):
             title = text
         elif not isinstance(title, str):
             raise SoundbankError("title must be a string")
         title = self._validate_title(title)
-        provider_name, provider_config = self._generation_config(
-            mode, generated_by
-        )
+        provider_name, provider_config = self._generation_config()
         settings = sanitize_generation_settings(provider_config)
         fingerprint = generation_fingerprint(provider_name, settings)
         sample_rate = self._sample_rate()
@@ -417,12 +367,10 @@ class SoundbankAuthoringService:
         provenance = {
             "provider": provider_name,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "config_fingerprint": fingerprint,
-            "settings": settings,
-            "sample_rate": sample_rate,
-            "format": "wav",
         }
-        model = self._first_setting(provider_config, "model", "model_name")
+        model = self._first_setting(
+            provider_config, "model", "model_name", "model_repo"
+        )
         voice = self._first_setting(provider_config, "private_voice", "voice")
         if model is not None:
             provenance["model"] = model
@@ -575,9 +523,7 @@ class SoundbankAuthoringService:
             raise SoundbankError("title must contain a matchable phrase")
         return normalized
 
-    def _generation_config(self, mode, generated_by):
-        if mode not in {"current", "same"}:
-            raise SoundbankError("mode must be 'current' or 'same'")
+    def _generation_config(self):
         selected_modules = self.config.get("selected_module", {})
         providers = self.config.get("TTS", {})
         if not isinstance(selected_modules, Mapping) or not isinstance(
@@ -585,21 +531,7 @@ class SoundbankAuthoringService:
         ):
             raise SoundbankError("TTS configuration is unavailable", status=422)
 
-        if mode == "current":
-            provider_name = selected_modules.get("TTS")
-            stored_settings = None
-        else:
-            if not isinstance(generated_by, Mapping):
-                raise SoundbankError(
-                    "generated_by is required for mode 'same'"
-                )
-            provider_name = generated_by.get("provider")
-            stored_settings = generated_by.get("settings")
-            if not isinstance(stored_settings, Mapping):
-                raise SoundbankError(
-                    "generated_by.settings must be an object"
-                )
-
+        provider_name = selected_modules.get("TTS")
         if not isinstance(provider_name, str) or not provider_name.strip():
             raise SoundbankError("TTS provider is not configured", status=422)
         provider_name = provider_name.strip()
@@ -609,12 +541,7 @@ class SoundbankAuthoringService:
                 f"TTS provider '{provider_name}' is unavailable", status=422
             )
 
-        provider_config = copy.deepcopy(dict(current_provider_config))
-        if stored_settings is not None:
-            provider_config = _overlay_generation_settings(
-                provider_config, stored_settings
-            )
-        return provider_name, provider_config
+        return provider_name, copy.deepcopy(dict(current_provider_config))
 
     def _sample_rate(self):
         audio_params = self.config.get("xiaozhi", {}).get("audio_params", {})
