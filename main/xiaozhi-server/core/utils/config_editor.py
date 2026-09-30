@@ -1,3 +1,4 @@
+import copy
 import os
 import shutil
 import tempfile
@@ -144,6 +145,22 @@ def _drop_blank_secrets(value, existing=None):
     return cleaned
 
 
+def _merge_editor_patch(local_config, patch):
+    """Merge Settings edits while replacing the complete soundbank entry map."""
+    merged = merge_configs(local_config, patch)
+    soundbank_patch = patch.get("static_soundbank")
+    if not isinstance(soundbank_patch, Mapping) or "entries" not in soundbank_patch:
+        return merged
+
+    soundbank_config = merged.get("static_soundbank")
+    soundbank_config = (
+        dict(soundbank_config) if isinstance(soundbank_config, Mapping) else {}
+    )
+    soundbank_config["entries"] = copy.deepcopy(soundbank_patch["entries"])
+    merged["static_soundbank"] = soundbank_config
+    return merged
+
+
 class ConfigEditor:
     """Read and atomically update the local configuration override."""
 
@@ -186,7 +203,7 @@ class ConfigEditor:
             local_config = read_config(self.local_path)
             current_effective = merge_configs(default_config, local_config)
             safe_patch = _drop_blank_secrets(patch, current_effective)
-            updated_local = merge_configs(local_config, safe_patch)
+            updated_local = _merge_editor_patch(local_config, safe_patch)
             effective_config = merge_configs(default_config, updated_local)
             self._validate(effective_config)
             self._write_atomic(updated_local)
