@@ -1,0 +1,10 @@
+# Reference defaults: providers / vad.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+VAD:
+  SileroVAD:
+    type: silero
+    threshold: 0.5
+    threshold_low: 0.3
+    model_dir: models/vad
+    min_silence_duration_ms: 200 # Increase this for longer pauses within speech.

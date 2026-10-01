@@ -1,0 +1,50 @@
+# Reference defaults: providers / asr.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+ASR:
+  GeminiASR:
+    type: gemini
+    model_name: gemini-3.5-transcribe-live
+    api_key: your_api_key
+    language: auto
+    mode: VERBATIM
+    # Refresh before the Live API's 10-minute session limit.
+    session_refresh_seconds: 540
+    # Buffer up to roughly 12 seconds of 120 ms audio chunks.
+    audio_queue_size: 100
+    chunk_ms: 120
+  OpenAIASR:
+    type: openai
+    api_key: your_api_key
+    base_url: https://api.openai.com/v1/audio/transcriptions
+    model_name: gpt-4o-mini-transcribe
+    output_dir: tmp/
+  SherpaASR:
+    type: sherpa
+    model_dir: models/asr/sherpa/your-model
+    encoder: encoder.int8.onnx
+    decoder: decoder.onnx
+    joiner: joiner.int8.onnx
+    tokens: tokens.txt
+    num_threads: 2
+    sentence_case: true
+    output_dir: tmp/
+  SherpaStreamingASR:
+    type: sherpa_streaming
+    # Choose matching exported chunk/context variants for all three ONNX files.
+    model_dir: models/asr/sherpa/your-model
+    encoder: encoder.fp16.onnx
+    decoder: decoder.fp16.onnx
+    joiner: joiner.fp16.onnx
+    tokens: config.json # This is a token table despite its extension.
+    num_threads: 2
+    provider: cpu
+    decoding_method: greedy_search
+    sentence_case: true
+    pre_roll_frames: 10
+    # Display-only changed partials, sent only to clients advertising support.
+    partial_min_interval_ms: 120
+    # Synthetic tail for the final encoder chunk, not a realtime silence wait.
+    # 800 ms covers the Vietnamese chunk-16/32 exports (T=45/77, 10 ms frames).
+    # Larger encoder chunks may need more padding; 0 disables it explicitly.
+    final_padding_ms: 800

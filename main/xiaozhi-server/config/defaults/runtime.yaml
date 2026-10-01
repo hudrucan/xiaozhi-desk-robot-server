@@ -1,0 +1,67 @@
+# Reference defaults: runtime.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+server:
+  # Server listen address and WebSocket port.
+  ip: 0.0.0.0
+  port: 8000
+  # HTTP port for the standalone OTA and vision endpoints.
+  http_port: 8003
+  # Lightweight local settings UI served by the existing HTTP server.
+  settings:
+    enabled: true
+    # Keep configuration writes on this machine unless LAN access is explicit.
+    allow_remote: false
+  # WebSocket URL returned to the device by the OTA endpoint.
+  # Replace this generic local URL in data/.config.yaml with the address reachable
+  # by the device.
+  websocket: ws://127.0.0.1:8000/xiaozhi/v1/
+  # Vision endpoint URL sent to the device.
+  # Replace this generic local URL in data/.config.yaml with the address reachable
+  # by the device.
+  vision_explain: http://127.0.0.1:8003/mcp/vision/explain
+  # Timezone offset returned by OTA.
+  timezone_offset: +8
+  # Authentication settings.
+  auth:
+    # Enable token authentication.
+    enabled: false
+    # Devices in this allowlist bypass token validation.
+    allowed_devices:
+      - "11:22:33:44:55:66"
+  # Optional MQTT gateway advertised through OTA, formatted as host:port.
+  mqtt_gateway: null
+  # Optional signing key used to generate MQTT connection passwords.
+  mqtt_signature_key: null
+  # Optional UDP gateway advertised through OTA.
+  udp_gateway: null
+# Delete generated audio files after use.
+delete_audio: true
+# Disconnect after this many seconds without voice input.
+close_connection_no_voice_time: 120
+# TTS request timeout in seconds.
+tts_timeout: 15
+# Tool-call timeout in seconds.
+tool_call_timeout: 30
+# Ignore only extremely short audio bursts before invoking non-streaming ASR.
+asr_min_audio_ms: 300
+# Bound decoded input audio to about twelve seconds of 60 ms frames.
+asr_audio_queue_max_frames: 200
+# Notification sound path.
+stop_tts_notify_voice: "config/assets/tts_notify.mp3"
+# Enable WebSocket ping keepalive.
+enable_websocket_ping: false
+# Delay between outgoing TTS audio packets.
+#   0: derive precise pacing from the audio frame rate.
+#   > 0: use a fixed delay in milliseconds, for example 60.
+tts_audio_send_delay: 0
+xiaozhi:
+  type: hello
+  version: 1
+  transport: websocket
+  audio_params:
+    format: opus
+    # Opus supports 8000, 12000, 16000, 24000, and 48000 Hz.
+    sample_rate: 24000
+    channels: 1
+    frame_duration: 60

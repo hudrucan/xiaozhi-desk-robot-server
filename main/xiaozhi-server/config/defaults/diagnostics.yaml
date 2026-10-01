@@ -1,0 +1,34 @@
+# Reference defaults: diagnostics.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+server:
+  settings:
+    diagnostics:
+      # Highlight thresholds only; these do not change provider timeouts.
+      thresholds_ms:
+        llm_first: 5000
+        resumed_llm_first: 5000
+        tool: 5000
+        tts_first: 2500
+        first_audio: 8000
+        total: 30000
+
+log:
+  # Console log format.
+  log_format: "<green>{time:YYMMDD HH:mm:ss}</green>[{version}_{selected_module}][<light-blue>{extra[tag]}</light-blue>]-<level>{level}</level>-<light-green>{message}</light-green>"
+  # File log format.
+  log_format_file: "{time:YYYY-MM-DD HH:mm:ss} - {version}_{selected_module} - {name} - {level} - {extra[tag]} - {message}"
+  # Supported levels include INFO and DEBUG.
+  log_level: INFO
+  # Log directory.
+  log_dir: tmp
+  # Log filename.
+  log_file: "server.log"
+  # Runtime data directory.
+  data_dir: data
+# Emit one structured timing summary after each turn.
+enable_turn_metrics: true
+# Dump canonical messages and tool schemas as one JSON object per line.
+# This may contain private conversation and tool data, so keep it disabled by default.
+dump_full_llm_request: false
+llm_request_dump_file: tmp/llm_requests.jsonl

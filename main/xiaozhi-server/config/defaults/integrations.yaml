@@ -1,0 +1,66 @@
+# Reference defaults: integrations.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+# Cache the single Desk Robot's MCP schemas only while llama.cpp is selected, so
+# it can prefill them before accepting a connection. Cloud LLMs always use the
+# live firmware inventory. Runtime updates stay under data/ and are not committed.
+device_mcp_tool_cache:
+  enabled: true
+  prewarm: true
+  seed_path: config/device_mcp_tools.json
+  path: data/.device_mcp_tools.json
+# Optional external MCP endpoint. Expected format:
+# ws://host:port/mcp/?token=token
+mcp_endpoint: null
+# Optional context sources injected into the system prompt.
+context_providers:
+  - url: ""
+    headers:
+      Authorization: ""
+# Server plugin configuration.
+plugins:
+  get_air_quality:
+    # Supported providers: open_meteo. Leave empty to disable the tool.
+    provider: ""
+    description: "Get current air quality, particle pollution, UV index, and a short forecast for a requested location."
+    default_location: ""
+    language: en
+    preferred_country_code: ""
+    forecast_hours: 24
+    cache_ttl_seconds: 1800
+  get_weather:
+    # Supported providers: open_meteo. Leave empty to disable the tool.
+    provider: ""
+    description: "Get current conditions and a forecast for a requested location."
+    # For a single local robot, this is the deterministic home location.
+    default_location: ""
+    # Optional exact, case-insensitive aliases for names the geocoder may not resolve.
+    location_aliases: {}
+    # ISO 639-1 language for localized place names, with English as the default.
+    language: en
+    # Prefer this ISO 3166-1 alpha-2 country when multiple locations match.
+    preferred_country_code: ""
+    forecast_days: 7
+    cache_ttl_seconds: 1800
+  web_search:
+    # Supported providers: metaso, tavily. The tool is not registered without a valid key.
+    provider: ""
+    description: "Search the web when the user explicitly asks for current online information."
+    max_results: 5
+    api_key: ""
+    # Tavily-specific options. Leave country/language empty for automatic selection.
+    search_depth: advanced
+    include_answer: advanced
+    country: ""
+    language: ""
+# Optional voiceprint recognition configuration.
+voiceprint:
+  # Voiceprint service endpoint.
+  url:
+  # Entries use speaker_id,name,description.
+  speakers:
+    - "test1,Alice,Alice is a software engineer"
+    - "test2,Bob,Bob is a product manager"
+    - "test3,Carol,Carol is a designer"
+  # Similarity threshold from 0.0 to 1.0. Higher values are stricter.
+  similarity_threshold: 0.4

@@ -1,0 +1,132 @@
+# Reference defaults: providers / tts.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+TTS:
+  GeminiTTS:
+    type: gemini
+    # Use gemini-3.8-flash-tts when fidelity matters more than cost and latency.
+    model_name: gemini-3.8-flash-lite-tts
+    api_key: your_api_key
+    voice: Aoede
+    language: English
+    # Gemini 3.8 sends delivery guidance separately from the spoken transcript.
+    style: Warm, natural, conversational speech; friendly and slightly playful.
+    max_retries: 2
+    min_segment_chars: 80
+    output_dir: tmp/
+  EdgeTTS:
+    type: edge
+    voice: your_edge_voice
+    language: your_language
+    # Generate the complete response in one request to avoid sentence gaps.
+    buffer_full_response: true
+    # Retry once after the initial request fails.
+    max_retries: 1
+    output_dir: tmp/
+  SherpaTTS:
+    type: sherpa
+    language: your_language
+    model_dir: models/tts/sherpa/your-model
+    model: model.onnx
+    tokens: tokens.txt
+    data_dir: espeak-ng-data
+    num_threads: 2
+    speaker_id: 0
+    number_language: your_language_code
+    speed: 1.0
+    silence_scale: 0.2
+    volume_gain: 1.0
+    buffer_full_response: false
+    split_on_all_punctuations: true
+    max_retries: 0
+    output_dir: tmp/
+  MatchaTTS:
+    # Local Vietnamese Matcha + Vocos pipeline. ONNX Runtime 1.28+ is
+    # required for the Vocos inverse one-sided DFT; 1.30 is the deployed
+    # RK3528 baseline.
+    type: matcha
+    language: vi
+    model_dir: models/tts/matcha-vi-int8
+    variant: int8
+    encoder: matcha_encoder.onnx
+    decoder: matcha_decoder.onnx
+    vocos: vocos.onnx
+    prompt_encoder: prompt_encoder.onnx
+    symbols: symbols.json
+    provider: CPUExecutionProvider
+    num_threads: 4
+    # RK3528 quality baseline: one extra flow step with lower noise.
+    steps: 3
+    temperature: 0.7
+    length_scale: 1.0
+    sway: 0.0  # Linear flow-time schedule.
+    seed:  # Fresh RNG sequence for each segment.
+    number_language: vi
+    first_segment_chars: 32
+    use_prompt: true
+    tail_prompt_words: 10
+    keep_model_warm: true
+    # Optional edge processing; 0 disables trim/fade independently.
+    tail_trim_samples: 0
+    edge_fade_ms: 5
+    # Normalize active-speech RMS, then soft-limit peaks across segments.
+    mastering: true
+    target_active_rms_dbfs: -10.0
+    peak_ceiling_dbfs: -1.0
+    volume_gain: 1.0
+    split_on_all_punctuations: true
+    max_retries: 0
+    output_dir: tmp/
+  VieNeuTTS:
+    # VieNeu v3 Nano runs locally with ONNX and downloads its model into the
+    # Hugging Face cache on first use.
+    type: vieneu
+    language: your_language
+    model_repo: pnnbao-ump/VieNeu-TTS-v3-Nano
+    model_dir: ""
+    hf_token: ""
+    voice: Minh Quân
+    threads: 0
+    # Eight steps with negative sway is the fast Nano configuration.
+    steps: 8
+    cfg: 3.0
+    sway: -1.0
+    speed: 1.0
+    seed:
+    max_chars: 140
+    # Emit the first TTS segment at a word boundary without waiting indefinitely
+    # for model punctuation. Later segments still use punctuation boundaries.
+    first_segment_chars: 32
+    # Reuse the local inference engine after a device reconnects.
+    keep_model_warm: true
+    # Raise quieter speech toward a consistent loudness, then soft-limit peaks.
+    mastering: true
+    target_active_rms_dbfs: -10.0
+    peak_ceiling_dbfs: -1.0
+    # Applied after loudness normalization; values above 1 increase density.
+    volume_gain: 1.0
+    apply_watermark: false
+    max_retries: 0
+    output_dir: tmp/
+  OpenAITTS:
+    type: openai
+    api_key: your_api_key
+    api_url: https://api.openai.com/v1/audio/speech
+    model: tts-1
+    voice: alloy
+    speed: 1
+    format: mp3
+    output_dir: tmp/
+  CustomTTS:
+    # The endpoint must accept the configured request and return audio bytes.
+    type: custom
+    method: POST
+    url: "http://127.0.0.1:8880/v1/audio/speech"
+    params:
+      input: "{prompt_text}"
+      response_format: "mp3"
+      voice: "alloy"
+      speed: 1
+    headers: {}
+    format: mp3
+    output_dir: tmp/

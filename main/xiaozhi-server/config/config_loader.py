@@ -13,6 +13,43 @@ def read_config(config_path):
         return yaml.safe_load(file) or {}
 
 
+def load_default_config(config_path=None):
+    """Load reference fragments, then inline defaults from the root YAML file."""
+    config_path = config_path or os.path.join(get_project_dir(), "config.yaml")
+    manifest = read_config(config_path)
+    if not isinstance(manifest, Mapping):
+        raise ValueError(f"Default configuration must be an object: {config_path}")
+
+    includes = manifest.get("includes", [])
+    if not isinstance(includes, list):
+        raise ValueError("Default configuration includes must be a list")
+
+    base_dir = os.path.realpath(os.path.dirname(os.path.abspath(config_path)))
+    defaults = {}
+    included_paths = set()
+    for filename in includes:
+        if not isinstance(filename, str) or not filename.strip():
+            raise ValueError("Default configuration includes must contain file paths")
+        fragment_path = os.path.realpath(os.path.join(base_dir, filename))
+        if os.path.isabs(filename) or os.path.commonpath(
+            [base_dir, fragment_path]
+        ) != base_dir:
+            raise ValueError(f"Default configuration include must stay local: {filename}")
+        if fragment_path in included_paths:
+            raise ValueError(f"Duplicate default configuration include: {filename}")
+        included_paths.add(fragment_path)
+
+        fragment = read_config(fragment_path)
+        if not isinstance(fragment, Mapping) or "includes" in fragment:
+            raise ValueError(
+                f"Default configuration fragment must be an object without includes: {filename}"
+            )
+        defaults = merge_configs(defaults, fragment)
+
+    inline_defaults = {key: value for key, value in manifest.items() if key != "includes"}
+    return merge_configs(defaults, inline_defaults)
+
+
 async def load_config():
     """Load and merge the local YAML configuration."""
     from core.utils.cache.manager import cache_manager, CacheType
@@ -22,11 +59,10 @@ async def load_config():
     if cached_config is not None:
         return cached_config
 
-    default_config_path = get_project_dir() + "config.yaml"
     custom_config_path = get_project_dir() + "data/.config.yaml"
 
     # Load defaults and local overrides.
-    default_config = read_config(default_config_path)
+    default_config = load_default_config()
     custom_config = read_config(custom_config_path)
 
     # Local YAML is the only config source; data/.config.yaml overrides config.yaml.

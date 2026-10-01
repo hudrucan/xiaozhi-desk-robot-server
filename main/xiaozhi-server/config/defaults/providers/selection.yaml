@@ -1,0 +1,12 @@
+# Reference defaults: providers / selection.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+# Active provider selection. Override local choices in data/.config.yaml.
+selected_module:
+  VAD: SileroVAD
+  ASR: OpenAIASR
+  LLM: OpenAILLM
+  VLLM: OpenAIVLLM
+  TTS: EdgeTTS
+  Memory: nomem
+  Intent: function_call

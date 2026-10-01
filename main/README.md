@@ -22,7 +22,7 @@ Local runtime files:
 
 | Path | Purpose |
 | --- | --- |
-| `config.yaml` | Committed reference defaults |
+| `config.yaml` | Reference manifest for the grouped defaults in `config/defaults/` |
 | `data/.config.yaml` | Required, gitignored local overrides |
 | `data/.memory.yaml` | Explicit Memory v2 records when enabled |
 | `tmp/` | Logs and generated audio |

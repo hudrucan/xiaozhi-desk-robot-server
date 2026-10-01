@@ -1,0 +1,8 @@
+# Reference defaults: soundbank.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+# Optional exact-match audio assets resolved relative to this server directory.
+static_soundbank:
+  enabled: false
+  directory: data/soundbank
+  entries: {}

@@ -1,0 +1,72 @@
+# Reference defaults: providers / llm.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+LLM:
+  GeminiLLM:
+    type: gemini
+    api_key: your_api_key
+    model_name: your_gemini_model
+    # Optional Gemini 3+ reasoning control. Empty lets the model use its default.
+    thinking_level: ""
+    # Compatibility default; reduce this explicitly when shorter output is desired.
+    max_output_tokens: 2048
+    # Optional sampling overrides. Omitted values use the model defaults.
+    # temperature: 0.7
+    # top_p: 0.9
+    # top_k: 40
+    # Gemini 3 only. Uses managed Google Search while keeping web_search as a
+    # custom-tool fallback for non-Gemini providers.
+    native_google_search: false
+    timeout: 120
+    http_proxy: ""
+    https_proxy: ""
+  OpenAILLM:
+    type: openai
+    api_key: your_api_key
+    base_url: https://api.openai.com/v1
+    model_name: gpt-4o-mini
+    timeout:
+      pool: 2
+      connect: 3
+      write: 5
+      read: 60
+  LlamaCppLLM:
+    type: llama_cpp
+    api_key: local
+    model_name: qwen3:4b
+    # Keep local voice responses stable while retaining some personality.
+    temperature: 0.6
+    top_p: 0.95
+    # Bound recent context because tool schemas already consume a substantial
+    # part of a local model's context window.
+    max_history_messages: 8
+    process:
+      # When enabled, llama-server starts and stops with this application.
+      managed: true
+      executable: llama-server
+      hf_model: Qwen/Qwen3-4B-GGUF:Q4_K_M
+      # Use model_path instead of hf_model for an existing local GGUF file.
+      # model_path: /absolute/path/to/model.gguf
+      host: 127.0.0.1
+      port: 6000
+      context_size: 8192
+      gpu_layers: all
+      # This deployment serves one Desk Robot, so one slot maximizes prompt reuse.
+      parallel: 1
+      # Reuse unchanged tool-schema chunks when conversation history shifts.
+      cache_reuse: 64
+      # Reasoning is unnecessary for low-latency spoken turns.
+      reasoning: "off"
+      # The first start may also download the 4-bit model.
+      startup_timeout: 900
+      shutdown_timeout: 10
+      log_file: tmp/llama-server.log
+      # Unload the model after ten minutes without an inference request.
+      # The next request reloads the model and rebuilds its prompt cache.
+      sleep_idle_seconds: 600
+      extra_args: []
+    timeout:
+      pool: 2
+      connect: 3
+      write: 5
+      read: 120

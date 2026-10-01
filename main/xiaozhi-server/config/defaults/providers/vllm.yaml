@@ -1,0 +1,52 @@
+# Reference defaults: providers / vllm.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+# Vision-language providers.
+VLLM:
+  GeminiVLLM:
+    type: gemini
+    api_key: your_api_key
+    model_name: your_gemini_vision_model
+    response_language: English
+    thinking_level: ""
+    media_resolution: medium
+    max_output_tokens: 256
+    # temperature: 0.7
+    # top_p: 0.95
+    # top_k: 40
+  OpenAIVLLM:
+    type: openai
+    api_key: your_api_key
+    base_url: https://api.openai.com/v1
+    model_name: gpt-4o-mini
+    response_language: English
+  LlamaCppVLLM:
+    type: llama_cpp
+    api_key: local
+    base_url: http://127.0.0.1:6001/v1
+    model_name: qwen2.5-vl:3b
+    response_language: English
+    max_tokens: 300
+    temperature: 0.2
+    top_p: 0.9
+    process:
+      # Keep the vision model unloaded until the first camera request.
+      managed: true
+      lazy_start: true
+      executable: llama-server
+      hf_model: ggml-org/Qwen2.5-VL-3B-Instruct-GGUF:Q4_K_M
+      # Use model_path plus mmproj_path for existing local GGUF files.
+      # model_path: /absolute/path/to/model.gguf
+      # mmproj_path: /absolute/path/to/mmproj.gguf
+      host: 127.0.0.1
+      port: 6001
+      context_size: 4096
+      gpu_layers: all
+      parallel: 1
+      startup_timeout: 900
+      shutdown_timeout: 10
+      log_file: tmp/llama-vllm-server.log
+      # Unload model resources after five idle minutes; the next vision request
+      # wakes the server and reloads the model automatically.
+      sleep_idle_seconds: 300
+      extra_args: []

@@ -7,7 +7,12 @@ from collections.abc import Mapping
 
 import yaml
 
-from config.config_loader import get_project_dir, merge_configs, read_config
+from config.config_loader import (
+    get_project_dir,
+    load_default_config,
+    merge_configs,
+    read_config,
+)
 from core.soundbank import normalize_soundbank_text
 from core.utils.config_secrets import is_secret_name
 
@@ -173,7 +178,7 @@ class ConfigEditor:
         self._lock = threading.Lock()
 
     def read_public(self):
-        default_config = read_config(self.default_path)
+        default_config = load_default_config(self.default_path)
         local_config = read_config(self.local_path)
         effective_config = merge_configs(default_config, local_config)
         editable_config = {
@@ -200,7 +205,7 @@ class ConfigEditor:
             raise ValueError(f"Unsupported configuration section: {unsupported[0]}")
 
         with self._lock:
-            default_config = read_config(self.default_path)
+            default_config = load_default_config(self.default_path)
             local_config = read_config(self.local_path)
             current_effective = merge_configs(default_config, local_config)
             safe_patch = _drop_blank_secrets(patch, current_effective)

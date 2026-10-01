@@ -1,0 +1,39 @@
+# Reference defaults: assistant.
+# Put deployment-specific overrides and secrets in data/.config.yaml.
+
+# Keep the virtual direct-answer tool configurable for latency A/B comparisons.
+enable_direct_answer_tool: true
+# Cache wake-word responses to reduce startup response latency.
+enable_wakeup_words_response_cache: true
+# Respond when a wake word starts a conversation.
+enable_greeting: true
+# Fixed spoken acknowledgement played after native wake-word detection.
+wakeup_greeting: "Hello"
+# Play a notification sound after speech finishes.
+enable_stop_tts_notify: false
+exit_commands:
+  - "exit"
+  - "quit"
+# Fixed spoken response returned by the exit tool.
+exit_farewell: "Goodbye, see you next time!"
+# Wake words used to distinguish activation from regular speech.
+wakeup_words:
+  - "Hello Xiaozhi"
+  - "Hey Xiaozhi"
+
+prompt: |
+  You are a helpful voice assistant. Respond clearly and concisely in the
+  user's language.
+  Write natural-language tool arguments in the user's language.
+# Default system-prompt template file.
+prompt_template: agent-base-prompt.txt
+# User-facing response for internal errors.
+system_error_response: "Sorry, I am temporarily unavailable. Please try again shortly."
+# User-facing responses for tool failures. Override these in data/.config.yaml.
+tool_error_response: "Sorry, that operation failed. Please try again."
+tool_timeout_response: "Sorry, that operation took too long. Please try again."
+# Optional conversation-closing prompt.
+end_prompt:
+  enable: true
+  prompt: |
+    End the conversation briefly and politely in the user's language.

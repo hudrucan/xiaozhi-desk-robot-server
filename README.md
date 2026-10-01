@@ -97,7 +97,7 @@ python app.py
 
 `data/.config.yaml` is required, may initially be empty, and is gitignored. Add
 provider selections, model names, endpoints, and secrets there—never in the
-committed `config.yaml`.
+committed reference files.
 
 ### Default endpoints
 
@@ -127,9 +127,33 @@ Provider selection lives under `selected_module` in YAML.
 | Memory | Disabled, short-summary legacy, explicit YAML v2 |
 | Intent | Function calling, intent LLM, disabled |
 
-The committed [`config.yaml`](main/xiaozhi-server/config.yaml) is the complete
-reference for current options. Bundled and optional speech assets are documented
-in [`models/README.md`](main/xiaozhi-server/models/README.md).
+The committed [`config.yaml`](main/xiaozhi-server/config.yaml) lists the reference
+files under [`config/defaults/`](main/xiaozhi-server/config/defaults), grouped
+similarly to the Settings UI:
+
+| Reference file | Settings |
+| --- | --- |
+| `runtime.yaml` | Listeners, authentication/gateways, turn limits, audio delivery, protocol hello |
+| `assistant.yaml` | Prompts, wake/exit phrases, responses, behavior switches |
+| `diagnostics.yaml` | Logging, turn metrics, request dumps, warning thresholds |
+| `integrations.yaml` | MCP, context sources, plugins, voiceprint |
+| `soundbank.yaml` | Static soundbank options and entries |
+| `benchmarks.yaml` | Manual performance tester inputs |
+| `providers/selection.yaml` | Active provider selections |
+| `providers/{vad,asr,llm,vllm,tts,memory,intent}.yaml` | Options for each provider group |
+
+The server and Settings editor use the same default loader. Includes are explicit,
+relative to `config.yaml`, and loaded in list order; later fragments override
+earlier ones. Inline settings in `config.yaml` override the fragments, and
+`data/.config.yaml` overrides all reference defaults. A monolithic `config.yaml`
+without `includes` remains supported. Fragments must be YAML objects, cannot
+include other files, and must stay within the manifest directory.
+
+Settings still saves only to `data/.config.yaml`, with the same secret masking,
+validation, backup, and restart behavior. Local overrides do not need migration.
+Memory records remain in `data/.memory.yaml`, separately from provider settings.
+Bundled and optional speech assets are documented in
+[`models/README.md`](main/xiaozhi-server/models/README.md).
 
 ## Memory v2
 
@@ -205,7 +229,8 @@ turns, tool calls, device events, and latency stages.
 ```text
 main/xiaozhi-server/
 ├── app.py                  # application entrypoint
-├── config.yaml             # safe reference configuration
+├── config.yaml             # reference configuration manifest
+├── config/defaults/        # safe defaults grouped by subsystem/provider
 ├── core/
 │   ├── connection.py       # per-connection turn orchestration
 │   ├── handle/             # Xiaozhi protocol handlers
