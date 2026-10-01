@@ -4,6 +4,10 @@ export const state = {
   patch: {},
   configuredSecrets: new Set(),
   startupSoundbankDirectory: "data/soundbank",
+  soundbankDraftId: Array.from(crypto.getRandomValues(new Uint8Array(16)),
+    (value) => value.toString(16).padStart(2, "0")).join(""),
+  soundbankRetiredDrafts: new Set(),
+  soundbankSaving: false,
   startupSoundbankAudio: {
     codec: "opus",
     sample_rate: 0,

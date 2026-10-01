@@ -10,7 +10,7 @@ import {
   setLogsActive,
 } from "./logs.js";
 import { initializePushTts } from "./push_tts.js";
-import { renderSoundbank } from "./soundbank.js?v=40";
+import { renderSoundbank, soundbankAuthoringBusy } from "./soundbank.js?v=42";
 import {
   renderOverview,
   renderResources,
@@ -144,13 +144,23 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
+  if (soundbankAuthoringBusy() || state.soundbankSaving) {
+    toast("Wait for soundbank generation or cleanup to finish before saving.", true);
+    return;
+  }
+  state.soundbankSaving = true;
+  renderSoundbank();
   $("#saveButton").disabled = true;
   $("#saveState").textContent = "Saving…";
   try {
     const response = await fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ config: state.patch }),
+      body: JSON.stringify({
+        config: state.patch,
+        soundbank_draft_id: state.soundbankDraftId,
+        soundbank_retired_drafts: [...state.soundbankRetiredDrafts],
+      }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Save failed");
@@ -158,21 +168,34 @@ async function saveSettings() {
     state.configPath = payload.config_path;
     state.original = clone(payload.config);
     state.patch = {};
+    state.soundbankRetiredDrafts.clear();
     state.configuredSecrets = new Set(payload.configured_secrets || []);
     state.restartRequired = Boolean(payload.restart_required);
     renderAll();
     toast(state.restartRequired
       ? "Configuration saved. Restart to apply it."
       : "Configuration saved and applied.");
+    const cleanup = payload.soundbank_cleanup;
+    if (cleanup?.deleted) toast(`Cleaned ${cleanup.deleted} retired soundbank files.`);
+    if (cleanup?.pending) toast(`${cleanup.pending} retired soundbank files kept while referenced; cleanup resumes after restart.`);
+    if (cleanup?.errors?.length) toast(`Configuration saved; soundbank cleanup deferred: ${cleanup.errors.join("; ")}`, true);
   } catch (error) {
     updateDirtyState();
     toast(error.message, true);
+  } finally {
+    state.soundbankSaving = false;
+    renderSoundbank();
   }
 }
 
 function discardChanges() {
+  if (soundbankAuthoringBusy() || state.soundbankSaving) {
+    toast("Wait for soundbank generation or cleanup to finish before discarding edits.", true);
+    return;
+  }
   state.config = clone(state.original);
   state.patch = {};
+  state.soundbankRetiredDrafts.clear();
   renderAll();
   toast("Unsaved changes discarded.");
 }

@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import os
+import re
 
 from aiohttp import web
 
@@ -12,6 +13,7 @@ from core.notification_audio import (
     TemporaryNotificationAudioService,
 )
 from core.soundbank import SoundbankAuthoringService, SoundbankError
+from core.soundbank_cleanup import SoundbankCleanup
 from core.utils.config_editor import ConfigEditor
 from core.utils.resource_monitor import ResourceMonitor
 from core.utils.runtime_diagnostics import runtime_diagnostics
@@ -30,6 +32,13 @@ class SettingsHandler(BaseHandler):
         self.restart_required = False
         self.notification_audio = TemporaryNotificationAudioService(config)
         self.soundbank = SoundbankAuthoringService(config)
+        self.soundbank_cleanup = SoundbankCleanup(config)
+        try:
+            result = self.editor.cleanup_soundbank(self.soundbank_cleanup)
+            if result["deleted"] or result["errors"]:
+                self.logger.info(f"Soundbank startup cleanup: {result}")
+        except (OSError, ValueError, SoundbankError) as error:
+            self.logger.warning(f"Soundbank startup cleanup deferred: {error}")
 
     @staticmethod
     def _disable_cache(response):
@@ -59,6 +68,15 @@ class SettingsHandler(BaseHandler):
     def _require_json(self, request):
         if request.content_type != "application/json":
             raise web.HTTPUnsupportedMediaType(text="Expected application/json")
+
+    @staticmethod
+    def _soundbank_draft_id(body):
+        value = body.get("soundbank_draft_id")
+        if value is not None and (
+            not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", value)
+        ):
+            raise ValueError("Invalid soundbank draft ID")
+        return value
 
     @staticmethod
     def _patch_requires_restart(patch):
@@ -155,7 +173,15 @@ class SettingsHandler(BaseHandler):
             if not isinstance(body, dict):
                 raise ValueError("Request body must be an object")
             patch = body.get("config")
-            payload = self.editor.update(patch)
+            draft_id = self._soundbank_draft_id(body)
+            retired = body.get("soundbank_retired_drafts", [])
+            if not isinstance(retired, list) or len(retired) > 4096 or any(
+                not isinstance(filename, str) for filename in retired
+            ):
+                raise ValueError("Invalid retired soundbank drafts")
+            payload = await asyncio.to_thread(
+                self.editor.update, patch, self.soundbank_cleanup, draft_id, retired
+            )
         except (ValueError, TypeError) as error:
             return web.json_response({"error": str(error)}, status=400)
 
@@ -229,9 +255,10 @@ class SettingsHandler(BaseHandler):
             if body.get("mode", "current") != "current":
                 raise SoundbankError("only current TTS generation is supported")
             entry = await asyncio.to_thread(
-                self.soundbank.generate,
+                self._generate_soundbank,
                 body.get("text"),
                 body.get("title"),
+                self._soundbank_draft_id(body),
             )
         except SoundbankError as error:
             return self._disable_cache(
@@ -254,8 +281,9 @@ class SettingsHandler(BaseHandler):
             if not isinstance(body, dict):
                 raise SoundbankError("Request body must be an object")
             optimized = await asyncio.to_thread(
-                self.soundbank.optimize,
+                self._optimize_soundbank,
                 body.get("file"),
+                self._soundbank_draft_id(body),
             )
         except SoundbankError as error:
             return self._disable_cache(
@@ -271,6 +299,41 @@ class SettingsHandler(BaseHandler):
                 {"success": True, "optimized": optimized}
             )
         )
+
+    def _generate_soundbank(self, text, title, draft_id):
+        with self.soundbank_cleanup.lock:
+            entry = self.soundbank.generate(text, title)
+            self.soundbank_cleanup.protect_draft(entry, draft_id)
+            return entry
+
+    def _optimize_soundbank(self, filename, draft_id):
+        with self.soundbank_cleanup.lock:
+            optimized = self.soundbank.optimize(filename)
+            self.soundbank_cleanup.protect_draft(
+                {"file": filename, "optimized": optimized}, draft_id, owned_canonical=False
+            )
+            return optimized
+
+    async def handle_soundbank_cleanup(self, request):
+        self._require_access(request)
+        self._require_json(request)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or body.get("action") not in ("preview", "delete"):
+                raise SoundbankError("Cleanup action must be preview or delete")
+            token = None
+            if body["action"] == "delete":
+                token = body.get("token")
+                if not isinstance(token, str) or len(token) != 64:
+                    raise SoundbankError("Preview cleanup before deleting unused sounds")
+            result = await asyncio.to_thread(
+                self.editor.cleanup_soundbank, self.soundbank_cleanup, True, token
+            )
+        except (OSError, ValueError, SoundbankError) as error:
+            return self._disable_cache(web.json_response(
+                {"error": str(error)}, status=getattr(error, "status", 400)
+            ))
+        return self._disable_cache(web.json_response(result))
 
     async def handle_soundbank_audio(self, request):
         self._require_access(request)

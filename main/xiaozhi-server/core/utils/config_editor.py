@@ -1,6 +1,7 @@
 import copy
 import os
 from collections.abc import Mapping
+from contextlib import nullcontext
 
 from config.config_loader import (
     get_project_dir,
@@ -8,7 +9,7 @@ from config.config_loader import (
     merge_configs,
 )
 from config.local_config import LocalConfigStore
-from core.soundbank import normalize_soundbank_text
+from core.soundbank import SoundbankError, normalize_soundbank_text
 from core.utils.config_secrets import is_secret_name
 
 
@@ -195,7 +196,7 @@ class ConfigEditor:
             "config_path": config_path,
         }
 
-    def update(self, patch):
+    def update(self, patch, soundbank_cleanup=None, draft_id=None, retired_drafts=()):
         if not isinstance(patch, Mapping):
             raise ValueError("config must be an object")
 
@@ -203,7 +204,8 @@ class ConfigEditor:
         if unsupported:
             raise ValueError(f"Unsupported configuration section: {unsupported[0]}")
 
-        with self.store.locked():
+        cleanup_result = None
+        with (soundbank_cleanup.lock if soundbank_cleanup else nullcontext()), self.store.locked():
             default_config = load_default_config(self.default_path)
             local_config = self.store.read_unlocked()
             current_effective = merge_configs(default_config, local_config)
@@ -211,9 +213,37 @@ class ConfigEditor:
             updated_local = _merge_editor_patch(local_config, safe_patch)
             effective_config = merge_configs(default_config, updated_local)
             self._validate(effective_config)
+            cleanup_prepared = False
+            if soundbank_cleanup and "static_soundbank" in safe_patch:
+                try:
+                    soundbank_cleanup.prepare_save(
+                        current_effective, effective_config, draft_id, retired_drafts
+                    )
+                    cleanup_prepared = True
+                except (OSError, ValueError, SoundbankError) as error:
+                    cleanup_result = {"errors": [str(error)]}
             self._write_atomic(updated_local)
+            if cleanup_prepared:
+                try:
+                    cleanup_result = soundbank_cleanup.after_save(
+                        effective_config, draft_id, retired_drafts
+                    )
+                except (OSError, ValueError, SoundbankError) as error:
+                    cleanup_result = {"errors": [str(error)]}
 
-        return self.read_public()
+        payload = self.read_public()
+        if cleanup_result is not None:
+            payload["soundbank_cleanup"] = cleanup_result
+        return payload
+
+    def cleanup_soundbank(self, cleanup, scan_unused=False, confirmation=None):
+        with cleanup.lock, self.store.locked():
+            effective = merge_configs(
+                load_default_config(self.default_path), self.store.read_unlocked()
+            )
+            if scan_unused:
+                return cleanup.unused(effective, confirmation)
+            return cleanup.cleanup_pending(effective)
 
     def _validate(self, config):
         selected = config.get("selected_module")

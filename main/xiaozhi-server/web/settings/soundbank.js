@@ -1,5 +1,5 @@
 import { updateValue } from "./configuration.js?v=34";
-import { $, escapeHtml, getPath, state, toast } from "./shared.js";
+import { $, escapeHtml, formatBytes, getPath, state, toast } from "./shared.js";
 
 const NEW_ENTRY_KEY = "__soundbank_new_entry__";
 const P3_FRAME_DURATION_MS = 60;
@@ -23,6 +23,25 @@ let newSpokenTextDraft = "";
 let newSpokenTextTouched = false;
 let previewAsset = "";
 let previewFallbackAsset = "";
+let cleanupBusy = false;
+let cleanupPreview = null;
+
+function cleanupBlocked() {
+  return state.soundbankSaving || Object.keys(state.patch).length > 0
+    || activeGenerations.size > 0
+    || activeOptimizations.size > 0
+    || generationDirectoryLocked();
+}
+
+export function soundbankAuthoringBusy() {
+  return cleanupBusy || activeGenerations.size > 0 || activeOptimizations.size > 0;
+}
+
+function rememberRetired(entry, includeCanonical = true) {
+  if (includeCanonical && entryFile(entry)) state.soundbankRetiredDrafts.add(entryFile(entry));
+  const optimized = entryOptimized(entry);
+  if (optimized?.file) state.soundbankRetiredDrafts.add(optimized.file);
+}
 
 function entries() {
   const value = getPath(state.config, "static_soundbank.entries", {});
@@ -236,7 +255,7 @@ function provenanceMarkup(entry) {
 function generationButton(label, action, key, disabled = false) {
   const loading = activeGenerations.has(key);
   return `
-    <button class="button secondary${loading ? " loading" : ""}" data-soundbank-action="${action}" type="button" ${disabled || loading ? "disabled" : ""}>
+    <button class="button secondary${loading ? " loading" : ""}" data-soundbank-action="${action}" type="button" ${disabled || loading || cleanupBusy || state.soundbankSaving ? "disabled" : ""}>
       <span class="soundbank-button-spinner" aria-hidden="true"></span>
       <span>${escapeHtml(loading ? "Generating…" : label)}</span>
     </button>`;
@@ -264,7 +283,7 @@ function entryCard(phrase, entry, index) {
     && typeof entry.text === "string"
     && entry.text.trim(),
   );
-  const busy = activeGenerations.has(phrase) || activeOptimizations.has(phrase);
+  const busy = activeGenerations.has(phrase) || activeOptimizations.has(phrase) || cleanupBusy || state.soundbankSaving;
   const error = generationErrors.get(phrase) || "";
   const invalid = Boolean(phraseError(phrase, phrase) || assetError(file));
   const generationLocked = generationDirectoryLocked();
@@ -317,7 +336,7 @@ function renderWorkspace() {
   const enabled = Boolean(getPath(state.config, "static_soundbank.enabled", false));
   const directory = getPath(state.config, "static_soundbank.directory", "data/soundbank");
   const restart = generationStatus();
-  const newBusy = activeGenerations.has(NEW_ENTRY_KEY);
+  const newBusy = activeGenerations.has(NEW_ENTRY_KEY) || cleanupBusy || state.soundbankSaving;
   const newError = generationErrors.get(NEW_ENTRY_KEY) || "";
   const generationLocked = generationDirectoryLocked();
   const newPhraseValidation = newPhraseDraft.trim()
@@ -358,7 +377,7 @@ function renderWorkspace() {
           </article>
           <article class="field-card">
             <label for="soundbankDirectory">Directory <small>static_soundbank.directory</small></label>
-            <input id="soundbankDirectory" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" ${activeGenerations.size || activeOptimizations.size ? "disabled" : ""} />
+            <input id="soundbankDirectory" value="${escapeHtml(directory)}" placeholder="data/soundbank" spellcheck="false" ${soundbankAuthoringBusy() || state.soundbankSaving ? "disabled" : ""} />
             <p class="field-help">Entry paths are relative to this directory. Generated filenames are assigned by the server.</p>
           </article>
         </div>
@@ -413,7 +432,56 @@ function renderWorkspace() {
             : '<p class="soundbank-empty">No static soundbank entries configured.</p>'}
         </div>
       </section>
+
+      <section class="settings-group panel soundbank-cleanup-panel">
+        <header>
+          <div>
+            <h3>Unused sounds</h3>
+            <p>Retired generated audio is cleaned after Save, or after restart when still used by the running server.</p>
+          </div>
+        </header>
+        <div class="soundbank-cleanup-body">
+          <p class="field-help">Preview unused WAV, MP3 and P3 files in this directory, including manually added audio. Saved entries, runtime entries and generated drafts are kept. Save or discard edits before cleanup. Unsaved generated drafts remain protected until saved or the server restarts.</p>
+          <button id="soundbankCleanupPreview" class="button secondary" type="button" ${cleanupBusy || cleanupBlocked() ? "disabled" : ""}>${cleanupBusy ? "Working…" : "Preview unused sounds"}</button>
+          ${cleanupPreview && !cleanupBlocked() ? `
+            <p class="soundbank-cleanup-summary" role="status">${cleanupPreview.count} unused ${cleanupPreview.count === 1 ? "file" : "files"} · ${escapeHtml(formatBytes(cleanupPreview.bytes))}</p>
+            ${cleanupPreview.count ? `
+              <details class="soundbank-cleanup-files"><summary>Files to delete</summary><ul>${cleanupPreview.files.map((file) => `<li><code>${escapeHtml(file)}</code></li>`).join("")}</ul></details>
+              <button id="soundbankCleanupDelete" class="button secondary" type="button" ${cleanupBusy ? "disabled" : ""}>Delete ${cleanupPreview.count} unused files</button>` : ""}
+          ` : ""}
+        </div>
+      </section>
     </div>`;
+}
+
+async function cleanupSounds(action) {
+  if (cleanupBusy || cleanupBlocked()) return;
+  const token = cleanupPreview?.token;
+  if (action === "delete" && !token) return;
+  cleanupBusy = true;
+  renderSoundbank();
+  try {
+    const response = await fetch("/api/settings/soundbank/cleanup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...(action === "delete" ? { token } : {}) }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Soundbank cleanup failed");
+    if (action === "preview") {
+      cleanupPreview = payload;
+    } else {
+      cleanupPreview = null;
+      toast(`Deleted ${payload.deleted} unused files · ${formatBytes(payload.bytes)} freed.`);
+      if (payload.errors?.length) toast(`Some files could not be deleted: ${payload.errors.join("; ")}`, true);
+    }
+  } catch (error) {
+    cleanupPreview = null;
+    toast(error.message, true);
+  } finally {
+    cleanupBusy = false;
+    renderSoundbank();
+  }
 }
 
 function validateRow(row) {
@@ -509,6 +577,7 @@ function commitRow(row, reportInvalid = false) {
 
   if (fileChanged) {
     row.querySelector(".soundbank-provenance").outerHTML = provenanceMarkup(updatedEntry);
+    rememberRetired(result.originalEntry);
     row.querySelector(".soundbank-optimization").outerHTML = optimizationMarkup(updatedEntry);
   }
   const validated = validateRow(row);
@@ -521,6 +590,7 @@ function commitRow(row, reportInvalid = false) {
 
 function removeEntry(phrase) {
   const removedEntry = entries()[phrase];
+  rememberRetired(removedEntry);
   const updatedEntries = {};
   Object.entries(entries()).forEach(([candidate, entry]) => {
     if (candidate !== phrase) updatedEntries[candidate] = entry;
@@ -558,6 +628,7 @@ async function generateEntry(key, title, text) {
       body: JSON.stringify({
         title,
         text,
+        soundbank_draft_id: state.soundbankDraftId,
       }),
     });
     const payload = await response.json().catch(() => ({}));
@@ -572,6 +643,7 @@ async function generateEntry(key, title, text) {
     }
 
     const updatedEntries = {};
+    rememberRetired(entries()[key === NEW_ENTRY_KEY ? title : key]);
     if (key === NEW_ENTRY_KEY) {
       Object.assign(updatedEntries, entries(), { [title]: payload.entry });
       newPhraseDraft = "";
@@ -610,7 +682,7 @@ async function optimizeEntry(key, entry) {
     const response = await fetch("/api/settings/soundbank/optimize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file: entryFile(entry) }),
+      body: JSON.stringify({ file: entryFile(entry), soundbank_draft_id: state.soundbankDraftId }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Soundbank optimization failed");
@@ -629,6 +701,7 @@ async function optimizeEntry(key, entry) {
         updatedEntries[candidate] = currentEntry;
         return;
       }
+      rememberRetired(currentEntry, false);
       updatedEntries[candidate] = currentEntry && typeof currentEntry === "object" && !Array.isArray(currentEntry)
         ? { ...currentEntry, optimized: payload.optimized }
         : { file: entryFile(currentEntry), optimized: payload.optimized };
@@ -707,6 +780,8 @@ function attachRowListeners(row) {
 }
 
 function attachListeners() {
+  $("#soundbankCleanupPreview")?.addEventListener("click", () => cleanupSounds("preview"));
+  $("#soundbankCleanupDelete")?.addEventListener("click", () => cleanupSounds("delete"));
   $("#soundbankEnabled")?.addEventListener("change", (event) => {
     updateValue("static_soundbank.enabled", event.currentTarget.checked);
     renderSoundbank();

@@ -365,6 +365,15 @@ main { grid-column: 2; min-width: 0; }
 .soundbank-settings-panel .toggle-card { align-self: stretch; }
 .soundbank-settings-footer { display: flex; align-items: center; gap: 12px; padding: 0 15px 15px; }
 .soundbank-settings-footer p { margin: 0; color: var(--faint); font-size: 10px; }
+.soundbank-cleanup-body { display: grid; justify-items: start; gap: 12px; min-width: 0; padding: 16px 20px 20px; }
+.soundbank-cleanup-body > p { max-width: 760px; margin: 0; font-size: 11px; line-height: 1.6; }
+.soundbank-cleanup-body > .button { min-height: 34px; padding: 0 12px; font-size: 11px; }
+.soundbank-cleanup-summary { color: var(--muted); }
+.soundbank-cleanup-files { min-width: 0; width: 100%; max-width: 760px; color: var(--muted); font-size: 11px; }
+.soundbank-cleanup-files summary { cursor: pointer; }
+.soundbank-cleanup-files ul { max-height: 220px; margin: 10px 0 0; padding-left: 20px; overflow-y: auto; }
+.soundbank-cleanup-files li { padding: 3px 0; overflow-wrap: anywhere; }
+.soundbank-cleanup-body > #soundbankCleanupDelete { color: var(--red); }
 .soundbank-compose-panel > .panel-heading, .soundbank-list-panel > .panel-heading { padding-bottom: 15px; border-bottom: 1px solid rgba(94, 75, 49, 0.34); }
 .soundbank-compose-panel > .panel-heading h3, .soundbank-list-panel > .panel-heading h3 { margin-top: 3px; }
 .soundbank-compose-panel > .panel-heading .field-help, .soundbank-list-panel > .panel-heading .field-help { margin-top: 5px; }

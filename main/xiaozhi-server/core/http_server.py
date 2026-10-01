@@ -110,6 +110,10 @@ class SimpleHttpServer:
                                 "/api/settings/soundbank/audio/{filename:.*}",
                                 self.settings_handler.handle_soundbank_audio,
                             ),
+                            web.post(
+                                "/api/settings/soundbank/cleanup",
+                                self.settings_handler.handle_soundbank_cleanup,
+                            ),
                             web.get(
                                 "/api/notify/audio/{token}.ogg",
                                 self.settings_handler.handle_notify_audio,
