@@ -21,6 +21,8 @@ from core.utils.tts import MarkdownCleaner
 
 TAG = __name__
 logger = setup_logging()
+_ENGINE_CACHE = {}
+_ENGINE_CACHE_LOCK = threading.Lock()
 _NATIVE_STDERR_LOCK = threading.Lock()
 _UNKNOWN_PHONEME_LOG = re.compile(
     rb".*piper-phonemize-lexicon\.cc:PiperPhonemesToIdsVits:\d+ "
@@ -69,6 +71,7 @@ class TTSProvider(TTSProviderBase):
         super().__init__(config, delete_audio_file)
         self.audio_file_type = "wav"
         self.buffer_full_response = config.get("buffer_full_response", True)
+        self.keep_model_warm = bool(config.get("keep_model_warm", True))
         self.speed = float(config.get("speed", 1.0))
         self.silence_scale = float(config.get("silence_scale", 0.2))
         self.speaker_id = int(config.get("speaker_id", 0))
@@ -129,7 +132,30 @@ class TTSProvider(TTSProviderBase):
         )
         if not tts_config.validate():
             raise ValueError("Invalid Sherpa TTS configuration")
-        self.tts = sherpa_onnx.OfflineTts(tts_config)
+        if self.keep_model_warm:
+            # Cache only the native engine; queues and turn state remain local.
+            cache_key = (
+                str(model.resolve()),
+                str(tokens.resolve()),
+                str(data_dir.resolve()),
+                self.noise_scale,
+                self.noise_scale_w,
+                self.length_scale,
+                config.get("provider", "cpu"),
+                bool(config.get("debug", False)),
+                max(1, int(config.get("num_threads", 2))),
+                int(config.get("max_num_sentences", 1)),
+            )
+            with _ENGINE_CACHE_LOCK:
+                self.tts = _ENGINE_CACHE.get(cache_key)
+                if self.tts is None:
+                    self.tts = sherpa_onnx.OfflineTts(tts_config)
+                    _ENGINE_CACHE[cache_key] = self.tts
+                    logger.bind(tag=TAG).info("Sherpa TTS model loaded and kept warm")
+                else:
+                    logger.bind(tag=TAG).info("Sherpa TTS warm model reused")
+        else:
+            self.tts = sherpa_onnx.OfflineTts(tts_config)
         num_speakers = self.tts.num_speakers
         if num_speakers > 0:
             if not 0 <= self.speaker_id < num_speakers:

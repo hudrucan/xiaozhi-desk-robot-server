@@ -26,6 +26,8 @@ TTS:
   SherpaTTS:
     type: sherpa
     language: your_language
+    # Reuse the model across reconnects within the server process.
+    keep_model_warm: true
     model_dir: models/tts/sherpa/your-model
     model: model.onnx
     tokens: tokens.txt
@@ -48,6 +50,7 @@ TTS:
     # Optional Cake Piper v3 model; uses the existing Sherpa runtime.
     type: sherpa
     language: vi
+    keep_model_warm: true
     model_dir: models/tts/sherpa/cake-piper-v3
     model: medium.onnx
     tokens: tokens.txt
