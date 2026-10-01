@@ -236,6 +236,8 @@ class _MatchaEngine:
         previous_text: str = "",
         tail_prompt_words: int = 10,
         use_prompt: bool = True,
+        tail_trim_samples: int = 0,
+        edge_fade_ms: float = 5.0,
     ) -> tuple[np.ndarray, np.ndarray]:
         with self._inference_lock:
             sequence = self.text_to_sequence(text)
@@ -304,11 +306,13 @@ class _MatchaEngine:
             posinf=1.0,
             neginf=-1.0,
         )
-        if samples.size > 1512:
-            samples = samples[:-512].copy()
-        else:
-            samples = samples.copy()
-        self._fade_edges(samples, int(self.SAMPLE_RATE * 0.020))
+        # Never discard an entire short segment, even with an oversized trim.
+        if 0 < tail_trim_samples < samples.size:
+            samples = samples[:-tail_trim_samples].copy()
+        fade_samples = int(min(
+            self.SAMPLE_RATE * edge_fade_ms / 1000.0, samples.size
+        ))
+        self._fade_edges(samples, fade_samples)
         return samples, mel
 
 
@@ -335,7 +339,20 @@ class TTSProvider(TTSProviderBase):
             1, int(config.get("first_segment_chars", 32))
         )
         self.volume_gain = float(config.get("volume_gain", 1.0))
-        self.target_peak = float(config.get("target_peak", 0.96))
+        configured_tail_trim = float(config.get("tail_trim_samples", 0))
+        if (
+            not math.isfinite(configured_tail_trim)
+            or configured_tail_trim < 0
+            or not configured_tail_trim.is_integer()
+        ):
+            raise ValueError("Matcha tail_trim_samples must be a non-negative integer")
+        self.tail_trim_samples = int(configured_tail_trim)
+        self.edge_fade_ms = float(config.get("edge_fade_ms", 5.0))
+        self.mastering = bool(config.get("mastering", True))
+        self.target_active_rms_dbfs = float(
+            config.get("target_active_rms_dbfs", -10.0)
+        )
+        self.peak_ceiling_dbfs = float(config.get("peak_ceiling_dbfs", -1.0))
         self.keep_model_warm = bool(config.get("keep_model_warm", True))
         self.number_language = config.get("number_language")
         self._resample_state = None
@@ -346,18 +363,26 @@ class TTSProvider(TTSProviderBase):
             (self.temperature, "temperature"),
             (self.length_scale, "length_scale"),
             (self.volume_gain, "volume_gain"),
-            (self.target_peak, "target_peak"),
+            (self.edge_fade_ms, "edge_fade_ms"),
+            (self.target_active_rms_dbfs, "target_active_rms_dbfs"),
+            (self.peak_ceiling_dbfs, "peak_ceiling_dbfs"),
         ):
             if not math.isfinite(value):
                 raise ValueError(f"Matcha {name} must be finite")
         if self.temperature < 0:
             raise ValueError("Matcha temperature must not be negative")
+        if self.sway is not None and not math.isfinite(self.sway):
+            raise ValueError("Matcha sway must be finite or None")
         if self.length_scale <= 0:
             raise ValueError("Matcha length_scale must be positive")
         if self.volume_gain < 0:
             raise ValueError("Matcha volume_gain must not be negative")
-        if not 0 < self.target_peak <= 1:
-            raise ValueError("Matcha target_peak must be in the range (0, 1]")
+        if self.edge_fade_ms < 0:
+            raise ValueError("Matcha edge_fade_ms must not be negative")
+        if self.target_active_rms_dbfs >= self.peak_ceiling_dbfs:
+            raise ValueError("Matcha active RMS target must be below the peak ceiling")
+        if self.peak_ceiling_dbfs > 0:
+            raise ValueError("Matcha peak ceiling must not exceed 0 dBFS")
 
         self._num2words = None
         if self.number_language:
@@ -427,12 +452,44 @@ class TTSProvider(TTSProviderBase):
         self.is_first_sentence = False
         return text_utils.clean_text_segment(segment_text_raw)
 
+    @staticmethod
+    def _dbfs_to_amplitude(dbfs: float) -> float:
+        return 10.0 ** (dbfs / 20.0)
+
     def _master_samples(self, samples: np.ndarray) -> np.ndarray:
-        samples = np.asarray(samples, dtype=np.float32) * self.volume_gain
-        peak = float(np.max(np.abs(samples))) if samples.size else 0.0
-        if peak > 0:
-            samples = samples * (self.target_peak / peak)
-        return np.clip(samples, -self.target_peak, self.target_peak)
+        samples = np.nan_to_num(
+            np.asarray(samples, dtype=np.float32),
+            nan=0.0,
+            posinf=1.0,
+            neginf=-1.0,
+        )
+        if not self.mastering:
+            return np.clip(samples * self.volume_gain, -1.0, 1.0)
+
+        # Exclude pauses/near-silence so they cannot cause excessive gain.
+        active = np.abs(samples) >= self._dbfs_to_amplitude(-50.0)
+        if np.any(active):
+            active_rms = float(np.sqrt(
+                np.mean(np.square(samples[active], dtype=np.float64))
+            ))
+            if active_rms > 0:
+                target_rms = self._dbfs_to_amplitude(self.target_active_rms_dbfs)
+                samples = samples * (target_rms / active_rms)
+
+        samples = samples * self.volume_gain
+        ceiling = self._dbfs_to_amplitude(self.peak_ceiling_dbfs)
+        if ceiling == 0.0:
+            return np.zeros_like(samples)
+        knee = ceiling * self._dbfs_to_amplitude(-6.0)
+        magnitude = np.abs(samples)
+        above_knee = magnitude > knee
+        if np.any(above_knee):
+            span = ceiling - knee
+            magnitude[above_knee] = knee + span * np.tanh(
+                (magnitude[above_knee] - knee) / span
+            )
+            samples = np.copysign(magnitude, samples)
+        return np.clip(samples, -ceiling, ceiling)
 
     def _generate_pcm(self, text: str, preserve_prompt: bool) -> tuple[bytes, int]:
         started_at = time.monotonic()
@@ -450,6 +507,8 @@ class TTSProvider(TTSProviderBase):
             previous_text=previous_text,
             tail_prompt_words=self.tail_prompt_words,
             use_prompt=self.use_prompt and preserve_prompt,
+            tail_trim_samples=self.tail_trim_samples,
+            edge_fade_ms=self.edge_fade_ms,
         )
         if samples.size == 0:
             raise RuntimeError("Matcha TTS returned no audio")
