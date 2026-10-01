@@ -33,6 +33,39 @@ TTS:
     num_threads: 2
     speaker_id: 0
     number_language: your_language_code
+    # Optional VITS parameters; these match sherpa-onnx defaults.
+    noise_scale: 0.667
+    noise_scale_w: 0.8
+    length_scale: 1.0
+    speed: 1.0
+    silence_scale: 0.2
+    volume_gain: 1.0
+    buffer_full_response: false
+    split_on_all_punctuations: true
+    max_retries: 0
+    output_dir: tmp/
+  CakePiperTTS:
+    # Optional Cake Piper v3 model; uses the existing Sherpa runtime.
+    type: sherpa
+    language: vi
+    model_dir: models/tts/sherpa/cake-piper-v3
+    model: medium.onnx
+    tokens: tokens.txt
+    data_dir: espeak-ng-data
+    provider: cpu
+    # RK3528 starting point; benchmark on target before final tuning.
+    num_threads: 3
+    # Use the corresponding starting length_scale when changing speaker_id:
+    # 0 Ngọc Lan (female north) -> 1.0
+    # 1 Minh Anh (female north) -> 1.2
+    # 2 Quang Huy (male north)  -> 1.2
+    # 3 Thu Hà (female north)   -> 1.2
+    # 4 Yến Nhi (female south)  -> 1.0; source voice is band-limited/duller.
+    speaker_id: 0
+    number_language: vi
+    noise_scale: 0.667
+    noise_scale_w: 0.8
+    length_scale: 1.0
     speed: 1.0
     silence_scale: 0.2
     volume_gain: 1.0
@@ -59,8 +92,8 @@ TTS:
     steps: 3
     temperature: 0.7
     length_scale: 1.0
-    sway: 0.0  # Linear flow-time schedule.
-    seed:  # Fresh RNG sequence for each segment.
+    sway: 0.0 # Linear flow-time schedule.
+    seed: # Fresh RNG sequence for each segment.
     number_language: vi
     first_segment_chars: 32
     use_prompt: true

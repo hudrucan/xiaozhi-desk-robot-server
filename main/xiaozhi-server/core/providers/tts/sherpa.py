@@ -1,6 +1,7 @@
 import asyncio
 import audioop
 import io
+import math
 import os
 import re
 import tempfile
@@ -71,6 +72,15 @@ class TTSProvider(TTSProviderBase):
         self.speed = float(config.get("speed", 1.0))
         self.silence_scale = float(config.get("silence_scale", 0.2))
         self.speaker_id = int(config.get("speaker_id", 0))
+        self.noise_scale = float(config.get("noise_scale", 0.667))
+        self.noise_scale_w = float(config.get("noise_scale_w", 0.8))
+        self.length_scale = float(config.get("length_scale", 1.0))
+        for name in ("noise_scale", "noise_scale_w"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be a non-negative finite number")
+        if not math.isfinite(self.length_scale) or self.length_scale <= 0:
+            raise ValueError("length_scale must be a positive finite number")
         self.volume_gain = max(0.0, float(config.get("volume_gain", 1.0)))
         self.number_language = config.get("number_language")
         self._resample_state = None
@@ -107,6 +117,9 @@ class TTSProvider(TTSProviderBase):
                     model=str(model),
                     tokens=str(tokens),
                     data_dir=str(data_dir),
+                    noise_scale=self.noise_scale,
+                    noise_scale_w=self.noise_scale_w,
+                    length_scale=self.length_scale,
                 ),
                 provider=config.get("provider", "cpu"),
                 debug=bool(config.get("debug", False)),
@@ -117,6 +130,16 @@ class TTSProvider(TTSProviderBase):
         if not tts_config.validate():
             raise ValueError("Invalid Sherpa TTS configuration")
         self.tts = sherpa_onnx.OfflineTts(tts_config)
+        num_speakers = self.tts.num_speakers
+        if num_speakers > 0:
+            if not 0 <= self.speaker_id < num_speakers:
+                raise ValueError(
+                    f"speaker_id must be in range 0..{num_speakers - 1}"
+                )
+        elif self.speaker_id != 0:
+            raise ValueError(
+                "speaker_id must be 0 for a single-speaker model"
+            )
 
     @staticmethod
     def _require_paths(*paths):

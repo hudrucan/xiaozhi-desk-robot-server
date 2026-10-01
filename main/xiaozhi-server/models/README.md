@@ -3,12 +3,13 @@
 This directory contains the bundled defaults and supported local model
 locations for the single-robot server:
 
-| Path | Runtime |
-| --- | --- |
-| `vad/silero_vad.onnx` | Default Silero VAD |
-| `asr/sherpa/vi-zipformer-int8/` | Vietnamese Sherpa transducer ASR |
-| `tts/sherpa/vi-vivos-x-low/` | Vietnamese Sherpa VITS TTS |
-| `tts/matcha-vi-int8/` | Local Vietnamese Matcha + Vocos TTS |
+| Path                            | Runtime                                                   |
+| ------------------------------- | --------------------------------------------------------- |
+| `vad/silero_vad.onnx`           | Default Silero VAD                                        |
+| `asr/sherpa/vi-zipformer-int8/` | Vietnamese Sherpa transducer ASR                          |
+| `tts/sherpa/vi-vivos-x-low/`    | Vietnamese Sherpa VITS TTS                                |
+| `tts/sherpa/cake-piper-v3/`     | Optional Cake Vietnamese Piper v3, 5 speakers, via Sherpa |
+| `tts/matcha-vi-int8/`           | Local Vietnamese Matcha + Vocos TTS                       |
 
 Cloud providers do not use these files. To enable the bundled Sherpa models,
 install the optional local-speech dependencies:
