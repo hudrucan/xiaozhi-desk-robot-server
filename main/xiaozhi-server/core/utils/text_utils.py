@@ -112,6 +112,16 @@ def remove_emojis(text: str) -> str:
     )
 
 
+def clean_text_segment(text: str) -> str:
+    """Remove emoji/edge whitespace, preserving punctuation in real text.
+
+    Separator-only fragments remain empty so they do not generate TTS audio
+    or blank transcript entries. Keep strip_edge_separators for matching keys.
+    """
+    text = remove_emojis(text).strip()
+    return text if strip_edge_separators(text) else ""
+
+
 def extract_emotion(text: str) -> tuple[str, str]:
     """Extract the first supported emotion marker from an LLM response."""
     if isinstance(text, str):

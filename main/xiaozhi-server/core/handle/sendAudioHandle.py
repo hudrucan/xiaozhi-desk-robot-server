@@ -437,7 +437,7 @@ async def send_stt_message(conn: "ConnectionHandler", text):
     except (json.JSONDecodeError, TypeError):
         # 如果不是JSON格式，直接使用原始文本
         display_text = text
-    stt_text = text_utils.strip_edge_separators(display_text)
+    stt_text = text_utils.clean_text_segment(display_text)
     message = json.dumps({"type": "stt", "state": "final", "text": stt_text,
                           "session_id": conn.session_id})
     presentation_sender = stt_final_presentation_sender.get()

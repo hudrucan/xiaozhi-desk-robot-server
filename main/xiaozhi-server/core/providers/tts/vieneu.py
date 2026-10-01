@@ -224,7 +224,7 @@ class TTSProvider(TTSProviderBase):
         segment_text_raw = current_text[:split_at]
         self.processed_chars += len(segment_text_raw)
         self.is_first_sentence = False
-        return text_utils.strip_edge_separators(segment_text_raw)
+        return text_utils.clean_text_segment(segment_text_raw)
 
     def _resample_pcm(
         self, pcm_data: bytes, source_rate: int, target_rate: int

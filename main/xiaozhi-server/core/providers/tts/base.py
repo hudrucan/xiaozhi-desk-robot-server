@@ -789,7 +789,7 @@ class TTSProviderBase(ABC):
 
         if last_punct_pos != -1:
             segment_text_raw = current_text[: last_punct_pos + 1]
-            segment_text = text_utils.strip_edge_separators(
+            segment_text = text_utils.clean_text_segment(
                 segment_text_raw
             )
             self.processed_chars += len(segment_text_raw)
@@ -800,7 +800,7 @@ class TTSProviderBase(ABC):
 
             return segment_text
         elif self.tts_stop_request and current_text:
-            segment_text = current_text
+            segment_text = text_utils.clean_text_segment(current_text)
             self.is_first_sentence = True
             return segment_text
         else:
@@ -898,7 +898,7 @@ class TTSProviderBase(ABC):
         full_text = "".join(self.tts_text_buff)
         remaining_text = full_text[self.processed_chars :]
         if remaining_text:
-            segment_text = text_utils.strip_edge_separators(remaining_text)
+            segment_text = text_utils.clean_text_segment(remaining_text)
             if segment_text:
                 self._process_segment_stream(
                     segment_text, opus_handler=opus_handler
