@@ -2,5 +2,8 @@
 num2words==0.5.14
 sherpa-onnx==1.13.8
 
+# Optional Vietnamese text frontend for CakePiper/Sherpa TTS.
+vietnormalizer==0.2.3
+
 # Optional local Vietnamese VieNeu v3 Nano TTS provider.
 vieneu==3.8.1

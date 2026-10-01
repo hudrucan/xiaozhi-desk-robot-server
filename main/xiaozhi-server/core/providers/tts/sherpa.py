@@ -16,6 +16,7 @@ import numpy as np
 from config.logger import setup_logging
 from core.providers.tts.base import TTSProviderBase
 from core.providers.tts.dto.dto import SentenceType
+from core.providers.tts.vietnamese_normalizer import VietnameseTTSNormalizer
 from core.utils.tts import MarkdownCleaner
 
 
@@ -89,7 +90,13 @@ class TTSProvider(TTSProviderBase):
         self._resample_state = None
 
         self._num2words = None
-        if self.number_language:
+        self._text_normalizer = None
+        normalizer = config.get("text_normalizer")
+        if normalizer == "vietnormalizer":
+            self._text_normalizer = VietnameseTTSNormalizer()
+        elif normalizer not in (None, "", "none"):
+            raise ValueError("text_normalizer must be 'none' or 'vietnormalizer'")
+        if self._text_normalizer is None and self.number_language:
             try:
                 from num2words import num2words
             except ImportError as error:
@@ -200,9 +207,14 @@ class TTSProvider(TTSProviderBase):
         generation_config.sid = self.speaker_id
         generation_config.speed = self.speed
         generation_config.silence_scale = self.silence_scale
+        spoken_text = (
+            self._text_normalizer.normalize(text)
+            if self._text_normalizer is not None
+            else self._normalize_numbers(text)
+        )
         audio = _generate_without_native_log_spam(
             lambda: self.tts.generate(
-                self._normalize_numbers(text), generation_config
+                spoken_text, generation_config
             )
         )
         completed_at = time.monotonic()

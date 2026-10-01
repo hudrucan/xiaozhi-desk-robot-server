@@ -34,6 +34,8 @@ TTS:
     data_dir: espeak-ng-data
     num_threads: 2
     speaker_id: 0
+    # Legacy number-only normalization unless text_normalizer is enabled.
+    text_normalizer: none
     number_language: your_language_code
     # Optional VITS parameters; these match sherpa-onnx defaults.
     noise_scale: 0.667
@@ -65,7 +67,8 @@ TTS:
     # 3 Thu Hà (female north)   -> 1.2
     # 4 Yến Nhi (female south)  -> 1.0; source voice is band-limited/duller.
     speaker_id: 0
-    number_language: vi
+    # Vietnamese speech frontend; bypasses number_language/num2words.
+    text_normalizer: vietnormalizer
     noise_scale: 0.667
     noise_scale_w: 0.8
     length_scale: 1.0
