@@ -352,9 +352,8 @@ ASR:
     output_dir: tmp/
   SherpaStreamingASR:
     type: sherpa_streaming
-    # Local hynt/Zipformer-30M-RNNT-Streaming-6000h files; no auto-download.
     # Choose matching exported chunk/context variants for all three ONNX files.
-    model_dir: models/asr/sherpa/zipformer-vi-30m-streaming
+    model_dir: models/asr/sherpa/your-model
     encoder: encoder.fp16.onnx
     decoder: decoder.fp16.onnx
     joiner: joiner.fp16.onnx
