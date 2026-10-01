@@ -69,6 +69,8 @@ TTS:
     speaker_id: 0
     # Vietnamese speech frontend; bypasses number_language/num2words.
     text_normalizer: vietnormalizer
+    # First segment prefers punctuation at 20–45 chars, then safe whitespace.
+    first_segment_chars: 45
     noise_scale: 0.667
     noise_scale_w: 0.8
     length_scale: 1.0

@@ -5,6 +5,7 @@ import uuid
 import queue
 import asyncio
 import threading
+import time
 import traceback
 import concurrent.futures
 from collections.abc import Mapping
@@ -34,6 +35,7 @@ from core.providers.tts.dto.dto import (
     ContentType,
     InterfaceType,
 )
+from core.providers.tts.first_segment import find_first_segment_boundary
 
 TAG = __name__
 logger = setup_logging()
@@ -109,6 +111,9 @@ class TTSProviderBase(ABC):
         self.split_on_all_punctuations = bool(
             config.get("split_on_all_punctuations", False)
         )
+        self.first_segment_chars = int(config.get("first_segment_chars", 0))
+        if self.first_segment_chars < 0:
+            raise ValueError("first_segment_chars must be non-negative (0 disables it)")
         self.tts_stop_request = False
         self.processed_chars = 0
         self.is_first_sentence = True
@@ -577,6 +582,16 @@ class TTSProviderBase(ABC):
     def _process_segment_stream(
         self, segment_text, opus_handler: Callable[[bytes], None]
     ):
+        if self.conn:
+            self.conn.mark_turn_metric(
+                "tts_first_segment_ready",
+                sentence_id=getattr(self, "current_sentence_id", None),
+            )
+        logger.bind(tag=TAG).debug(
+            "TTS segment ready: "
+            f"sentence_id={getattr(self, 'current_sentence_id', None)}, "
+            f"chars={len(segment_text)}, monotonic_s={time.monotonic():.6f}"
+        )
         if self._try_process_static_soundbank(segment_text, opus_handler):
             return
         if self.conn:
@@ -786,6 +801,24 @@ class TTSProviderBase(ABC):
         last_punct_pos = self._find_segment_boundary(
             current_text, punctuations_to_use
         )
+        if self.is_first_sentence and self.first_segment_chars:
+            preserve_soundbank = False
+            if self._static_soundbank_enabled:
+                legacy_segment = current_text[:last_punct_pos + 1]
+                legacy_key = normalize_soundbank_text(legacy_segment)
+                pending_key = normalize_soundbank_text(current_text)
+                # Keep known cached phrases intact while their text arrives.
+                preserve_soundbank = (
+                    legacy_key in self._static_soundbank_entries
+                    or bool(pending_key) and any(
+                        key.startswith(pending_key)
+                        for key in self._static_soundbank_entries
+                    )
+                )
+            if not preserve_soundbank:
+                last_punct_pos = find_first_segment_boundary(
+                    current_text, self.first_segment_chars
+                )
 
         if last_punct_pos != -1:
             segment_text_raw = current_text[: last_punct_pos + 1]
@@ -795,7 +828,9 @@ class TTSProviderBase(ABC):
             self.processed_chars += len(segment_text_raw)
 
             # Allow a shorter first segment to reduce time to first audio.
-            if self.is_first_sentence:
+            if self.is_first_sentence and (
+                segment_text or not self.first_segment_chars
+            ):
                 self.is_first_sentence = False
 
             return segment_text

@@ -1094,6 +1094,9 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                                     new_part = clean_response_text(new_part)
                                     if new_part:
                                         tc["_da_sent"] = safe_end
+                                        self.mark_turn_metric(
+                                            "tts_first_text_queued", sentence_id=current_sentence_id
+                                        )
                                         self.tts.tts_text_queue.put(
                                             TTSMessageDTO(
                                                 sentence_id=current_sentence_id,
@@ -1117,6 +1120,9 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                 if content is not None and len(content) > 0:
                     if not tool_call_flag:
                         response_message.append(content)
+                        self.mark_turn_metric(
+                            "tts_first_text_queued", sentence_id=current_sentence_id
+                        )
                         self.tts.tts_text_queue.put(
                             TTSMessageDTO(
                                 sentence_id=current_sentence_id,
@@ -1204,6 +1210,9 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                             sent_len = tc.get("_da_sent", 0)
                             remaining = da_response[sent_len:]
                             if remaining:
+                                self.mark_turn_metric(
+                                    "tts_first_text_queued", sentence_id=current_sentence_id
+                                )
                                 self.tts.tts_text_queue.put(
                                     TTSMessageDTO(
                                         sentence_id=current_sentence_id,

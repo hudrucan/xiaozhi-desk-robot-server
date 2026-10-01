@@ -296,6 +296,11 @@ async def _do_send_audio(conn: "ConnectionHandler", opus_packet, flow_control):
         conn.mark_turn_metric(
             "first_audio_sent", sentence_id=getattr(conn, "sentence_id", None)
         )
+        conn.logger.bind(tag=TAG).debug(
+            "TTS first audio sent: "
+            f"sentence_id={getattr(conn, 'sentence_id', None)}, "
+            f"monotonic_s={time.monotonic():.6f}"
+        )
 
     # 更新流控状态
     flow_control["packet_count"] = packet_index + 1

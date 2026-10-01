@@ -200,9 +200,6 @@ class TTSProvider(TTSProviderBase):
     def _generate_pcm(self, text: str) -> tuple[bytes, int]:
         started_at = time.monotonic()
         sentence_id = getattr(self, "current_sentence_id", None)
-        logger.bind(tag=TAG).debug(
-            f"Sherpa TTS synth start: sentence_id={sentence_id}, chars={len(text)}"
-        )
         generation_config = self._sherpa_onnx.GenerationConfig()
         generation_config.sid = self.speaker_id
         generation_config.speed = self.speed
@@ -212,20 +209,34 @@ class TTSProvider(TTSProviderBase):
             if self._text_normalizer is not None
             else self._normalize_numbers(text)
         )
-        audio = _generate_without_native_log_spam(
-            lambda: self.tts.generate(
-                spoken_text, generation_config
+
+        def generate():
+            synth_started_at = time.monotonic()
+            if self.conn:
+                self.conn.mark_turn_metric("tts_synth_start", sentence_id=sentence_id)
+            logger.bind(tag=TAG).debug(
+                "Sherpa TTS synth start: "
+                f"sentence_id={sentence_id}, chars={len(text)}, "
+                f"spoken_chars={len(spoken_text)}, "
+                f"prepare_wait_ms={(synth_started_at - started_at) * 1000:.1f}, "
+                f"monotonic_s={synth_started_at:.6f}"
             )
-        )
-        completed_at = time.monotonic()
+            audio = self.tts.generate(spoken_text, generation_config)
+            completed_at = time.monotonic()
+            if self.conn:
+                self.conn.mark_turn_metric("tts_synth_end", sentence_id=sentence_id)
+            logger.bind(tag=TAG).debug(
+                "Sherpa TTS synth complete: "
+                f"sentence_id={sentence_id}, "
+                f"elapsed_ms={(completed_at - synth_started_at) * 1000:.1f}, "
+                f"samples={len(audio.samples)}, sample_rate={audio.sample_rate}, "
+                f"monotonic_s={completed_at:.6f}"
+            )
+            return audio
+
+        audio = _generate_without_native_log_spam(generate)
         if len(audio.samples) == 0:
             raise RuntimeError("Sherpa TTS returned no audio")
-
-        logger.bind(tag=TAG).debug(
-            "Sherpa TTS synth complete: "
-            f"sentence_id={sentence_id}, elapsed_ms={(completed_at - started_at) * 1000:.1f}, "
-            f"samples={len(audio.samples)}, sample_rate={audio.sample_rate}"
-        )
 
         samples = np.clip(
             np.asarray(audio.samples, dtype=np.float32) * self.volume_gain,
@@ -233,9 +244,14 @@ class TTSProvider(TTSProviderBase):
             1.0,
         )
         pcm_data = (samples * 32767.0).astype("<i2").tobytes()
+        pcm_ready_at = time.monotonic()
+        if self.conn:
+            self.conn.mark_turn_metric("tts_first_pcm", sentence_id=sentence_id)
         logger.bind(tag=TAG).debug(
             "Sherpa TTS first PCM available: "
-            f"sentence_id={sentence_id}, elapsed_ms={(time.monotonic() - started_at) * 1000:.1f}"
+            f"sentence_id={sentence_id}, "
+            f"elapsed_ms={(pcm_ready_at - started_at) * 1000:.1f}, "
+            f"monotonic_s={pcm_ready_at:.6f}"
         )
         return pcm_data, audio.sample_rate
 
@@ -316,7 +332,8 @@ class TTSProvider(TTSProviderBase):
                         logger.bind(tag=TAG).debug(
                             "Sherpa TTS first Opus frame: "
                             f"sentence_id={getattr(self, 'current_sentence_id', None)}, "
-                            f"elapsed_ms={(time.monotonic() - started_at) * 1000:.1f}"
+                            f"elapsed_ms={(time.monotonic() - started_at) * 1000:.1f}, "
+                            f"monotonic_s={time.monotonic():.6f}"
                         )
                         first_opus_logged = True
                     opus_handler(opus_data)
