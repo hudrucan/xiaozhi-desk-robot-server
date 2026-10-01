@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -8,6 +9,11 @@ import numpy as np
 
 from config.logger import setup_logging
 from core.handle.receiveAudioHandle import startToChat
+from core.handle.sendAudioHandle import (
+    send_stt_clear_message,
+    send_stt_partial_message,
+    stt_final_presentation_sender,
+)
 from core.providers.asr.base import ASRProviderBase
 from core.providers.asr.dto.dto import InterfaceType
 
@@ -15,6 +21,10 @@ from core.providers.asr.dto.dto import InterfaceType
 TAG = __name__
 logger = setup_logging()
 SAMPLE_RATE = 16000
+
+
+class _StaleFinalPresentation(Exception):
+    """The owning turn was invalidated before its final STT send."""
 
 
 class _ConnectionStream:
@@ -28,6 +38,9 @@ class _ConnectionStream:
         self.finalizing = False
         self.draining = False
         self.closed = False
+        self.last_partial_text = ""
+        self.last_partial_sent_at = 0.0
+        self.final_presentation_committed = False
 
 
 class ASRProvider(ASRProviderBase):
@@ -39,10 +52,13 @@ class ASRProvider(ASRProviderBase):
         self.sentence_case = config.get("sentence_case", True)
         self.pre_roll_frames = int(config.get("pre_roll_frames", 10))
         self.final_padding_ms = int(config.get("final_padding_ms", 0))
+        self.partial_min_interval_ms = int(config.get("partial_min_interval_ms", 120))
         if self.pre_roll_frames < 1:
             raise ValueError("Sherpa streaming pre_roll_frames must be at least 1")
         if self.final_padding_ms < 0:
             raise ValueError("Sherpa streaming final_padding_ms must not be negative")
+        if self.partial_min_interval_ms < 0:
+            raise ValueError("Sherpa streaming partial_min_interval_ms must not be negative")
 
         required = ("model_dir", "encoder", "decoder", "joiner", "tokens")
         missing_config = [key for key in required if not config.get(key)]
@@ -97,6 +113,7 @@ class ASRProvider(ASRProviderBase):
             except asyncio.QueueEmpty:
                 break
         async with state.lock:
+            await self._clear_partial(conn, state)
             await self._reset(conn, state)
             state.finalizing = False
         conn._sherpa_streaming_state = _ConnectionStream(self.pre_roll_frames)
@@ -132,10 +149,20 @@ class ASRProvider(ASRProviderBase):
         samples /= 32768.0
         state.stream.accept_waveform(SAMPLE_RATE, samples)
         self._drain(state.stream)
+        return self._normalize_text(self.recognizer.get_result(state.stream))
+
+    def _normalize_text(self, text):
+        text = text.strip()
+        if text and self.sentence_case:
+            text = text.lower()
+            text = text[0].upper() + text[1:]
+        return text
 
     def _finish(self, state):
         stream = state.stream
         if self.final_padding_ms:
+            # input_finished() flushes features, but does not make a partial
+            # encoder chunk ready. Supply right context before the final drain.
             stream.accept_waveform(
                 SAMPLE_RATE,
                 np.zeros(SAMPLE_RATE * self.final_padding_ms // 1000, dtype=np.float32),
@@ -143,11 +170,38 @@ class ASRProvider(ASRProviderBase):
         stream.input_finished()
         self._drain(stream)
         # sherpa-onnx 1.13.8's Python get_result returns a string, not a DTO.
-        text = self.recognizer.get_result(stream).strip()
-        if text and self.sentence_case:
-            text = text.lower()
-            text = text[0].upper() + text[1:]
-        return text
+        return self._normalize_text(self.recognizer.get_result(stream))
+
+    @staticmethod
+    def _reset_partial_state(state):
+        state.last_partial_text = ""
+        state.last_partial_sent_at = 0.0
+        state.final_presentation_committed = False
+
+    async def _send_partial(self, conn, state, text):
+        if not text or text == state.last_partial_text or state.closed:
+            return
+        now = time.monotonic()
+        if state.last_partial_text and (
+            (now - state.last_partial_sent_at) * 1000 < self.partial_min_interval_ms
+        ):
+            return
+        try:
+            if await send_stt_partial_message(conn, text):
+                state.last_partial_text = text
+                state.last_partial_sent_at = time.monotonic()
+        except Exception as error:
+            logger.bind(tag=TAG).warning(f"Failed to send live ASR partial: {error}")
+
+    async def _clear_partial(self, conn, state):
+        if state.last_partial_text and not state.final_presentation_committed:
+            try:
+                await send_stt_clear_message(conn)
+            except Exception as error:
+                logger.bind(tag=TAG).warning(f"Failed to clear live ASR partial: {error}")
+                # Keep ownership so subsequent cleanup can retry the clear.
+                return
+        self._reset_partial_state(state)
 
     @staticmethod
     def _drop_stream(state):
@@ -164,6 +218,7 @@ class ASRProvider(ASRProviderBase):
         logger.bind(tag=TAG).error(f"Sherpa streaming ASR failed: {error}")
         if not state.closed and (state.active or state.finalizing):
             conn.complete_turn_metrics("asr_failed")
+        await self._clear_partial(conn, state)
         await self._reset(conn, state)
 
     @staticmethod
@@ -195,9 +250,13 @@ class ASRProvider(ASRProviderBase):
                     state.pre_roll.clear()
                 else:
                     pcm_bytes = pcm_frame
-                await self._run_engine(self._feed, state, pcm_bytes)
+                partial = await self._run_engine(self._feed, state, pcm_bytes)
                 if state.closed:
                     return
+                # Connection serialization extends through the send, but the
+                # native engine lock has already been released. No queued
+                # partial task can overtake final/reset presentation.
+                await self._send_partial(conn, state, partial)
                 should_finalize = conn.client_voice_stop and not state.draining
             except Exception as error:
                 await self._fail(conn, state, error)
@@ -236,6 +295,8 @@ class ASRProvider(ASRProviderBase):
                 if state.closed:
                     return True
                 conn.mark_turn_metric("asr_done")
+                if not transcript:
+                    await self._clear_partial(conn, state)
                 await self._reset(conn, state)
             except Exception as error:
                 await self._fail(conn, state, error)
@@ -245,16 +306,45 @@ class ASRProvider(ASRProviderBase):
 
         # Keep finalizing set through downstream handoff, preventing a second
         # final or a new stream while the accepted input is being dispatched.
+        presentation_task = asyncio.current_task()
+
+        async def send_final_presentation(final_conn, message):
+            if final_conn is not conn or asyncio.current_task() is not presentation_task:
+                await final_conn.websocket.send(message)
+                return
+            async with state.lock:
+                if (
+                    state.closed
+                    or getattr(conn, "_sherpa_streaming_state", None) is not state
+                    or conn.stop_event.is_set()
+                ):
+                    raise _StaleFinalPresentation()
+                # Serialize final against clear/reset, without the engine lock.
+                await conn.websocket.send(message)
+                state.final_presentation_committed = True
+
+        presentation_token = stt_final_presentation_sender.set(send_final_presentation)
         try:
-            if state.closed or conn.stop_event.is_set():
+            if (
+                state.closed
+                or getattr(conn, "_sherpa_streaming_state", None) is not state
+                or conn.stop_event.is_set()
+            ):
                 return True
             if not transcript:
                 conn.complete_turn_metrics("empty_asr_result")
                 return True
             logger.bind(tag=TAG).info(f"Recognized text: {transcript}")
             await startToChat(conn, transcript)
+        except _StaleFinalPresentation:
+            return True
         finally:
-            state.finalizing = False
+            stt_final_presentation_sender.reset(presentation_token)
+            async with state.lock:
+                # Successful final releases ownership without clear. Empty,
+                # failed, stale or intent-only handoffs still owe a clear.
+                await self._clear_partial(conn, state)
+                state.finalizing = False
             self._release_finished_turn(conn, state, audio_task)
         return True
 
@@ -265,6 +355,7 @@ class ASRProvider(ASRProviderBase):
         state.closed = True
         conn._sherpa_streaming_state = None
         async with state.lock:
+            await self._clear_partial(conn, state)
             await self._reset(conn, state)
             state.finalizing = False
             state.draining = False

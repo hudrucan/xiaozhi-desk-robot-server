@@ -2,6 +2,7 @@ import json
 import time
 import asyncio
 import opuslib_next
+from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,6 +17,8 @@ TAG = __name__
 AUDIO_FRAME_DURATION = 60
 # Pre-buffer packet count, sent directly to reduce latency.
 PRE_BUFFER_COUNT = 5
+# Task-scoped presentation sender; other ASR/typed turns keep the normal path.
+stt_final_presentation_sender = ContextVar("stt_final_presentation_sender", default=None)
 
 
 async def sendAudioMessage(conn: "ConnectionHandler", sentenceType, audios, text, sentence_id=None):
@@ -391,6 +394,27 @@ async def _send_sentence_start(conn: "ConnectionHandler", text):
     await send_tts_message(conn, "sentence_start", text)
 
 
+async def send_stt_partial_message(conn: "ConnectionHandler", text) -> bool:
+    """Send a negotiated, display-only cumulative transcript."""
+    if not text or (conn.features or {}).get("desk_robot_stt_partial_v1") is not True:
+        return False
+    await conn.websocket.send(json.dumps({
+        "type": "stt", "state": "partial", "text": text,
+        "session_id": conn.session_id,
+    }))
+    return True
+
+
+async def send_stt_clear_message(conn: "ConnectionHandler"):
+    """Clear live presentation without changing the logical conversation."""
+    if (conn.features or {}).get("desk_robot_stt_partial_v1") is not True:
+        return
+    await conn.websocket.send(json.dumps({
+        "type": "stt", "state": "clear", "text": "",
+        "session_id": conn.session_id,
+    }))
+
+
 async def send_stt_message(conn: "ConnectionHandler", text):
     """发送 STT 状态消息"""
     end_prompt_str = conn.config.get("end_prompt", {}).get("prompt")
@@ -414,9 +438,13 @@ async def send_stt_message(conn: "ConnectionHandler", text):
         # 如果不是JSON格式，直接使用原始文本
         display_text = text
     stt_text = text_utils.strip_edge_separators(display_text)
-    await conn.websocket.send(
-        json.dumps({"type": "stt", "text": stt_text, "session_id": conn.session_id})
-    )
+    message = json.dumps({"type": "stt", "state": "final", "text": stt_text,
+                          "session_id": conn.session_id})
+    presentation_sender = stt_final_presentation_sender.get()
+    if presentation_sender is None:
+        await conn.websocket.send(message)
+    else:
+        await presentation_sender(conn, message)
     if (conn.features or {}).get("status"):
         await send_status_message(conn, "busy", "thinking")
     else:

@@ -363,8 +363,12 @@ ASR:
     decoding_method: greedy_search
     sentence_case: true
     pre_roll_frames: 10
-    # Silero already supplies trailing silence. Tune only after runtime checks.
-    final_padding_ms: 0
+    # Display-only changed partials, sent only to clients advertising support.
+    partial_min_interval_ms: 120
+    # Synthetic tail for the final encoder chunk, not a realtime silence wait.
+    # 800 ms covers the Vietnamese chunk-16/32 exports (T=45/77, 10 ms frames).
+    # Larger encoder chunks may need more padding; 0 disables it explicitly.
+    final_padding_ms: 800
 
 VAD:
   SileroVAD:

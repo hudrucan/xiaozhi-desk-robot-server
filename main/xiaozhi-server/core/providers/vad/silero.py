@@ -40,10 +40,12 @@ class VADProvider(VADProviderBase):
             conn._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
         if not hasattr(conn, "_vad_context"):
             conn._vad_context = np.zeros((1, 64), dtype=np.float32)
+        if not hasattr(conn, "_vad_silence_samples"):
+            conn._vad_silence_samples = 0
 
     def release_conn_resources(self, conn):
         """释放连接的 VAD 资源（连接关闭时调用）"""
-        for attr in ("_vad_state", "_vad_context"):
+        for attr in ("_vad_state", "_vad_context", "_vad_silence_samples"):
             if hasattr(conn, attr):
                 try:
                     delattr(conn, attr)
@@ -57,6 +59,9 @@ class VADProvider(VADProviderBase):
 
         try:
             self._init_connection_state(conn)
+            # reset_audio_states() clears client_have_voice at turn boundaries.
+            if not conn.client_have_voice:
+                conn._vad_silence_samples = 0
 
             # pcm_frame已经是处理后的PCM数据
             conn.client_audio_buffer.extend(pcm_frame)
@@ -103,23 +108,29 @@ class VADProvider(VADProviderBase):
                     conn.start_turn_metrics("voice")
                     conn.mark_turn_metric("speech_start")
 
-                # 如果之前有声音，但本次没有声音，且与上次有声音的时间差已经超过了静默阈值，则认为已经说完一句话
-                if conn.client_have_voice and not client_have_voice:
-                    stop_duration = time.time() * 1000 - conn.vad_last_voice_time
-                    if stop_duration >= self.silence_threshold_ms:
-                        was_voice_stopped = conn.client_voice_stop
-                        conn.client_voice_stop = True
-                        if not was_voice_stopped:
-                            if not conn.has_active_turn_metrics():
-                                conn.start_turn_metrics("voice")
-                            conn.mark_turn_metric("vad_speech_end")
-                            conn.mark_turn_metric("speech_end")
-                            logger.bind(tag=TAG).info(
-                                f"Speech end detected after {stop_duration:.0f} ms of silence"
-                            )
                 if client_have_voice:
                     conn.client_have_voice = True
                     conn.vad_last_voice_time = time.time() * 1000
+                    conn._vad_silence_samples = 0
+                elif conn.client_have_voice:
+                    # Decode, queue and websocket delays are not audio silence.
+                    conn._vad_silence_samples += len(audio_int16)
+
+            # Decide after the whole packet: speech in a later window cancels
+            # the preceding silence instead of leaving a premature stop latched.
+            if conn.client_have_voice and not client_have_voice:
+                stop_duration = conn._vad_silence_samples * 1000 / 16000
+                if stop_duration >= self.silence_threshold_ms:
+                    was_voice_stopped = conn.client_voice_stop
+                    conn.client_voice_stop = True
+                    if not was_voice_stopped:
+                        if not conn.has_active_turn_metrics():
+                            conn.start_turn_metrics("voice")
+                        conn.mark_turn_metric("vad_speech_end")
+                        conn.mark_turn_metric("speech_end")
+                        logger.bind(tag=TAG).info(
+                            f"Speech end detected after {stop_duration:.0f} ms of silence"
+                        )
 
             return client_have_voice
         except Exception as e:
