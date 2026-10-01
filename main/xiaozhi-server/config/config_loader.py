@@ -59,13 +59,13 @@ async def load_config():
     if cached_config is not None:
         return cached_config
 
-    custom_config_path = get_project_dir() + "data/.config.yaml"
+    from config.local_config import load_local_config
 
     # Load defaults and local overrides.
     default_config = load_default_config()
-    custom_config = read_config(custom_config_path)
+    custom_config = load_local_config()
 
-    # Local YAML is the only config source; data/.config.yaml overrides config.yaml.
+    # Private local overrides take precedence over all reference defaults.
     config = merge_configs(default_config, custom_config)
     # Create configured output directories.
     ensure_directories(config)

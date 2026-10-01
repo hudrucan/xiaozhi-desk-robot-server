@@ -53,7 +53,7 @@ class SettingsHandler(BaseHandler):
             pass
         raise web.HTTPForbidden(
             text="Settings UI only accepts local requests. Set "
-            "server.settings.allow_remote in data/.config.yaml to enable LAN access."
+            "server.settings.allow_remote in your local runtime config to enable LAN access."
         )
 
     def _require_json(self, request):

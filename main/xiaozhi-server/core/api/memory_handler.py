@@ -41,7 +41,7 @@ class MemoryHandler(BaseHandler):
             pass
         raise web.HTTPForbidden(
             text="Memory settings only accept local requests. Set "
-            "server.settings.allow_remote in data/.config.yaml to enable LAN access."
+            "server.settings.allow_remote in your local runtime config to enable LAN access."
         )
 
     def _supported_provider(self):

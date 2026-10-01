@@ -95,9 +95,11 @@ touch data/.config.yaml
 python app.py
 ```
 
-`data/.config.yaml` is required, may initially be empty, and is gitignored. Add
-provider selections, model names, endpoints, and secrets there—never in the
-committed reference files.
+`data/.config.yaml` is required, may initially be empty, and is gitignored. Existing
+monolithic overrides still load. After migration, put provider selections, model
+names, endpoints, and secrets in the corresponding `data/config.d/` files—never
+in the committed reference files. Extra, unrecognized roots stay in
+`data/.config.yaml`.
 
 ### Default endpoints
 
@@ -110,8 +112,8 @@ committed reference files.
 
 Settings accepts loopback requests by default. Enable
 `server.settings.allow_remote` only on a trusted LAN. Configuration edits are
-validated, written atomically to `data/.config.yaml`, and normally require a
-restart; Memory edits apply to the next turn immediately.
+validated and saved to the corresponding private `data/config.d/` files. A save
+normally requires a restart; Memory edits apply to the next turn immediately.
 
 ## Providers
 
@@ -145,12 +147,43 @@ similarly to the Settings UI:
 The server and Settings editor use the same default loader. Includes are explicit,
 relative to `config.yaml`, and loaded in list order; later fragments override
 earlier ones. Inline settings in `config.yaml` override the fragments, and
-`data/.config.yaml` overrides all reference defaults. A monolithic `config.yaml`
-without `includes` remains supported. Fragments must be YAML objects, cannot
-include other files, and must stay within the manifest directory.
+local overrides take precedence over all reference defaults. A monolithic
+`config.yaml` without `includes` remains supported. Fragments must be YAML objects,
+cannot include other files, and must stay within the manifest directory.
 
-Settings still saves only to `data/.config.yaml`, with the same secret masking,
-validation, backup, and restart behavior. Local overrides do not need migration.
+Local section names mirror the reference table above, including
+`data/config.d/providers/tts.yaml` and `data/config.d/providers/selection.yaml`.
+The loader merges any remaining `data/.config.yaml` values first, then local
+sections in the table's order; section values win on conflicts. Keep each setting
+in its owning section. Section files cannot include other files, and misplaced
+settings or unknown `.yaml` section files are rejected rather than ignored.
+
+Reads of an old monolithic override do not migrate it. The first Settings save
+splits its values into local sections. To migrate explicitly without starting the
+server, stop the old server and run from the repository root using the server's
+Python environment:
+
+```bash
+python scripts/split_local_config.py
+```
+
+Migration preserves every override, including secrets and unknown roots. The
+original YAML bytes are kept in `data/.config.yaml.pre-split.backup`; subsequent
+saves keep the previous complete override in `data/.config.yaml.backup`. Restore
+by stopping the server, moving `data/config.d/` aside, and copying the desired
+backup to `data/.config.yaml`.
+If a transaction is still pending, move its `.config.transaction.yaml` journal and
+matching `.config-stage-*` directory aside with the section files before restoring.
+
+Settings retains secret masking, validation, and restart behavior. All config
+readers and writers share a lock. Changed files are staged and synced before a
+transaction journal is published; a reader completes any interrupted committed
+write before loading config. A failed save after journal publication can therefore
+be applied by the next reader. Hand edits should be made with the server stopped.
+Restart the server with the new code before using Settings after migration.
+
+The focused persistence checks (including interrupted saves) can be run from
+`main/xiaozhi-server` with `python -m unittest discover -s tests -p test_local_config.py`.
 Memory records remain in `data/.memory.yaml`, separately from provider settings.
 Bundled and optional speech assets are documented in
 [`models/README.md`](main/xiaozhi-server/models/README.md).

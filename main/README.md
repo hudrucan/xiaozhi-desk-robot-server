@@ -24,6 +24,8 @@ Local runtime files:
 | --- | --- |
 | `config.yaml` | Reference manifest for the grouped defaults in `config/defaults/` |
 | `data/.config.yaml` | Required, gitignored local overrides |
+| `data/config.d/` | Private overrides grouped by subsystem/provider after migration |
+| `data/.config.yaml.pre-split.backup` | Original override YAML before migration |
 | `data/.memory.yaml` | Explicit Memory v2 records when enabled |
 | `tmp/` | Logs and generated audio |
 

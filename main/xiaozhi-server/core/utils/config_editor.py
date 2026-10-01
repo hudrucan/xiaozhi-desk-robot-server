@@ -1,18 +1,13 @@
 import copy
 import os
-import shutil
-import tempfile
-import threading
 from collections.abc import Mapping
-
-import yaml
 
 from config.config_loader import (
     get_project_dir,
     load_default_config,
     merge_configs,
-    read_config,
 )
+from config.local_config import LocalConfigStore
 from core.soundbank import normalize_soundbank_text
 from core.utils.config_secrets import is_secret_name
 
@@ -174,12 +169,16 @@ class ConfigEditor:
         project_dir = get_project_dir()
         self.default_path = os.path.join(project_dir, "config.yaml")
         self.local_path = os.path.join(project_dir, "data", ".config.yaml")
-        self.backup_path = f"{self.local_path}.backup"
-        self._lock = threading.Lock()
+        self.store = LocalConfigStore(self.local_path)
 
     def read_public(self):
         default_config = load_default_config(self.default_path)
-        local_config = read_config(self.local_path)
+        with self.store.locked():
+            local_config = self.store.read_unlocked()
+            config_path = (
+                "data/config.d/" if self.store.sections_dir.exists()
+                else "data/.config.yaml"
+            )
         effective_config = merge_configs(default_config, local_config)
         editable_config = {
             key: effective_config[key]
@@ -193,7 +192,7 @@ class ConfigEditor:
         return {
             "config": public_config,
             "configured_secrets": configured_secrets,
-            "config_path": "data/.config.yaml",
+            "config_path": config_path,
         }
 
     def update(self, patch):
@@ -204,9 +203,9 @@ class ConfigEditor:
         if unsupported:
             raise ValueError(f"Unsupported configuration section: {unsupported[0]}")
 
-        with self._lock:
+        with self.store.locked():
             default_config = load_default_config(self.default_path)
-            local_config = read_config(self.local_path)
+            local_config = self.store.read_unlocked()
             current_effective = merge_configs(default_config, local_config)
             safe_patch = _drop_blank_secrets(patch, current_effective)
             updated_local = _merge_editor_patch(local_config, safe_patch)
@@ -294,26 +293,5 @@ class ConfigEditor:
             normalized_phrases[normalized] = phrase
 
     def _write_atomic(self, config):
-        directory = os.path.dirname(self.local_path)
-        os.makedirs(directory, exist_ok=True)
-        if os.path.exists(self.local_path):
-            shutil.copy2(self.local_path, self.backup_path)
-
-        file_descriptor, temporary_path = tempfile.mkstemp(
-            prefix=".config.", suffix=".tmp", dir=directory, text=True
-        )
-        try:
-            with os.fdopen(file_descriptor, "w", encoding="utf-8") as file:
-                yaml.safe_dump(
-                    config,
-                    file,
-                    allow_unicode=True,
-                    default_flow_style=False,
-                    sort_keys=False,
-                )
-                file.flush()
-                os.fsync(file.fileno())
-            os.replace(temporary_path, self.local_path)
-        finally:
-            if os.path.exists(temporary_path):
-                os.unlink(temporary_path)
+        # update() holds the store lock through read, validation and publication.
+        self.store.write_unlocked(config)

@@ -155,6 +155,7 @@ async function saveSettings() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Save failed");
     state.config = payload.config;
+    state.configPath = payload.config_path;
     state.original = clone(payload.config);
     state.patch = {};
     state.configuredSecrets = new Set(payload.configured_secrets || []);

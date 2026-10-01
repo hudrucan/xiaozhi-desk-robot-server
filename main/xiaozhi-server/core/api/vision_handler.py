@@ -208,7 +208,7 @@ class VisionHandler(BaseHandler):
                     f"MCP Vision 接口运行正常，视觉解释接口地址是：{vision_explain}"
                 )
             else:
-                message = "MCP Vision 接口运行不正常，请打开data目录下的.config.yaml文件，找到【server.vision_explain】，设置好地址"
+                message = "MCP Vision 接口运行不正常，请在本地 runtime 配置中找到【server.vision_explain】，设置好地址"
 
             response = web.Response(text=message, content_type="text/plain")
         except Exception as e:
