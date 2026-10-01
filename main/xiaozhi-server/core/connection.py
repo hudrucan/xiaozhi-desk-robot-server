@@ -686,15 +686,19 @@ class ConnectionHandler(TurnDiagnosticsMixin):
         if (
                 self._asr is not None
                 and hasattr(self._asr, "interface_type")
-                and self._asr.interface_type == InterfaceType.LOCAL
+                and (
+                    self._asr.interface_type == InterfaceType.LOCAL
+                    or self._asr.shareable_local
+                )
         ):
-            # 如果公共ASR是本地服务，则直接返回
-            # 因为本地一个实例ASR，可以被多个连接共享
+            # Reuse the process-owned local model, including local STREAM engines.
             asr = self._asr
         else:
             # 如果公共ASR是远程服务，则初始化一个新实例
             # 因为远程ASR，涉及到websocket连接和接收线程，需要每个连接一个实例
             asr = initialize_asr(self.config)
+            if asr.shareable_local:
+                self._asr = asr
 
         return asr
 
@@ -1524,7 +1528,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                 return True
 
     async def _close_turn_audio_channels(self):
-        """Release ASR consumers and remote streams without closing the device WS."""
+        """Release connection ASR resources without unloading shared local models."""
         task = self.asr_audio_task
         self.asr_audio_task = None
         if task is not None and not task.done():
@@ -1551,23 +1555,30 @@ class ConnectionHandler(TurnDiagnosticsMixin):
             self.asr = None
         if asr is not None:
             try:
-                await asr.close()
+                await asr.close_audio_channels(self)
             except Exception as error:
                 self.logger.bind(tag=TAG).warning(
                     f"Failed to close turn ASR resources: {error}"
                 )
 
-    async def release_turn_asr(self):
+    async def release_turn_asr(self, expected_audio_task=None):
         """Close ASR after input finalization while retaining conversation and WS."""
         if not self.persistent_websocket:
             return
-        self.client_listening = False
+        if expected_audio_task is None:
+            self.client_listening = False
         if self._conversation_reset_lock is None:
             self._conversation_reset_lock = asyncio.Lock()
         if self._turn_audio_lock is None:
             self._turn_audio_lock = asyncio.Lock()
         async with self._conversation_reset_lock:
             async with self._turn_audio_lock:
+                # A deferred local final must not close a newly opened/listening turn.
+                if expected_audio_task is not None and (
+                    self.asr_audio_task is not expected_audio_task
+                    or self.client_listening
+                ):
+                    return
                 await self._close_turn_audio_channels()
 
     async def reset_conversation(self, reason="conversation_ended"):
@@ -1759,7 +1770,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
             if self.tts:
                 await self.tts.close()
             if self.asr:
-                await self.asr.close()
+                await self.asr.close_audio_channels(self)
 
             # 最后关闭线程池（避免阻塞）
             if self.executor:

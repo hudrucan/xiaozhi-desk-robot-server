@@ -26,8 +26,23 @@ logger = setup_logging()
 
 
 class ASRProviderBase(ABC):
+    # Local streaming providers may share an engine without changing dispatch.
+    shareable_local = False
+
     def __init__(self):
         pass
+
+    async def finalize_stream(self, conn: "ConnectionHandler") -> bool:
+        """Return True when a speech stream is active or finalization is pending."""
+        return False
+
+    async def reset_stream(self, conn: "ConnectionHandler"):
+        """Invalidate a previous local stream when the client starts listening again."""
+        pass
+
+    async def close_audio_channels(self, conn: "ConnectionHandler"):
+        """Release this connection's ASR resources (remote providers own an instance)."""
+        await self.close()
 
     # 打开音频通道
     async def open_audio_channels(self, conn: "ConnectionHandler"):

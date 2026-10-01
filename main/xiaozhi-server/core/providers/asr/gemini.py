@@ -130,7 +130,7 @@ class ASRProvider(ASRProviderBase):
             await self._buffer_pcm(pcm_frame)
 
         if conn.client_voice_stop:
-            await self._send_stop_request()
+            await self.finalize_stream(conn)
 
     async def _buffer_pcm(self, pcm_frame):
         self._pcm_buffer.extend(pcm_frame)
@@ -139,7 +139,7 @@ class ASRProvider(ASRProviderBase):
             del self._pcm_buffer[: self.chunk_bytes]
             await self._send_queue.put(("audio", chunk))
 
-    async def _send_stop_request(self):
+    async def finalize_stream(self, conn) -> bool:
         if self._ending_turn or self._awaiting_final:
             return True
         if not self._stream_active:

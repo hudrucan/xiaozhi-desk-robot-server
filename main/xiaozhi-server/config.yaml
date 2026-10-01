@@ -350,6 +350,22 @@ ASR:
     num_threads: 2
     sentence_case: true
     output_dir: tmp/
+  SherpaStreamingASR:
+    type: sherpa_streaming
+    # Local hynt/Zipformer-30M-RNNT-Streaming-6000h files; no auto-download.
+    # Choose matching exported chunk/context variants for all three ONNX files.
+    model_dir: models/asr/sherpa/zipformer-vi-30m-streaming
+    encoder: encoder.fp16.onnx
+    decoder: decoder.fp16.onnx
+    joiner: joiner.fp16.onnx
+    tokens: config.json # This is a token table despite its extension.
+    num_threads: 2
+    provider: cpu
+    decoding_method: greedy_search
+    sentence_case: true
+    pre_roll_frames: 10
+    # Silero already supplies trailing silence. Tune only after runtime checks.
+    final_padding_ms: 0
   Qwen3ASR:
     type: sherpa
     model_type: qwen3_asr

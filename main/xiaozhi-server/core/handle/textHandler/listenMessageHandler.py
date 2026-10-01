@@ -39,6 +39,8 @@ class ListenTextMessageHandler(TextMessageHandler):
                 )
                 conn.last_tts_stop_sent_at = None
             # 设备从播放模式切回录音模式,清除所有音频状态和缓冲区
+            if conn.asr is not None:
+                await conn.asr.reset_stream(conn)
             conn.reset_audio_states()
         elif msg_json["state"] == "stop":
             conn.client_listening = False
@@ -54,7 +56,7 @@ class ListenTextMessageHandler(TextMessageHandler):
                 # Streaming ASR only has a final transcript when speech
                 # actually started. Release an empty persistent turn now;
                 # active/finalizing turns release after transcript completion.
-                finalization_pending = await conn.asr._send_stop_request()
+                finalization_pending = await conn.asr.finalize_stream(conn)
                 if conn.persistent_websocket and finalization_pending is False:
                     await conn.release_turn_asr()
             else:
