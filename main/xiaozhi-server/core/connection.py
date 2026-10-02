@@ -1052,6 +1052,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
         tool_calls_list = []
         content_arguments = ""
         emotion_flag = True
+        tts_content_started = False
         try:
             for response_index, response in enumerate(llm_responses):
                 if self.client_abort:
@@ -1120,6 +1121,12 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                 if content is not None and len(content) > 0:
                     if not tool_call_flag:
                         response_message.append(content)
+                        if (
+                            not tts_content_started
+                            and not text_utils.clean_text_segment(content)
+                        ):
+                            continue
+                        tts_content_started = True
                         self.mark_turn_metric(
                             "tts_first_text_queued", sentence_id=current_sentence_id
                         )
@@ -1346,12 +1353,32 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                         memory_str=memory_str,
                     )
 
-        # Store direct model output in the dialogue.
-        if len(response_message) > 0:
+        # Store direct model output in the dialogue. A response containing only
+        # emoji or punctuation produces no TTS FIRST message, so replace it
+        # with a speakable fallback before LAST closes the turn. This preserves
+        # the client's speaking -> listening transition and restarts ASR.
+        if len(response_message) > 0 or not tool_call_flag:
             text_buff = "".join(response_message)
-            self.append_turn_output(text_buff)
-            self.tts.store_tts_text(current_sentence_id, text_buff)
-            self.dialogue.put(Message(role="assistant", content=text_buff))
+            if not tool_call_flag and not text_utils.clean_text_segment(text_buff):
+                self.logger.bind(tag=TAG).warning(
+                    "LLM returned no speakable text; using the configured fallback"
+                )
+                text_buff = get_system_error_response(self.config)
+                self.mark_turn_metric(
+                    "tts_first_text_queued", sentence_id=current_sentence_id
+                )
+                self.tts.tts_text_queue.put(
+                    TTSMessageDTO(
+                        sentence_id=current_sentence_id,
+                        sentence_type=SentenceType.MIDDLE,
+                        content_type=ContentType.TEXT,
+                        content_detail=text_buff,
+                    )
+                )
+            if text_buff:
+                self.append_turn_output(text_buff)
+                self.tts.store_tts_text(current_sentence_id, text_buff)
+                self.dialogue.put(Message(role="assistant", content=text_buff))
 
         if depth == 0:
             self.tts.tts_text_queue.put(
