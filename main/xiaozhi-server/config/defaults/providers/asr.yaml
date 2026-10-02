@@ -4,8 +4,8 @@
 ASR:
   GeminiASR:
     type: gemini
-    model_name: gemini-3.5-transcribe-live
-    api_key: your_api_key
+    model_name: your-model
+    api_key: your-api-key
     language: auto
     mode: VERBATIM
     # Refresh before the Live API's 10-minute session limit.
@@ -15,11 +15,11 @@ ASR:
     chunk_ms: 120
   OpenAIASR:
     type: openai
-    api_key: your_api_key
+    api_key: your-api-key
     base_url: https://api.openai.com/v1/audio/transcriptions
     model_name: gpt-4o-mini-transcribe
     output_dir: tmp/
-  ZipformerASR:
+  SherpaASR:
     type: sherpa
     model_dir: models/asr/sherpa/your-model
     encoder: encoder.int8.onnx
@@ -29,7 +29,7 @@ ASR:
     num_threads: 2
     sentence_case: true
     output_dir: tmp/
-  ZipformerStreamASR:
+  SherpaStreamASR:
     type: sherpa_streaming
     # Choose matching exported chunk/context variants for all three ONNX files.
     model_dir: models/asr/sherpa/your-model

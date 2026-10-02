@@ -4,8 +4,8 @@
 LLM:
   GeminiLLM:
     type: gemini
-    api_key: your_api_key
-    model_name: your_gemini_model
+    api_key: your-api-key
+    model_name: your-gemini-model
     # Optional Gemini 3+ reasoning control. Empty lets the model use its default.
     thinking_level: ""
     # Compatibility default; reduce this explicitly when shorter output is desired.
@@ -22,7 +22,7 @@ LLM:
     https_proxy: ""
   OpenAILLM:
     type: openai
-    api_key: your_api_key
+    api_key: your-api-key
     base_url: https://api.openai.com/v1
     model_name: gpt-4o-mini
     timeout:
@@ -33,7 +33,7 @@ LLM:
   LlamaCppLLM:
     type: llama_cpp
     api_key: local
-    model_name: qwen3:4b
+    model_name: your-model
     # Keep local voice responses stable while retaining some personality.
     temperature: 0.6
     top_p: 0.95
@@ -44,7 +44,7 @@ LLM:
       # When enabled, llama-server starts and stops with this application.
       managed: true
       executable: llama-server
-      hf_model: Qwen/Qwen3-4B-GGUF:Q4_K_M
+      hf_model: your-hf-model
       # Use model_path instead of hf_model for an existing local GGUF file.
       # model_path: /absolute/path/to/model.gguf
       host: 127.0.0.1

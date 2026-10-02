@@ -21,11 +21,5 @@ module_test:
     - "What are today's major technology news stories?"
     - "What is the current weather in Ho Chi Minh City?"
     - "What is the latest USD to VND exchange rate?"
-  weather_locations:
-    - "Ho Chi Minh City"
-    - "Hanoi"
-    - "Da Nang"
-  air_quality_locations:
-    - "Ho Chi Minh City"
-    - "Hanoi"
-    - "Da Nang"
+  weather_locations: {}
+  air_quality_locations: {}

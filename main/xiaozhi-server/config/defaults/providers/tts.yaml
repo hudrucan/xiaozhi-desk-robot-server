@@ -23,37 +23,12 @@ TTS:
     # Retry once after the initial request fails.
     max_retries: 1
     output_dir: tmp/
-  VivosTTS:
-    type: sherpa
-    language: your_language
-    # Reuse the model across reconnects within the server process.
-    keep_model_warm: true
-    model_dir: models/tts/sherpa/your-model
-    model: model.onnx
-    tokens: tokens.txt
-    data_dir: espeak-ng-data
-    num_threads: 2
-    speaker_id: 0
-    # Legacy number-only normalization unless text_normalizer is enabled.
-    text_normalizer: none
-    number_language: your_language_code
-    # Optional VITS parameters; these match sherpa-onnx defaults.
-    noise_scale: 0.667
-    noise_scale_w: 0.8
-    length_scale: 1.0
-    speed: 1.0
-    silence_scale: 0.2
-    volume_gain: 1.0
-    buffer_full_response: false
-    split_on_all_punctuations: true
-    max_retries: 0
-    output_dir: tmp/
-  CakeTTS:
+  SherpaTTS:
     # Optional Cake Piper v3 model; uses the existing Sherpa runtime.
     type: sherpa
-    language: vi
+    language: en
     keep_model_warm: true
-    model_dir: models/tts/sherpa/cake-piper-v3
+    model_dir: models/tts/sherpa/your-model-dir
     model: medium.onnx
     tokens: tokens.txt
     data_dir: espeak-ng-data
@@ -91,7 +66,7 @@ TTS:
     # RK3528 baseline.
     type: matcha
     language: vi
-    model_dir: models/tts/matcha-vi-int8
+    model_dir: models/tts/your-matcha-model
     variant: int8
     encoder: matcha_encoder.onnx
     decoder: matcha_decoder.onnx
@@ -106,7 +81,7 @@ TTS:
     length_scale: 1.0
     sway: 0.0 # Linear flow-time schedule.
     seed: # Fresh RNG sequence for each segment.
-    number_language: vi
+    number_language: en
     first_segment_chars: 32
     use_prompt: true
     tail_prompt_words: 10
@@ -126,8 +101,8 @@ TTS:
     # VieNeu v3 Nano runs locally with ONNX and downloads its model into the
     # Hugging Face cache on first use.
     type: vieneu
-    language: your_language
-    model_repo: pnnbao-ump/VieNeu-TTS-v3-Nano
+    language: your-language
+    model_repo: your-model-repo
     model_dir: ""
     hf_token: ""
     voice: Minh Quân

@@ -6,7 +6,7 @@ Memory:
     type: nomem
   mem_local_short:
     type: mem_local_short
-    llm: GeminiLLM
+    llm: your-llm-model
   mem_local_explicit:
     type: mem_local_explicit
     path: data/.memory.yaml
