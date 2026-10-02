@@ -36,7 +36,11 @@ from core.providers.tts.dto.dto import ContentType, TTSMessageDTO, SentenceType
 from config.logger import setup_logging, build_module_string, create_connection_logger
 from core.utils.prompt_manager import PromptManager
 from core.utils.voiceprint_provider import VoiceprintProvider
-from core.utils.util import get_system_error_response, get_tool_error_response
+from core.utils.util import (
+    get_empty_response,
+    get_system_error_response,
+    get_tool_error_response,
+)
 from core.utils import text_utils
 from core.utils.runtime_diagnostics import runtime_diagnostics
 from core.utils.turn_diagnostics import TurnDiagnosticsMixin
@@ -1210,7 +1214,7 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                                 tc.get("arguments", "{}")
                             )
                         )
-                        if da_response:
+                        if text_utils.clean_text_segment(da_response):
                             has_direct_answer_output = True
                             self.append_turn_output(da_response)
                             # Flush text retained by the streaming safety buffer.
@@ -1237,12 +1241,24 @@ class ConnectionHandler(TurnDiagnosticsMixin):
                             self.logger.bind(tag=TAG).warning(
                                 "Model returned direct_answer without a usable response"
                             )
+                            empty_response = get_empty_response(self.config)
+                            self.append_turn_output(empty_response)
+                            self.tts.store_tts_text(
+                                current_sentence_id, empty_response
+                            )
+                            self.dialogue.put(
+                                Message(role="assistant", content=empty_response)
+                            )
+                            self.mark_turn_metric(
+                                "tts_first_text_queued",
+                                sentence_id=current_sentence_id,
+                            )
                             self.tts.tts_text_queue.put(
                                 TTSMessageDTO(
                                     sentence_id=current_sentence_id,
                                     sentence_type=SentenceType.MIDDLE,
                                     content_type=ContentType.TEXT,
-                                    content_detail=get_system_error_response(self.config),
+                                    content_detail=empty_response,
                                 )
                             )
                         if depth == 0:
@@ -1355,15 +1371,16 @@ class ConnectionHandler(TurnDiagnosticsMixin):
 
         # Store direct model output in the dialogue. A response containing only
         # emoji or punctuation produces no TTS FIRST message, so replace it
-        # with a speakable fallback before LAST closes the turn. This preserves
-        # the client's speaking -> listening transition and restarts ASR.
+        # with the neutral empty-response fallback before LAST closes the turn.
+        # This preserves the client's speaking -> listening transition and
+        # restarts ASR without presenting a model choice as a system failure.
         if len(response_message) > 0 or not tool_call_flag:
             text_buff = "".join(response_message)
             if not tool_call_flag and not text_utils.clean_text_segment(text_buff):
                 self.logger.bind(tag=TAG).warning(
-                    "LLM returned no speakable text; using the configured fallback"
+                    "LLM returned no speakable text; using the empty response"
                 )
-                text_buff = get_system_error_response(self.config)
+                text_buff = get_empty_response(self.config)
                 self.mark_turn_metric(
                     "tts_first_text_queued", sentence_id=current_sentence_id
                 )

@@ -27,8 +27,10 @@ prompt: |
   Write natural-language tool arguments in the user's language.
 # Default system-prompt template file.
 prompt_template: agent-base-prompt.txt
+# User-facing response when the model returns no speakable text.
+empty_response: "I don't know how to respond to that yet."
 # User-facing response for internal errors.
-system_error_response: "Sorry, I am temporarily unavailable. Please try again shortly."
+system_error_response: "Sorry, something went wrong. Please try again."
 # User-facing responses for tool failures. Override these in data/.config.yaml.
 tool_error_response: "Sorry, that operation failed. Please try again."
 tool_timeout_response: "Sorry, that operation took too long. Please try again."

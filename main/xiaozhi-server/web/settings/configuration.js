@@ -191,6 +191,7 @@ function renderAssistant() {
     settingsGroup("Spoken responses", "Short phrases used around wake, exit, and recoverable errors.", [
       field("wakeup_greeting", "Wake-up greeting", { help: "Short acknowledgement sent after wake-word detection." }),
       field("exit_farewell", "Exit farewell"),
+      field("empty_response", "Empty response", { multiline: true, help: "Spoken when the model returns no usable text." }),
       field("system_error_response", "Error response", { multiline: true }),
       field("tool_error_response", "Tool error response", { multiline: true }),
       field("tool_timeout_response", "Tool timeout response", { multiline: true }),

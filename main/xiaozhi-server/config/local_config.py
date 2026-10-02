@@ -28,8 +28,8 @@ SECTION_ROOTS = {
         "enable_direct_answer_tool", "enable_wakeup_words_response_cache",
         "enable_greeting", "wakeup_greeting", "enable_stop_tts_notify",
         "exit_commands", "exit_farewell", "wakeup_words", "prompt",
-        "prompt_template", "system_error_response", "tool_error_response",
-        "tool_timeout_response", "end_prompt",
+        "prompt_template", "empty_response", "system_error_response",
+        "tool_error_response", "tool_timeout_response", "end_prompt",
     ),
     "diagnostics.yaml": (
         "log", "enable_turn_metrics", "dump_full_llm_request", "llm_request_dump_file",

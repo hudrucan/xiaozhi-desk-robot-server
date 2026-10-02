@@ -28,6 +28,7 @@ EDITABLE_ROOTS = {
     "delete_audio",
     "device_mcp_tool_cache",
     "dump_full_llm_request",
+    "empty_response",
     "enable_direct_answer_tool",
     "enable_greeting",
     "enable_stop_tts_notify",

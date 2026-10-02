@@ -561,6 +561,11 @@ def validate_mcp_endpoint(mcp_endpoint: str) -> bool:
 
     return True
 
+def get_empty_response(config: dict) -> str:
+    """Return the response used when the model produces no speakable text."""
+    return config.get("empty_response") or "I don't know how to respond to that yet."
+
+
 def get_system_error_response(config: dict) -> str:
     """获取系统错误时的回复
 
@@ -572,7 +577,7 @@ def get_system_error_response(config: dict) -> str:
     """
     return config.get(
         "system_error_response",
-        "Sorry, I am temporarily unavailable. Please try again shortly.",
+        "Sorry, something went wrong. Please try again.",
     )
 
 
