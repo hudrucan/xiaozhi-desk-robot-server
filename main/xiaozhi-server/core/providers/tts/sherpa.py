@@ -86,6 +86,25 @@ class TTSProvider(TTSProviderBase):
         if not math.isfinite(self.length_scale) or self.length_scale <= 0:
             raise ValueError("length_scale must be a positive finite number")
         self.volume_gain = max(0.0, float(config.get("volume_gain", 1.0)))
+        self.mastering = bool(config.get("mastering", False))
+        self.target_active_rms_dbfs = float(
+            config.get("target_active_rms_dbfs", -11.0)
+        )
+        self.peak_ceiling_dbfs = float(config.get("peak_ceiling_dbfs", -1.0))
+        if not all(
+            math.isfinite(value)
+            for value in (
+                self.target_active_rms_dbfs,
+                self.peak_ceiling_dbfs,
+            )
+        ):
+            raise ValueError("Sherpa TTS mastering settings must be finite")
+        if self.target_active_rms_dbfs >= self.peak_ceiling_dbfs:
+            raise ValueError(
+                "Sherpa TTS active RMS target must be below the peak ceiling"
+            )
+        if self.peak_ceiling_dbfs > 0:
+            raise ValueError("Sherpa TTS peak ceiling must not exceed 0 dBFS")
         self.number_language = config.get("number_language")
         self._resample_state = None
 
@@ -197,6 +216,42 @@ class TTSProvider(TTSProviderBase):
             text,
         )
 
+    @staticmethod
+    def _dbfs_to_amplitude(dbfs: float) -> float:
+        return 10.0 ** (dbfs / 20.0)
+
+    def _master_samples(self, samples: np.ndarray) -> np.ndarray:
+        samples = np.asarray(samples, dtype=np.float32)
+        if not self.mastering:
+            return np.clip(samples * self.volume_gain, -1.0, 1.0)
+
+        samples = np.nan_to_num(samples, nan=0.0, posinf=1.0, neginf=-1.0)
+        active = np.abs(samples) >= self._dbfs_to_amplitude(-50.0)
+        if np.any(active):
+            active_rms = float(
+                np.sqrt(np.mean(np.square(samples[active], dtype=np.float64)))
+            )
+            if active_rms > 0:
+                target_rms = self._dbfs_to_amplitude(
+                    self.target_active_rms_dbfs
+                )
+                samples = samples * (target_rms / active_rms)
+
+        samples = samples * self.volume_gain
+        ceiling = self._dbfs_to_amplitude(self.peak_ceiling_dbfs)
+        if ceiling == 0.0:
+            return np.zeros_like(samples)
+        knee = ceiling * self._dbfs_to_amplitude(-6.0)
+        magnitude = np.abs(samples)
+        above_knee = magnitude > knee
+        if np.any(above_knee):
+            span = ceiling - knee
+            magnitude[above_knee] = knee + span * np.tanh(
+                (magnitude[above_knee] - knee) / span
+            )
+            samples = np.copysign(magnitude, samples)
+        return np.clip(samples, -ceiling, ceiling)
+
     def _generate_pcm(self, text: str) -> tuple[bytes, int]:
         started_at = time.monotonic()
         sentence_id = getattr(self, "current_sentence_id", None)
@@ -238,11 +293,7 @@ class TTSProvider(TTSProviderBase):
         if len(audio.samples) == 0:
             raise RuntimeError("Sherpa TTS returned no audio")
 
-        samples = np.clip(
-            np.asarray(audio.samples, dtype=np.float32) * self.volume_gain,
-            -1.0,
-            1.0,
-        )
+        samples = self._master_samples(audio.samples)
         pcm_data = (samples * 32767.0).astype("<i2").tobytes()
         pcm_ready_at = time.monotonic()
         if self.conn:

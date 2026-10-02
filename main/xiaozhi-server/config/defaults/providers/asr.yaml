@@ -19,7 +19,7 @@ ASR:
     base_url: https://api.openai.com/v1/audio/transcriptions
     model_name: gpt-4o-mini-transcribe
     output_dir: tmp/
-  SherpaASR:
+  ZipformerASR:
     type: sherpa
     model_dir: models/asr/sherpa/your-model
     encoder: encoder.int8.onnx
@@ -29,7 +29,7 @@ ASR:
     num_threads: 2
     sentence_case: true
     output_dir: tmp/
-  SherpaStreamingASR:
+  ZipformerStreamASR:
     type: sherpa_streaming
     # Choose matching exported chunk/context variants for all three ONNX files.
     model_dir: models/asr/sherpa/your-model

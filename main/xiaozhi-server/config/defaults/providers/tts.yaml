@@ -23,7 +23,7 @@ TTS:
     # Retry once after the initial request fails.
     max_retries: 1
     output_dir: tmp/
-  SherpaTTS:
+  VivosTTS:
     type: sherpa
     language: your_language
     # Reuse the model across reconnects within the server process.
@@ -48,7 +48,7 @@ TTS:
     split_on_all_punctuations: true
     max_retries: 0
     output_dir: tmp/
-  CakePiperTTS:
+  CakeTTS:
     # Optional Cake Piper v3 model; uses the existing Sherpa runtime.
     type: sherpa
     language: vi
@@ -76,6 +76,10 @@ TTS:
     length_scale: 1.0
     speed: 1.0
     silence_scale: 0.2
+    # Normalize perceived speech loudness, then contain peaks without hard clipping.
+    mastering: true
+    target_active_rms_dbfs: -11.0
+    peak_ceiling_dbfs: -1.0
     volume_gain: 1.0
     buffer_full_response: false
     split_on_all_punctuations: true
