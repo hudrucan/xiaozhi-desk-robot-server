@@ -199,7 +199,8 @@ class ConfigEditor:
             current_effective = merge_configs(default_config, local_config)
             safe_patch = _drop_blank_secrets(patch, current_effective)
             updated_local = _merge_editor_patch(local_config, safe_patch)
-            effective_config = merge_configs(default_config, updated_local)
+            prepared = self.store.prepare_candidate_unlocked(updated_local)
+            effective_config = prepared.effective_config
             self._validate(effective_config)
             cleanup_prepared = False
             if soundbank_cleanup and "static_soundbank" in safe_patch:
@@ -210,7 +211,7 @@ class ConfigEditor:
                     cleanup_prepared = True
                 except (OSError, ValueError, SoundbankError) as error:
                     cleanup_result = {"errors": [str(error)]}
-            self._write_atomic(updated_local, base_revision)
+            self._write_atomic(prepared, base_revision)
             if cleanup_prepared:
                 try:
                     cleanup_result = soundbank_cleanup.after_save(
@@ -237,6 +238,6 @@ class ConfigEditor:
 
     _validate = staticmethod(validate_config)
 
-    def _write_atomic(self, config, base_revision=None):
+    def _write_atomic(self, prepared, base_revision=None):
         # update() holds the store lock through read, validation and publication.
-        self.store.commit_unlocked(config, base_revision)
+        self.store.commit_prepared_unlocked(prepared, base_revision)

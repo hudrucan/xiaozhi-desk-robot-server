@@ -5,6 +5,7 @@ import hashlib
 import json
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -20,6 +21,12 @@ class ConfigConflict(ValueError):
 
 class ConfigUnavailable(OSError):
     pass
+
+
+@dataclass(frozen=True)
+class PreparedConfig:
+    config: dict
+    effective_config: dict
 
 
 def canonical_bytes(value):
@@ -64,6 +71,16 @@ class ConfigStore(ABC):
     def prepare_commit_unlocked(self, base_revision=None):
         if self.pending_provider:
             raise ValueError("Restart to finish switching configuration source before saving")
+
+    def prepare_candidate_unlocked(self, config):
+        """Local candidates need no external assets or publication metadata."""
+        return PreparedConfig(config, merge_configs(self.defaults_unlocked(), config))
+
+    def commit_prepared_unlocked(self, prepared, base_revision=None):
+        """Explicit prepared path; direct commit_unlocked callers still prepare themselves."""
+        if not isinstance(prepared, PreparedConfig):
+            raise TypeError("A prepared configuration is required")
+        self.commit_unlocked(prepared.config, base_revision)
 
     def refresh_unlocked(self, strict=False):
         return self.read_unlocked()

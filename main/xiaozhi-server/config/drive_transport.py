@@ -15,6 +15,7 @@ class DriveTransport(Protocol):
     def read_manifest(self, file_id: str) -> tuple[bytes, str]: ...
     def download(self, file_id: str) -> bytes: ...
     def upload_immutable(self, folder_id: str, content: bytes, name: str) -> str: ...
+    def upload_blob(self, folder_id: str, content: bytes, name: str, mime_type: str) -> str: ...
     def replace_manifest(self, file_id: str, content: bytes, etag: str) -> None: ...
 
 
@@ -94,13 +95,21 @@ class GoogleDriveTransport:
         return self._id(value.get("id"))
 
     def upload_immutable(self, folder_id, content, name):
+        return self._upload(folder_id, content, name, "application/json")
+
+    def upload_blob(self, folder_id, content, name, mime_type):
+        if mime_type not in {"audio/wav", "audio/mpeg", "application/octet-stream"}:
+            raise ValueError("Unsupported soundbank blob MIME type")
+        return self._upload(folder_id, content, name, mime_type)
+
+    def _upload(self, folder_id, content, name, mime_type):
         boundary = "config_" + uuid.uuid4().hex
         metadata = json.dumps({
-            "title": name, "mimeType": "application/json",
+            "title": name, "mimeType": mime_type,
             "parents": [{"id": self._id(folder_id)}],
         }).encode()
         body = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n".encode()
-                + metadata + f"\r\n--{boundary}\r\nContent-Type: application/json\r\n\r\n".encode()
+                + metadata + f"\r\n--{boundary}\r\nContent-Type: {mime_type}\r\n\r\n".encode()
                 + content + f"\r\n--{boundary}--\r\n".encode())
         response = self._request("POST", self.UPLOAD, params={
             "uploadType": "multipart", "fields": "id", "supportsAllDrives": "true",

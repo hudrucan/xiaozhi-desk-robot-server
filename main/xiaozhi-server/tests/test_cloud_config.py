@@ -77,6 +77,9 @@ class MemoryDrive:
         self.files[file_id] = b"corrupt" if self.corrupt_upload else content
         return file_id
 
+    def upload_blob(self, folder_id, content, name, mime_type):
+        return self.upload_immutable(folder_id, content, name)
+
     def replace_manifest(self, file_id, content, etag):
         if self.before_commit:
             callback, self.before_commit = self.before_commit, None
@@ -99,13 +102,15 @@ class CloudConfigTests(unittest.TestCase):
             "selected_module": {"LLM": "Test"},
             "LLM": {"Test": {"api_key": "your_key", "temperature": 0.7}},
             "log": {"log_level": "INFO"},
-            "static_soundbank": {"entries": {}},
+            "static_soundbank": {"directory": str(self.directory / "soundbank"), "entries": {}},
         }
         self.overrides = {"static_soundbank": {"entries": {"Hello": {"file": "hello.wav"}}},
                           "LLM": {"Test": {"api_key": "private-test-key"}},
                           "context_providers": [{"name": "Test", "headers": {
                               "Authorization": "private-test-header"}}]}
         self.default_path = self.directory / "config.yaml"
+        (self.directory / "soundbank").mkdir()
+        (self.directory / "soundbank/hello.wav").write_bytes(b"retained test sound")
         self.default_path.write_text(yaml.safe_dump(self.defaults))
         self.bootstrap = {"config_provider": "google_drive", "node_id": "test-node",
                           "google_drive": {"folder_id": "folder", "manifest_file_id": "manifest",

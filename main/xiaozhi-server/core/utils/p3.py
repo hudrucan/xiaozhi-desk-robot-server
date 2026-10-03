@@ -122,6 +122,18 @@ def load_validated_opus_file(
     return packets
 
 
+def load_validated_opus_bytes(input_bytes, *, sample_rate: int,
+                             frame_duration_ms: int = P3_FRAME_DURATION_MS):
+    """Validate the exact immutable payload before cloud publication."""
+    from opuslib_next.api.decoder import packet_get_nb_channels
+
+    packets = _read_packets(io.BytesIO(input_bytes), allow_empty=False)
+    if any(packet_get_nb_channels(packet) != 1 for packet in packets):
+        raise ValueError("Cloud P3 packets must contain mono Opus audio")
+    validate_opus_packets(packets, sample_rate=sample_rate, frame_duration_ms=frame_duration_ms)
+    return packets
+
+
 def validate_opus_packets(
     packets: Iterable[bytes],
     *,

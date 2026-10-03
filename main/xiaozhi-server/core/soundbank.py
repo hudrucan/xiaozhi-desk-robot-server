@@ -130,6 +130,56 @@ def soundbank_entry_text(entry):
     return text.strip()
 
 
+def validate_soundbank_cloud_pointer(pointer):
+    """Validate additive metadata without changing pointerless Local entries."""
+    if (not isinstance(pointer, Mapping) or set(pointer) != {"file_id", "sha256", "size"}
+            or not isinstance(pointer["file_id"], str)
+            or not re.fullmatch(r"[a-zA-Z0-9_-]+", pointer["file_id"])
+            or not isinstance(pointer["sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", pointer["sha256"])
+            or type(pointer["size"]) is not int or pointer["size"] <= 0):
+        raise ValueError("Invalid soundbank cloud pointer")
+
+
+def soundbank_p3_sample_rate(config, optimized=None):
+    """Reuse the mono/60ms Opus contract; incompatible negotiated rates fall back in TTS."""
+    if optimized is None:
+        sample_rate = SoundbankAuthoringService(config)._sample_rate()
+    else:
+        sample_rate = optimized.get("sample_rate")
+        if (optimized.get("codec") != SOUNDBANK_OPTIMIZED_CODEC
+                or type(optimized.get("channels")) is not int
+                or optimized["channels"] != SOUNDBANK_OPTIMIZED_CHANNELS
+                or type(optimized.get("frame_duration_ms")) is not int
+                or optimized["frame_duration_ms"] != p3.P3_FRAME_DURATION_MS):
+            raise ValueError("Invalid cloud soundbank P3 audio contract")
+    if type(sample_rate) is not int or sample_rate not in {8000, 12000, 16000, 24000, 48000}:
+        raise ValueError("Invalid cloud soundbank P3 sample rate")
+    return sample_rate
+
+
+def validate_soundbank_cloud_metadata(config):
+    """Only pointer-bearing entries gain stricter checks; legacy semantics stay intact."""
+    soundbank = config.get("static_soundbank", {})
+    for entry in soundbank.get("entries", {}).values():
+        if not isinstance(entry, Mapping):
+            continue
+        optimized = soundbank_entry_optimized(entry)
+        for metadata in (entry, optimized):
+            if metadata is None or "cloud" not in metadata:
+                continue
+            validate_soundbank_cloud_pointer(metadata["cloud"])
+            try:
+                root = resolve_soundbank_root(soundbank)
+                path = resolve_soundbank_asset(root, soundbank_entry_filename(metadata))
+                if metadata is optimized and path.suffix.lower() != ".p3":
+                    raise ValueError("Cloud optimized soundbank asset must use P3")
+                if path.suffix.lower() == ".p3":
+                    soundbank_p3_sample_rate(config, metadata if metadata is optimized else None)
+            except SoundbankError:
+                raise ValueError("Invalid cloud soundbank asset path or audio contract") from None
+
+
 def resolve_soundbank_root(config, create=False):
     """Resolve the configured soundbank directory against the server root."""
     if not isinstance(config, Mapping):

@@ -14,7 +14,7 @@ DIAGNOSTIC_THRESHOLD_KEYS = {
 
 
 def validate_config(config):
-    from core.soundbank import normalize_soundbank_text
+    from core.soundbank import normalize_soundbank_text, validate_soundbank_cloud_metadata
 
     selected = config.get("selected_module")
     if not isinstance(selected, Mapping):
@@ -101,3 +101,4 @@ def validate_config(config):
                 f"{previous!r} and {phrase!r}"
             )
         normalized_phrases[normalized] = phrase
+    validate_soundbank_cloud_metadata(config)

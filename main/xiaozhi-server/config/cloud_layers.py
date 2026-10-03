@@ -1,6 +1,7 @@
 """Override-only V1 topology; legacy sources retain their original semantics."""
 
 import copy
+from collections.abc import Mapping
 
 from config.config_loader import load_default_config, merge_configs
 from config.cloud_secrets import validate_cloud_secrets
@@ -8,6 +9,36 @@ from config.cloud_secrets import validate_cloud_secrets
 BOOTSTRAP_ROOTS = {"node_id", "config_provider", "google_drive", "credentials_path"}
 LEGACY_LAYERS = {"defaults", "overrides"}
 CENTRAL_LAYERS = {"global", "environments", "roles", "nodes"}
+
+
+def _without_inherited_asset_pointers(baseline, overrides):
+    """An explicit file owner cannot inherit the previous owner's cloud pointer."""
+    baseline = copy.deepcopy(baseline)
+    inherited = baseline.get("static_soundbank", {})
+    narrower = overrides.get("static_soundbank", {})
+    if not isinstance(inherited, Mapping) or not isinstance(narrower, Mapping):
+        return baseline
+    inherited_entries = inherited.get("entries", {})
+    entries = narrower.get("entries", {})
+    if not isinstance(inherited_entries, Mapping) or not isinstance(entries, Mapping):
+        return baseline
+    for phrase, entry in entries.items():
+        previous = inherited_entries.get(phrase)
+        if not isinstance(entry, Mapping) or not isinstance(previous, Mapping):
+            continue  # Scalar replacement already discards all inherited metadata.
+        if "file" in entry:
+            previous.pop("cloud", None)
+        optimized = entry.get("optimized")
+        previous_optimized = previous.get("optimized")
+        if (isinstance(optimized, Mapping) and "file" in optimized
+                and isinstance(previous_optimized, Mapping)):
+            previous_optimized.pop("cloud", None)
+    return baseline
+
+
+def merge_cloud_configs(baseline, overrides):
+    """Cloud-only merge; other fields retain the generic recursive/scalar rules."""
+    return merge_configs(_without_inherited_asset_pointers(baseline, overrides), overrides)
 
 
 def centralized(obj):
@@ -42,7 +73,7 @@ def validate_layers(obj, validator, repo_defaults=None):
     if set(layers) == LEGACY_LAYERS:
         for layer in layers.values():
             _config_layer(layer)
-        validator(merge_configs(layers["defaults"], layers["overrides"]))
+        validator(merge_cloud_configs(layers["defaults"], layers["overrides"]))
         return
     if set(layers) != CENTRAL_LAYERS:
         raise ValueError("Invalid cloud configuration scopes")
@@ -79,21 +110,25 @@ def resolve_layers(obj, node_id, repo_defaults=None):
     """Current release defaults precede cloud scopes; Settings edits only node."""
     layers = obj["layers"]
     if not centralized(obj):
-        return copy.deepcopy(layers["defaults"]), copy.deepcopy(layers["overrides"])
+        return (_without_inherited_asset_pointers(layers["defaults"], layers["overrides"]),
+                copy.deepcopy(layers["overrides"]))
     node = layers["nodes"].get(node_id)
     if node is None:
         raise ValueError("Local node_id has no assignment in cloud configuration")
     global_layer = layers["global"]
     if legacy_centralized(obj):
         # Iteration-2 sources stay frozen until explicitly reprovisioned.
-        baseline = merge_configs(global_layer["defaults"], global_layer["overrides"])
+        baseline = merge_cloud_configs(global_layer["defaults"], global_layer["overrides"])
     else:
         repo_defaults = load_default_config() if repo_defaults is None else repo_defaults
-        baseline = merge_configs(repo_defaults, global_layer)
+        baseline = merge_cloud_configs(repo_defaults, global_layer)
     for key, scope in (("environment", "environments"), ("role", "roles")):
         if node[key] is not None:
-            baseline = merge_configs(baseline, layers[scope][node[key]])
-    return copy.deepcopy(baseline), copy.deepcopy(node["overrides"])
+            baseline = merge_cloud_configs(baseline, layers[scope][node[key]])
+    # Keep raw node overrides for editing/publication, while making even callers
+    # that merge the returned pair generically see the same dependent metadata.
+    return (_without_inherited_asset_pointers(baseline, node["overrides"]),
+            copy.deepcopy(node["overrides"]))
 
 
 def update_node_overrides(obj, node_id, config):

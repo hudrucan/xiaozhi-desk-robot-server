@@ -6,17 +6,19 @@ import re
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 
 import portalocker
 
 from config.config_loader import get_project_dir, load_default_config, merge_configs
 from config.cloud_secrets import LocalSecretStore
+from config.cloud_soundbank import CloudSoundbankAssets
 from config.cloud_layers import (
     centralized, node_assignment, resolve_layers, update_node_overrides, validate_layers,
 )
 from config.config_store import (
-    ConfigConflict, ConfigStore, ConfigUnavailable, canonical_bytes, checksum,
+    ConfigConflict, ConfigStore, ConfigUnavailable, PreparedConfig, canonical_bytes, checksum,
 )
 from config.drive_transport import GoogleDriveTransport
 from config.local_config import LocalConfigStore
@@ -54,6 +56,12 @@ def validate_object(content, manifest, validator, repo_defaults=None):
     return value
 
 
+@dataclass(frozen=True)
+class PreparedCloudConfig(PreparedConfig):
+    store: object
+    cloud_object: dict
+
+
 class GoogleDriveConfigStore(ConfigStore):
     def __init__(self, bootstrap, transport=None, cache_dir=None, secret_provider=None, **kwargs):
         super().__init__(bootstrap, **kwargs)
@@ -67,6 +75,9 @@ class GoogleDriveConfigStore(ConfigStore):
         self.cache_dir = Path(cache_dir or Path(get_project_dir()) / "data/cloud-config")
         self.cache_io = LocalConfigStore(self.cache_dir / ".config.yaml")
         self.secrets = secret_provider or LocalSecretStore(bootstrap["node_id"])
+        self.soundbank_assets = CloudSoundbankAssets(
+            self.transport, self.folder_id, self.cache_dir.parent / "cloud-soundbank/objects"
+        )
         self.thread_lock = threading.RLock()
         self.desired_snapshot = None
         self.active_snapshot = None
@@ -215,11 +226,38 @@ class GoogleDriveConfigStore(ConfigStore):
             raise ConfigConflict("Cloud revision changed; sync and review edits before saving")
 
     def commit_unlocked(self, config, base_revision=None):
+        # Direct callers prepare once; Settings passes its explicit prepared object.
+        self.commit_prepared_unlocked(self.prepare_candidate_unlocked(config), base_revision)
+
+    def commit_prepared_unlocked(self, prepared, base_revision=None):
+        if not isinstance(prepared, PreparedCloudConfig) or prepared.store is not self:
+            raise TypeError("A cloud configuration prepared by this store is required")
+        self.commit_object_unlocked(prepared.cloud_object, base_revision)
+
+    def _persist_secrets(self, pending_secrets):
+        try:
+            self.secrets.put_many(pending_secrets or {})
+        except OSError:
+            raise ConfigUnavailable(
+                "Node-local secret storage unavailable; cloud configuration was not published"
+            ) from None
+
+    def prepare_candidate_unlocked(self, config):
         config, pending_secrets = self.secrets.externalize(config)
+        self._persist_secrets(pending_secrets)
+        repo_defaults = self._repo_defaults()
         obj = update_node_overrides(
             self._desired_view()["payload"]["object"], self.bootstrap["node_id"], config
         )
-        self.commit_object_unlocked(obj, base_revision, pending_secrets=pending_secrets)
+        defaults, overrides = self._resolve(obj, repo_defaults)
+        effective = merge_configs(defaults, overrides)
+        self.validator(effective)
+        current_defaults, current_overrides = self._resolve(self._desired_view()["payload"]["object"], repo_defaults)
+        published = self.soundbank_assets.publish_layers(
+            obj, self.bootstrap["node_id"], repo_defaults, merge_configs(current_defaults, current_overrides)
+        )
+        defaults, overrides = self._resolve(published, repo_defaults)
+        return PreparedCloudConfig(overrides, merge_configs(defaults, overrides), self, published)
 
     def mutate(self, mutation, base_revision=None):
         """CLI and Settings share validation, immutable upload, verification and CAS."""
@@ -246,14 +284,7 @@ class GoogleDriveConfigStore(ConfigStore):
         self._validate_object(content, manifest)
         # This node must remain assigned even in topology administration.
         self._resolve(obj)
-        try:
-            self.secrets.put_many(pending_secrets or {})
-        except OSError:
-            # Abort before upload; provider errors may contain private values,
-            # reference names or filesystem paths. Keep API/traceback output safe.
-            raise ConfigUnavailable(
-                "Node-local secret storage unavailable; cloud configuration was not published"
-            ) from None
+        self._persist_secrets(pending_secrets)
         try:
             file_id = self.transport.upload_immutable(
                 self.folder_id, content, f"config-{base_revision + 1}-{digest}.json"
@@ -346,6 +377,10 @@ class GoogleDriveConfigStore(ConfigStore):
             if source == "active_lkg" and snapshot["payload"].get("repo_defaults_sha256") != fingerprint:
                 raise ConfigUnavailable("Active LKG is incompatible with current repo defaults; successful online startup required")
             effective = self._runtime_config(snapshot, repo_defaults)
+            if source == "drive" and self.active_snapshot is not None:
+                active_defaults, active_overrides = self._resolve(self.active_snapshot["payload"]["object"], repo_defaults)
+                self.soundbank_assets.retain(merge_configs(active_defaults, active_overrides))
+            self.soundbank_assets.materialize(effective)
             self.runtime_snapshot = self._envelope(
                 snapshot["payload"]["manifest"], snapshot["payload"]["object"], fingerprint
             )

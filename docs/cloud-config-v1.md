@@ -130,8 +130,10 @@ another node's config. Local bootstrap environment/role hints are not consulted.
 
 Settings Save edits only the current node's overrides. It preserves shared
 scopes, assignments and all other node records, without flattening inherited
-values into the node layer. Every assigned node is validated before publishing
-a shared config object using the current server release defaults. Topology editing
+semantic values into the node layer. Soundbank storage pointers are added to the
+cloud layer owning the corresponding file definition, under the same CAS. Every assigned node
+is validated before publishing a shared config object using the current server
+release defaults. Topology editing
 is supported through the CLI below; UI topology editing is out of scope.
 
 Provisioning puts imported local overrides only in the specified node record.
@@ -251,8 +253,97 @@ Cache serializes only original reference-bearing layers, never the effective
 configuration returned by secret resolution. Local provider behavior, including
 plaintext Local overrides, sectioned atomic writes, backup/recovery, masking,
 blank-secret retention and diagnostic-only no-restart saves is unchanged.
-Soundbank config/authoring remains local to each node; this backend does not
-upload audio assets or make node-specific filesystem paths portable.
+
+## Soundbank Cloud Assets
+
+In Google Drive mode, Settings Save publishes every retained canonical WAV/MP3
+and optimized P3 reference as an immutable binary object in the existing app-owned
+folder. Canonical P3 entries are also supported. Each entry and its `optimized`
+metadata can carry an optional `cloud: {file_id, sha256, size}` pointer. Names
+contain the content hash; changed bytes under the same local filename receive a
+new pointer. Matching current/candidate pointers and identical transaction assets
+are reused. No listing, remote index or folder tree is required.
+
+Pointers follow the effective `file` and `optimized.file` owners independently:
+node overrides, global, assigned environment or assigned role. Only storage
+metadata changes in a shared layer; an unrelated node Save does not copy inherited
+file/text/provenance/audio-contract fields into node overrides. A legacy string
+can become `{file, cloud}` in its original cloud layer. Later shared semantic
+updates/deletions therefore continue to propagate to nodes without explicit
+overrides. Repo defaults are software-owned: Save rejects an effective asset
+whose file definition exists only there, until an explicit file override is
+provided in a cloud-managed layer. Embedded defaults in legacy Drive layouts
+remain cloud-owned. Candidate preparation runs once per Settings transaction;
+direct store commits use the same preparation before publication.
+
+Cloud layer resolution treats pointers as dependent metadata on every node.
+An explicit canonical `file` override discards inherited canonical `cloud`;
+an `optimized.file` override independently discards inherited `optimized.cloud`.
+The new file owner can provide its own complete valid pointer. Partial pointers
+cannot borrow fields from the previous file owner's pointer. Overrides of text,
+provenance or audio metadata without a file override retain the inherited pointer;
+string replacements retain scalar replacement semantics. This applies across
+global/environment/role/node layers, legacy Cloud layouts, effective validation,
+Settings reads and runtime/LKG resolution. Stored layers are not rewritten during
+resolution. Generic Local configuration merging is unchanged.
+
+Consequently, publishing a global pointer from one node cannot attach it to a
+different node's overridden filename. That node remains pointerless for its own
+file until it saves and publishes a pointer in the file's owning layer.
+
+Save requires all referenced files locally, validates P3 structure and the existing
+mono Opus/60ms audio contract, uploads missing objects, and downloads them to
+verify size and SHA-256 before uploading the config object. Manifest CAS remains
+last. Secret replacements are durable in the node-local store before any Drive
+publication. A missing asset, upload or verification failure aborts publication
+without advancing desired/active state or running post-save cleanup. A final CAS
+conflict still returns HTTP 409; uploaded orphan objects can remain on Drive.
+
+Every successfully published/materialized pointer-bearing asset also has a
+verified immutable local copy in `data/cloud-soundbank/objects/<sha256>.<suffix>`
+(beside a custom config cache when configured). Cache writes stage bytes, verify
+SHA/size and P3 audio, then atomically publish. This directory must be outside the
+runtime soundbank tree; Local mode never creates or uses it. V1 does not GC these
+objects.
+
+Before selecting startup runtime, pointer-bearing assets are materialized beneath
+the configured local soundbank directory. Lookup order is matching runtime file,
+verified content cache, then Drive download. Missing/corrupt files are restored
+through staging, hash/size verified and P3 validated before atomic replacement. All required downloads are
+validated before replacement begins. Traversal and symlink destinations are
+rejected. Runtime continues to use `file` / `optimized.file`; TTS has no Drive
+dependency and keeps optimized direct playback and canonical fallback.
+
+Before attempting desired startup, all pointer-bearing assets needed by the
+current active snapshot are retained in the content cache. Older active snapshots
+without cached bytes are preserved from matching runtime files or downloaded
+from Drive; if retention fails, desired materialization is aborted. Startup
+cleanup can retire runtime filenames without touching the cache. If desired
+startup overwrites a filename and later fails before listener confirmation,
+`active.json` stays unchanged and an offline restart restores the exact old bytes
+from the cache. `mark_applied()` still runs only after both listeners start.
+
+Offline active LKG requires matching bytes in runtime files or content cache for
+every pointer-bearing asset. Corrupt cached bytes are never trusted. If neither
+local copy is valid and Drive is unavailable, startup fails safely and does not
+mark the revision applied. Pointerless legacy string/object entries
+retain the existing local-file/fallback behavior, including missing-file fallback.
+Their next cloud Settings Save adds pointers if all referenced files exist.
+Generate/optimize still creates local draft files; Save performs cloud publication.
+Source-switch readiness validates configuration/secrets without writing assets;
+startup performs materialization after an explicit restart.
+
+Local mode retains the old schema, authoring, playback, atomic config writes and
+reference-aware cleanup, adds no pointers and makes zero Drive calls. Cloud pointer
+metadata does not change local saved/runtime/draft protections or cleanup journals.
+There is no automatic remote deletion/GC: retired immutable objects remain usable
+by another node's active/LKG revision.
+
+This implements only the soundbank portion of Cloud State. Cloud Memory,
+`data/.memory.yaml` synchronization and full-state provisioning/migration remain
+out of scope. `init_cloud_config.py --from-local` still imports config metadata
+and secrets only; it does not migrate sound assets. Topology administration does
+not publish local sound binaries; use cloud Settings Save for that operation.
 
 ## Node-local secrets
 
@@ -369,6 +460,16 @@ second node, seed only its own references and confirm it cannot resolve the firs
 node's references. Exercise CLI assignments and stale revision rejection. Confirm
 Local Settings saves, secret masking and soundbank authoring still work.
 No firmware change is required.
+
+For Soundbank Cloud Assets, Save a retained canonical/optimized pair and inspect
+both pointers. Stop the server, remove those local files, then restart online and
+verify recovery before Apply. Restart offline with matching assets to check LKG;
+repeat with one pointer-bearing file missing and confirm startup fails without
+advancing active revision only when its content cache copy is also missing or
+corrupt. Test desired startup with changed bytes under the same filename, fail
+before Apply, then restart offline and verify the previous active bytes return.
+Real-account binary upload/download and permissions
+still require deployment verification.
 
 For a software-default upgrade, confirm offline startup rejects the old active
 cache, then boot online and verify `active.json` receives the new fingerprint only
