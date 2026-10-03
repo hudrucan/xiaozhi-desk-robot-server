@@ -127,6 +127,16 @@ main/xiaozhi-server/.venv/bin/python scripts/restore_cloud_node.py \
   --oauth-client /secure/application-client.json --activate
 ```
 
+For one-time OAuth client setup and headless authorization, see
+[Google Drive OAuth setup](google-drive-oauth-setup.md). Restore automatically
+uses `data/oauth-client.json` when neither explicit auth option nor the existing
+default `data/drive-credentials.json` is available. SSH/headless sessions print
+the login link and tunnel instructions without attempting to launch a browser.
+The callback binds only to `127.0.0.1`, defaults to port `8765`, and waits up to
+600 seconds. `--oauth-port`, `--oauth-timeout` (1–3600 seconds), and
+`--ssh-target user@host` customize those instructions. A port collision rejects
+login with an actionable message; it never silently picks another port.
+
 Authorize Google, select the source/node if multiple exist, and enter the recovery
 passphrase through hidden input. Single-source/single-node selection can be
 automatic. With multiple nodes, enter an existing node ID from the displayed list.

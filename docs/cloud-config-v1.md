@@ -37,11 +37,14 @@ Enable Drive API for your Google project. Supply a locally pre-authorized Google
 credential JSON file supported by `google.auth.load_credentials_from_file`, such
 as authorized-user credentials with a refresh token. This implementation requests
 only [`drive.file`](https://developers.google.com/workspace/drive/api/guides/api-specific-auth).
+The separate [OAuth setup helper](google-drive-oauth-setup.md) imports a downloaded
+Desktop client and authorizes the node, producing the default private
+`data/drive-credentials.json` before provisioning.
 A folder manually created in Drive is not automatically accessible to an OAuth
 app with this scope. The recommended provisioning path creates a private folder
 through that app, so its folder, config objects and manifest are app-owned.
 `--folder-id` remains available for a folder already granted to the same OAuth
-app (for example through Google Picker). It does not implement an interactive
+app (for example through Google Picker). The provisioning command does not implement an interactive
 OAuth consent flow or broaden scopes to access arbitrary folders. A service
 account needs suitable shared-drive access/storage quota; personal My Drive is
 best provisioned with authorized-user credentials.

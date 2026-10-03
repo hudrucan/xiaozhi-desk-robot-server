@@ -1,6 +1,7 @@
 """Encrypted recovery/discovery and format-box simulation; fake Drive only."""
 
 import copy
+import errno
 import importlib.util
 import io
 import json
@@ -27,13 +28,19 @@ from config.cloud_restore import RestorePublicationError, restore_cloud_node, se
 from config.config_store import ConfigConflict, canonical_bytes, checksum
 from config.drive_transport import GoogleDriveTransport
 from config.recovery_cli import recovery_passphrase
-from config.recovery_oauth import obtain_credentials
+from config.recovery_oauth import (
+    OAuthClientError, OAuthPortError, OAuthStorageError, browser_available,
+    install_oauth_file, load_oauth_client, obtain_credentials,
+)
 import test_cloud_provisioning as provisioning_tests
 
 PASSPHRASE = "a long test recovery passphrase"
 PRIVATE = "secret-token /private/credentials.json api-value"
 CREDENTIALS = canonical_bytes({"type": "authorized_user", "client_id": "test-client",
                               "client_secret": "client-private", "refresh_token": "test-refresh-private"})
+CLIENT = {"installed": {"client_id": "test-client", "client_secret": "client-private",
+                       "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                       "token_uri": "https://oauth2.googleapis.com/token"}}
 
 
 class RecoveryDrive(provisioning_tests.ProvisionDrive):
@@ -436,7 +443,7 @@ class CloudRecoveryTests(unittest.TestCase):
         creds = Credentials(token="test-access", refresh_token="test-refresh-private", token_uri="https://oauth2.googleapis.com/token",
                             client_id="test-client", client_secret="client-private")
         client = self.box / "oauth-client.json"
-        client.write_text(json.dumps({"installed": {"client_id": "test-client", "client_secret": "client-private"}}))
+        client.write_text(json.dumps(CLIENT))
         credential_bytes, _ = obtain_credentials(client_path=client, flow_factory=Mock(return_value=Mock(run_local_server=Mock(return_value=creds))))
         source = select_source(discover_sources(self.drive))
         result = restore_cloud_node(source, select_node(source), PASSPHRASE, credential_bytes, self.drive,
@@ -473,7 +480,7 @@ class RecoveryOAuthCLITests(unittest.TestCase):
 
     def test_installed_oauth_pkce_loopback_narrow_scope_no_early_write(self):
         path = self.directory / "client.json"
-        path.write_text(json.dumps({"installed": {"client_id": "test-client", "client_secret": "client-private"}}))
+        path.write_text(json.dumps(CLIENT))
         creds = Credentials(token="private-access", refresh_token="test-refresh-private", token_uri="https://oauth2.googleapis.com/token",
                             client_id="test-client", client_secret="client-private")
         flow = Mock(run_local_server=Mock(return_value=creds))
@@ -482,12 +489,14 @@ class RecoveryOAuthCLITests(unittest.TestCase):
         self.assertEqual(json.loads(content)["refresh_token"], "test-refresh-private")
         self.assertEqual(factory.call_args.kwargs["scopes"], GoogleDriveTransport.SCOPES)
         self.assertTrue(factory.call_args.kwargs["autogenerate_code_verifier"])
-        self.assertEqual(flow.run_local_server.call_args.kwargs["host"], "localhost")
+        self.assertEqual(flow.run_local_server.call_args.kwargs["host"], "127.0.0.1")
+        self.assertEqual(flow.run_local_server.call_args.kwargs["port"], 8765)
+        self.assertEqual(flow.run_local_server.call_args.kwargs["timeout_seconds"], 600)
         self.assertEqual(set(item.name for item in self.directory.iterdir()), {"client.json"})
 
     def test_oauth_errors_and_library_token_logs_are_sanitized(self):
         path = self.directory / "client.json"
-        path.write_text('{"installed": {}}')
+        path.write_text(json.dumps(CLIENT))
 
         def fail(*args, **kwargs):
             logging.getLogger("oauthlib").critical(PRIVATE)
@@ -502,6 +511,80 @@ class RecoveryOAuthCLITests(unittest.TestCase):
         self.assertNotIn(PRIVATE, str(raised.exception))
         self.assertNotIn(PRIVATE, output.getvalue())
         self.assertTrue(raised.exception.__suppress_context__)
+
+    def test_headless_login_shows_matching_tunnel_and_no_browser(self):
+        path = self.directory / "client.json"
+        path.write_text(json.dumps(CLIENT))
+        creds = Credentials(token="private-access", refresh_token="test-refresh-private", token_uri="https://oauth2.googleapis.com/token",
+                            client_id="test-client", client_secret="client-private")
+        flow = Mock(run_local_server=Mock(return_value=creds))
+        output = io.StringIO()
+        with patch.dict("os.environ", {"SSH_CONNECTION": "present"}), redirect_stdout(output):
+            self.assertFalse(browser_available())
+            obtain_credentials(client_path=path, flow_factory=Mock(return_value=flow),
+                               oauth_port=8877, oauth_timeout=900, ssh_target="robot@deskbox")
+        self.assertFalse(flow.run_local_server.call_args.kwargs["open_browser"])
+        self.assertEqual(flow.run_local_server.call_args.kwargs["port"], 8877)
+        self.assertIn("127.0.0.1:8877:127.0.0.1:8877 robot@deskbox", output.getvalue())
+        for private in ("private-access", "test-refresh-private", "client-private", str(path)):
+            self.assertNotIn(private, output.getvalue())
+
+    def test_oauth_client_validation_and_port_failure_are_safe(self):
+        path = self.directory / "client.json"
+        invalid = [{"web": CLIENT["installed"]}, {"installed": {}},
+                   {"installed": {**CLIENT["installed"], "token_uri": PRIVATE}}]
+        for value in invalid:
+            path.write_text(json.dumps(value))
+            with self.assertRaises(OAuthClientError) as raised:
+                load_oauth_client(path)
+            self.assertNotIn(PRIVATE, str(raised.exception))
+        path.write_text(json.dumps(CLIENT))
+        flow = Mock(run_local_server=Mock(side_effect=OSError(errno.EADDRINUSE, PRIVATE)))
+        with redirect_stdout(io.StringIO()), self.assertRaises(OAuthPortError) as raised:
+            obtain_credentials(client_path=path, flow_factory=Mock(return_value=flow), open_browser=False)
+        self.assertNotIn(PRIVATE, str(raised.exception))
+        self.assertTrue(raised.exception.__suppress_context__)
+
+    def test_setup_private_files_are_create_only_and_symlinks_reject(self):
+        path = self.directory / "data/oauth-client.json"
+        content = canonical_bytes(CLIENT)
+        install_oauth_file(path, content)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        install_oauth_file(path, content)
+        with self.assertRaises(OAuthStorageError):
+            install_oauth_file(path, canonical_bytes({"different": PRIVATE}))
+        self.assertEqual(path.read_bytes(), content)
+        link = path.parent / "symlink.json"
+        link.symlink_to(path)
+        with self.assertRaises(OAuthStorageError):
+            install_oauth_file(link, content)
+
+    def test_setup_import_authorize_and_reuse_without_cloud_or_bootstrap(self):
+        cli = self.cli("setup_google_drive")
+        client = self.directory / "download.json"
+        client.write_text(json.dumps(CLIENT))
+        loader = Mock(return_value=(CREDENTIALS, Mock()))
+        output = io.StringIO()
+        with patch.object(cli, "PROJECT", self.directory), redirect_stdout(output):
+            self.assertEqual(cli.main(["--import-client", str(client), "--authorize", "--no-browser"], credential_loader=loader), 0)
+            self.assertEqual(cli.main(["--authorize"], credential_loader=loader), 0)
+        self.assertEqual(loader.call_count, 1)
+        self.assertFalse(loader.call_args.kwargs["open_browser"])
+        self.assertEqual(set(p.name for p in (self.directory / "data").iterdir()),
+                         {"oauth-client.json", "drive-credentials.json"})
+        self.assertEqual((self.directory / "data/drive-credentials.json").read_bytes(), CREDENTIALS)
+        self.assertNotIn("test-refresh-private", output.getvalue())
+
+    def test_restore_auto_client_and_oauth_options_forwarding(self):
+        cli = self.cli("restore_cloud_node")
+        (self.directory / "data").mkdir()
+        (self.directory / "data/oauth-client.json").write_text(json.dumps(CLIENT))
+        loader = Mock(side_effect=RecoveryError())
+        with patch.object(cli, "PROJECT", self.directory), redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(["--no-browser", "--oauth-port", "8877", "--ssh-target", "robot@deskbox"], credential_loader=loader), 4)
+        self.assertEqual(loader.call_args.kwargs["client_path"], self.directory / "data/oauth-client.json")
+        self.assertEqual(loader.call_args.kwargs["oauth_port"], 8877)
+        self.assertEqual(loader.call_args.kwargs["ssh_target"], "robot@deskbox")
 
     def test_passphrase_confirmation_and_no_echo_fallback(self):
         self.assertEqual(recovery_passphrase(confirm=True, prompt=Mock(side_effect=[PASSPHRASE, PASSPHRASE])), PASSPHRASE)

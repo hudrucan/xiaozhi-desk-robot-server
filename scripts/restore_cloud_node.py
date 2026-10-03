@@ -10,7 +10,7 @@ from config.cloud_recovery import RecoveryError, discover_sources
 from config.cloud_restore import restore_cloud_node, select_node, select_source
 from config.drive_transport import GoogleDriveTransport
 from config.recovery_cli import SafeParser, choose, choose_node, recovery_passphrase
-from config.recovery_oauth import obtain_credentials
+from config.recovery_oauth import add_oauth_arguments, obtain_credentials
 
 
 def main(argv=None, *, credential_loader=obtain_credentials, transport_factory=GoogleDriveTransport,
@@ -22,17 +22,21 @@ def main(argv=None, *, credential_loader=obtain_credentials, transport_factory=G
     parser.add_argument("--source-id", help="Explicit discovered Cloud State source UUID")
     parser.add_argument("--node-id", help="Existing logical node identity")
     parser.add_argument("--activate", action="store_true", help="Explicitly select google_drive for the next startup")
-    parser.add_argument("--no-browser", action="store_true", help="Print the authorization URL for loopback OAuth")
+    add_oauth_arguments(parser)
     try:
         args = parser.parse_args(argv)
         existing = args.credentials
         if existing is None and args.oauth_client is None and (PROJECT / "data/drive-credentials.json").exists():
             existing = PROJECT / "data/drive-credentials.json"
-        if existing is None and args.oauth_client is None:
-            print("The same Desktop OAuth client configuration used to create the source is required (--oauth-client).", file=sys.stderr)
+        client = args.oauth_client
+        if existing is None and client is None and (PROJECT / "data/oauth-client.json").exists():
+            client = PROJECT / "data/oauth-client.json"
+        if existing is None and client is None:
+            print("OAuth setup required. Run scripts/setup_google_drive.py for instructions, then import the source application's Desktop client JSON.", file=sys.stderr)
             return 4
-        credential_bytes, session = credential_loader(existing_path=existing, client_path=args.oauth_client,
-                                                      open_browser=not args.no_browser)
+        credential_bytes, session = credential_loader(existing_path=existing, client_path=client,
+            open_browser=False if args.no_browser else None, oauth_port=args.oauth_port,
+            oauth_timeout=args.oauth_timeout, ssh_target=args.ssh_target)
         transport = transport_factory(PROJECT / "data/drive-credentials.json", session=session)
         sources = discover_sources(transport)
         source_id = args.source_id
