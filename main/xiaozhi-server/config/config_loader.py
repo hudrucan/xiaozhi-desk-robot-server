@@ -51,7 +51,7 @@ def load_default_config(config_path=None):
 
 
 async def load_config():
-    """Load and merge the local YAML configuration."""
+    """Load the boot-selected configuration from Local or Drive/LKG."""
     from core.utils.cache.manager import cache_manager, CacheType
 
     # Reuse the process-local config cache.
@@ -59,14 +59,12 @@ async def load_config():
     if cached_config is not None:
         return cached_config
 
-    from config.local_config import load_local_config
+    import asyncio
+    from config.config_store import get_config_store
 
-    # Load defaults and local overrides.
-    default_config = load_default_config()
-    custom_config = load_local_config()
-
-    # Private local overrides take precedence over all reference defaults.
-    config = merge_configs(default_config, custom_config)
+    # Network/cache work runs off the event loop. The store retains the exact
+    # boot snapshot until both listeners confirm a successful startup.
+    config = await asyncio.to_thread(get_config_store().prepare_runtime)
     # Create configured output directories.
     ensure_directories(config)
 

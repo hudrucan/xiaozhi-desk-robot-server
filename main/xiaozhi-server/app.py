@@ -48,6 +48,18 @@ async def wait_for_exit(restart_event: asyncio.Event) -> bool:
             return False
 
 
+async def wait_for_listener(server, task):
+    ready = asyncio.create_task(server.ready.wait())
+    try:
+        await asyncio.wait([ready, task], return_when=asyncio.FIRST_COMPLETED)
+        if task.done():
+            await task
+            raise RuntimeError("Server listener exited before startup completed")
+    finally:
+        ready.cancel()
+        await asyncio.gather(ready, return_exceptions=True)
+
+
 async def monitor_stdin():
     """Monitor stdin and consume Enter key presses."""
     while True:
@@ -145,6 +157,12 @@ async def main():
 
     should_restart = False
     try:
+        await asyncio.gather(
+            wait_for_listener(ws_server, ws_task),
+            wait_for_listener(ota_server, ota_task),
+        )
+        from config.config_store import get_config_store
+        await asyncio.to_thread(get_config_store().mark_applied)
         should_restart = await wait_for_exit(restart_event)
     except asyncio.CancelledError:
         print("Task cancelled; cleaning up resources...")

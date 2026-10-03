@@ -11,6 +11,11 @@ def check_config_file():
     global config_file_valid
     if config_file_valid:
         return
+    from config.bootstrap import load_bootstrap
+    if load_bootstrap()["config_provider"] == "google_drive":
+        # Cloud startup validates Drive/LKG in load_config; no local override is required.
+        config_file_valid = True
+        return
     custom_config_file = get_project_dir() + "data/." + default_config_file
     if not os.path.exists(custom_config_file):
         raise FileNotFoundError(

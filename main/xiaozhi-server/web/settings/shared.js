@@ -1,5 +1,7 @@
 export const state = {
   config: {},
+  configurationSource: {},
+  baseRevision: null,
   original: {},
   patch: {},
   configuredSecrets: new Set(),

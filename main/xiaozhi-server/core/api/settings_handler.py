@@ -6,6 +6,7 @@ import re
 from aiohttp import web
 
 from config.config_loader import get_project_dir
+from config.config_store import ConfigConflict, ConfigUnavailable, stage_provider_switch
 from core.api.base_handler import BaseHandler
 from core.notification_audio import (
     PRESENTATION_FIELDS,
@@ -129,8 +130,8 @@ class SettingsHandler(BaseHandler):
 
     async def handle_get(self, request):
         self._require_access(request)
-        payload = self.editor.read_public()
-        payload["restart_required"] = self.restart_required
+        payload = await asyncio.to_thread(self.editor.read_public)
+        payload["restart_required"] = self._restart_needed(payload)
         payload["soundbank_runtime_directory"] = self.soundbank.runtime_directory()
         payload["soundbank_runtime_audio"] = self.soundbank.runtime_audio_contract()
         return self._disable_cache(web.json_response(payload))
@@ -180,18 +181,79 @@ class SettingsHandler(BaseHandler):
             ):
                 raise ValueError("Invalid retired soundbank drafts")
             payload = await asyncio.to_thread(
-                self.editor.update, patch, self.soundbank_cleanup, draft_id, retired
+                self.editor.update, patch, self.soundbank_cleanup, draft_id, retired, body.get("base_revision")
             )
+        except ConfigConflict as error:
+            return self._disable_cache(web.json_response({
+                "error": str(error),
+                "configuration_source": await asyncio.to_thread(self._source_status),
+            }, status=409))
+        except ConfigUnavailable as error:
+            return self._disable_cache(web.json_response({
+                "error": str(error),
+                "configuration_source": await asyncio.to_thread(self._source_status),
+            }, status=503))
         except (ValueError, TypeError) as error:
             return web.json_response({"error": str(error)}, status=400)
 
         self.restart_required = (
             self.restart_required or self._patch_requires_restart(patch)
         )
-        payload["restart_required"] = self.restart_required
+        payload["restart_required"] = self._restart_needed(payload)
         payload["soundbank_runtime_directory"] = self.soundbank.runtime_directory()
         payload["soundbank_runtime_audio"] = self.soundbank.runtime_audio_contract()
         return self._disable_cache(web.json_response(payload))
+
+    def _source_status(self):
+        with self.editor.store.locked():
+            return self.editor.store.status_unlocked()
+
+    def _restart_needed(self, payload):
+        source = payload["configuration_source"]
+        return self.restart_required or bool(source["pending_provider"]) or (
+            source["config_provider"] == "google_drive" and source["restart_required"]
+        )
+
+    async def handle_sync(self, request):
+        self._require_access(request)
+        self._require_json(request)
+        try:
+            def sync():
+                with self.editor.store.locked():
+                    self.editor.store.refresh_unlocked(strict=True)
+                return self.editor.read_public()
+            payload = await asyncio.to_thread(sync)
+        except ConfigConflict as error:
+            return self._disable_cache(web.json_response({
+                "error": str(error),
+                "configuration_source": await asyncio.to_thread(self._source_status),
+            }, status=409))
+        except (OSError, ValueError, TypeError) as error:
+            return self._disable_cache(web.json_response({
+                "error": str(error),
+                "configuration_source": await asyncio.to_thread(self._source_status),
+            }, status=503))
+        payload["restart_required"] = self._restart_needed(payload)
+        return self._disable_cache(web.json_response(payload))
+
+    async def handle_source(self, request):
+        self._require_access(request)
+        self._require_json(request)
+        try:
+            body = await request.json()
+            if not isinstance(body, dict):
+                raise ValueError("Request body must be an object")
+            source = await asyncio.to_thread(stage_provider_switch, body.get("config_provider"))
+        except ConfigConflict as error:
+            return self._disable_cache(web.json_response({"error": str(error)}, status=409))
+        except ConfigUnavailable as error:
+            return self._disable_cache(web.json_response({"error": str(error)}, status=503))
+        except (ValueError, TypeError, OSError) as error:
+            return self._disable_cache(web.json_response({"error": str(error)}, status=400))
+        self.restart_required = True
+        return self._disable_cache(web.json_response({
+            "configuration_source": source, "restart_required": True,
+        }))
 
     async def handle_restart(self, request):
         self._require_access(request)

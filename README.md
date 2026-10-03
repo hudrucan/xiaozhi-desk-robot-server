@@ -188,6 +188,11 @@ Memory records remain in `data/.memory.yaml`, separately from provider settings.
 Bundled and optional speech assets are documented in
 [`models/README.md`](main/xiaozhi-server/models/README.md).
 
+Optional centralized configuration is available through private Google Drive.
+Local remains the default when `data/bootstrap.yaml` is absent. See
+[Cloud Config V1](docs/cloud-config-v1.md) for provisioning, explicit source
+switching, desired/active revisions and offline last-known-good behavior.
+
 ## Memory v2
 
 Select `mem_local_explicit` to store durable records in

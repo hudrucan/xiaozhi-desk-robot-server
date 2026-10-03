@@ -315,6 +315,12 @@ main { grid-column: 2; min-width: 0; }
 .panel { padding: 22px; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 19px; }
 .panel h3 { margin: 2px 0 0; font-size: 16px; font-weight: 600; }
+.config-source-panel { display: grid; gap: 16px; }
+.config-source-panel + .config-source-panel { margin-top: 16px; }
+.config-source-panel > h3, .config-source-panel > .section-copy { margin: 0; }
+.config-source-panel > .button { justify-self: start; }
+.config-source-field { display: grid; gap: 8px; max-width: 360px; }
+.config-source-field label { font-size: 12px; font-weight: 600; }
 .line-icon { color: var(--accent); font-size: 24px; }
 .detail-list { display: grid; gap: 2px; margin: 0; }
 .detail-list div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 11px 0; border-top: 1px solid rgba(94, 75, 49, 0.32); }

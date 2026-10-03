@@ -1,15 +1,13 @@
 import copy
-import os
 from collections.abc import Mapping
 from contextlib import nullcontext
 
 from config.config_loader import (
-    get_project_dir,
-    load_default_config,
     merge_configs,
 )
-from config.local_config import LocalConfigStore
-from core.soundbank import SoundbankError, normalize_soundbank_text
+from config.config_store import get_config_store
+from config.config_validation import validate_config
+from core.soundbank import SoundbankError
 from core.utils.config_secrets import is_secret_name
 
 
@@ -61,15 +59,6 @@ EDITABLE_ROOTS = {
     "xiaozhi",
 }
 
-PROVIDER_GROUPS = ("VAD", "ASR", "LLM", "VLLM", "TTS", "Memory", "Intent")
-DIAGNOSTIC_THRESHOLD_KEYS = {
-    "first_audio",
-    "llm_first",
-    "resumed_llm_first",
-    "tool",
-    "total",
-    "tts_first",
-}
 
 
 def _is_configured_secret(value):
@@ -165,22 +154,17 @@ def _merge_editor_patch(local_config, patch):
 
 
 class ConfigEditor:
-    """Read and atomically update the local configuration override."""
+    """Apply the same Settings patch/secret semantics to either desired store."""
 
-    def __init__(self):
-        project_dir = get_project_dir()
-        self.default_path = os.path.join(project_dir, "config.yaml")
-        self.local_path = os.path.join(project_dir, "data", ".config.yaml")
-        self.store = LocalConfigStore(self.local_path)
+    def __init__(self, store=None):
+        self.store = store or get_config_store()
 
     def read_public(self):
-        default_config = load_default_config(self.default_path)
         with self.store.locked():
+            default_config = self.store.defaults_unlocked()
             local_config = self.store.read_unlocked()
-            config_path = (
-                "data/config.d/" if self.store.sections_dir.exists()
-                else "data/.config.yaml"
-            )
+            source = self.store.status_unlocked()
+            config_path = source["source"]
         effective_config = merge_configs(default_config, local_config)
         editable_config = {
             key: effective_config[key]
@@ -195,9 +179,11 @@ class ConfigEditor:
             "config": public_config,
             "configured_secrets": configured_secrets,
             "config_path": config_path,
+            "configuration_source": source,
+            "restart_required": source["restart_required"],
         }
 
-    def update(self, patch, soundbank_cleanup=None, draft_id=None, retired_drafts=()):
+    def update(self, patch, soundbank_cleanup=None, draft_id=None, retired_drafts=(), base_revision=None):
         if not isinstance(patch, Mapping):
             raise ValueError("config must be an object")
 
@@ -207,7 +193,8 @@ class ConfigEditor:
 
         cleanup_result = None
         with (soundbank_cleanup.lock if soundbank_cleanup else nullcontext()), self.store.locked():
-            default_config = load_default_config(self.default_path)
+            self.store.prepare_commit_unlocked(base_revision)
+            default_config = self.store.defaults_unlocked()
             local_config = self.store.read_unlocked()
             current_effective = merge_configs(default_config, local_config)
             safe_patch = _drop_blank_secrets(patch, current_effective)
@@ -223,7 +210,7 @@ class ConfigEditor:
                     cleanup_prepared = True
                 except (OSError, ValueError, SoundbankError) as error:
                     cleanup_result = {"errors": [str(error)]}
-            self._write_atomic(updated_local)
+            self._write_atomic(updated_local, base_revision)
             if cleanup_prepared:
                 try:
                     cleanup_result = soundbank_cleanup.after_save(
@@ -239,90 +226,17 @@ class ConfigEditor:
 
     def cleanup_soundbank(self, cleanup, scan_unused=False, confirmation=None):
         with cleanup.lock, self.store.locked():
+            if scan_unused:
+                self.store.refresh_unlocked(strict=True)
             effective = merge_configs(
-                load_default_config(self.default_path), self.store.read_unlocked()
+                self.store.defaults_unlocked(), self.store.read_unlocked()
             )
             if scan_unused:
                 return cleanup.unused(effective, confirmation)
             return cleanup.cleanup_pending(effective)
 
-    def _validate(self, config):
-        selected = config.get("selected_module")
-        if not isinstance(selected, Mapping):
-            raise ValueError("selected_module must be an object")
+    _validate = staticmethod(validate_config)
 
-        for group in PROVIDER_GROUPS:
-            provider = selected.get(group)
-            if not provider:
-                continue
-            available = config.get(group, {})
-            if not isinstance(available, Mapping) or provider not in available:
-                raise ValueError(f"Unknown {group} provider: {provider}")
-
-        server = config.get("server", {})
-        for key in ("port", "http_port"):
-            value = int(server.get(key, 0))
-            if not 1 <= value <= 65535:
-                raise ValueError(f"server.{key} must be between 1 and 65535")
-
-        settings_config = server.get("settings", {})
-        if not isinstance(settings_config, Mapping):
-            raise ValueError("server.settings must be an object")
-        diagnostics_config = settings_config.get("diagnostics", {})
-        if not isinstance(diagnostics_config, Mapping):
-            raise ValueError("server.settings.diagnostics must be an object")
-        diagnostic_thresholds = diagnostics_config.get("thresholds_ms", {})
-        if not isinstance(diagnostic_thresholds, Mapping):
-            raise ValueError(
-                "server.settings.diagnostics.thresholds_ms must be an object"
-            )
-        unsupported_thresholds = sorted(
-            set(diagnostic_thresholds) - DIAGNOSTIC_THRESHOLD_KEYS
-        )
-        if unsupported_thresholds:
-            raise ValueError(
-                "Unsupported diagnostic threshold: "
-                f"{unsupported_thresholds[0]}"
-            )
-        for key, value in diagnostic_thresholds.items():
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(
-                    f"Diagnostic threshold {key} must be an integer"
-                )
-            if value < 1:
-                raise ValueError(
-                    f"Diagnostic threshold {key} must be at least 1 ms"
-                )
-
-        log_level = str(config.get("log", {}).get("log_level", "INFO")).upper()
-        if log_level not in {"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"}:
-            raise ValueError("log.log_level is not supported")
-
-        if int(config.get("asr_min_audio_ms", 300)) < 0:
-            raise ValueError("asr_min_audio_ms must not be negative")
-        if int(config.get("asr_audio_queue_max_frames", 200)) < 1:
-            raise ValueError("asr_audio_queue_max_frames must be at least 1")
-
-        soundbank_config = config.get("static_soundbank", {})
-        if not isinstance(soundbank_config, Mapping):
-            raise ValueError("static_soundbank must be an object")
-        soundbank_entries = soundbank_config.get("entries", {})
-        if not isinstance(soundbank_entries, Mapping):
-            raise ValueError("static_soundbank.entries must be an object")
-
-        normalized_phrases = {}
-        for phrase in soundbank_entries:
-            normalized = normalize_soundbank_text(phrase)
-            if not normalized:
-                raise ValueError("Soundbank phrase must contain matchable text")
-            previous = normalized_phrases.get(normalized)
-            if previous is not None:
-                raise ValueError(
-                    "Soundbank phrases normalize to the same key: "
-                    f"{previous!r} and {phrase!r}"
-                )
-            normalized_phrases[normalized] = phrase
-
-    def _write_atomic(self, config):
+    def _write_atomic(self, config, base_revision=None):
         # update() holds the store lock through read, validation and publication.
-        self.store.write_unlocked(config)
+        self.store.commit_unlocked(config, base_revision)

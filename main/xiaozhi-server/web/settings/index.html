@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=40" />
+    <link rel="stylesheet" href="/settings/styles.css?v=41" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -35,6 +35,7 @@
           <a href="#runtime"><span>08</span>Runtime</a>
           <a href="#integrations"><span>09</span>Integrations</a>
           <a href="#advanced"><span>10</span>Advanced</a>
+          <a href="#source"><span>11</span>Configuration Source</a>
         </nav>
 
         <div class="sidebar-live" aria-label="Live server status">
@@ -131,7 +132,7 @@
               <article class="panel">
                 <div class="panel-heading">
                   <div>
-                    <p class="eyebrow">Local override</p>
+                    <p class="eyebrow">Configuration source</p>
                     <h3>Configuration safety</h3>
                   </div>
                   <span class="line-icon">◇</span>
@@ -139,11 +140,31 @@
                 <ul class="check-list">
                   <li>Secrets remain masked in the browser</li>
                   <li>Writes are validated and atomic</li>
-                  <li>The previous configuration is kept as <code>.config.yaml.backup</code></li>
+                  <li>Local saves keep a backup; Drive saves publish a manifest after object verification</li>
                   <li>Runtime state changes only after restart</li>
                 </ul>
               </article>
             </div>
+          </section>
+
+          <section id="source" class="page-section">
+            <div class="section-heading">
+              <div><p class="eyebrow">Node configuration</p><h2>Configuration Source</h2></div>
+            </div>
+            <article class="panel config-source-panel">
+              <dl class="detail-list" id="sourceSummary"></dl>
+              <p class="section-copy" id="sourceSemantics"></p>
+              <button class="button secondary" id="syncSourceButton">Sync desired configuration</button>
+            </article>
+            <article class="panel config-source-panel">
+              <h3>Switch configuration source</h3>
+              <p class="section-copy">Google Drive must already contain a valid configuration and be configured in local data/bootstrap.yaml. Switching preserves each source independently and takes effect after restart.</p>
+              <div class="config-source-field">
+                <label for="sourceProvider">Provider</label>
+                <select id="sourceProvider"><option value="local">Local</option><option value="google_drive">Google Drive</option></select>
+              </div>
+              <button class="button secondary" id="switchSourceButton">Switch source after restart</button>
+            </article>
           </section>
 
           <section id="diagnostics" class="page-section">
@@ -440,6 +461,6 @@
       </div>
     </div>
 
-    <script type="module" src="/settings/app.js?v=43"></script>
+    <script type="module" src="/settings/app.js?v=45"></script>
   </body>
 </html>

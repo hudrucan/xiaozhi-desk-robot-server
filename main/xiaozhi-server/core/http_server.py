@@ -12,6 +12,7 @@ TAG = __name__
 class SimpleHttpServer:
     def __init__(self, config: dict, request_restart=None, memory_provider=None):
         self.config = config
+        self.ready = asyncio.Event()
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config)
@@ -91,6 +92,12 @@ class SimpleHttpServer:
                                 "/api/settings", self.settings_handler.handle_put
                             ),
                             web.post(
+                                "/api/settings/source", self.settings_handler.handle_source
+                            ),
+                            web.post(
+                                "/api/settings/sync", self.settings_handler.handle_sync
+                            ),
+                            web.post(
                                 "/api/settings/restart",
                                 self.settings_handler.handle_restart,
                             ),
@@ -154,6 +161,7 @@ class SimpleHttpServer:
                 await runner.setup()
                 site = web.TCPSite(runner, host, port)
                 await site.start()
+                self.ready.set()
 
                 # Keep the service alive until the task is cancelled.
                 while True:

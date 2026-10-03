@@ -16,7 +16,7 @@ import {
   renderResources,
   renderSidebarLive,
 } from "./resources.js";
-import { $, clone, labelFor, state, toast } from "./shared.js";
+import { $, clone, labelFor, state, toast, escapeHtml } from "./shared.js";
 
 const PAGE_IDS = [
   "overview",
@@ -29,20 +29,109 @@ const PAGE_IDS = [
   "runtime",
   "integrations",
   "advanced",
+  "source",
 ];
 const STATUS_SCOPES = { overview: "overview", diagnostics: "diagnostics" };
 
 function renderAll() {
   renderOverview();
+  renderSource();
   renderConfiguration();
   renderSoundbank();
   renderMemory();
   renderDiagnostics();
   renderLogs();
   renderSidebarLive();
-  $("#configPath").textContent = state.configPath || "data/.config.yaml";
+  $("#configPath").textContent = state.configurationSource.config_provider === "google_drive"
+    ? `Desired: ${state.configPath} · Active/cache: local disk`
+    : `Desired + active: ${state.configPath || "data/.config.yaml"}`;
   $("#restartPanel").classList.toggle("hidden", !state.restartRequired);
   updateDirtyState();
+}
+
+function renderSource() {
+  const source = state.configurationSource;
+  const rows = [
+    ["Current provider", source.config_provider === "google_drive" ? "Google Drive" : "Local"],
+    ["Node ID", source.node_id],
+    ...(source.config_provider === "google_drive" ? [
+      ["Desired environment", source.environment],
+      ["Desired role", source.role],
+      ["Active environment", source.active_environment],
+      ["Active role", source.active_role],
+      ["Runtime revision", source.runtime_revision],
+      ["Runtime source", source.runtime_source],
+    ] : []),
+    ["Desired revision", source.desired_revision],
+    ["Active revision", source.active_revision],
+    ["Sync state", source.sync_state],
+    ["Sync status", source.sync_status],
+    ["Conflict", source.conflict ? "Reload required" : "None"],
+    ["Last sync", source.last_sync],
+    ["Last error", source.last_error],
+    ["Desired source", source.source],
+    ["Active source", source.active_source],
+    ["Desired cache", source.cache_path],
+    ["Pending provider", source.pending_provider],
+  ];
+  $("#sourceSummary").innerHTML = rows.map(([label, value]) =>
+    `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd></div>`).join("");
+  $("#sourceSemantics").textContent = source.config_provider === "google_drive"
+    ? "Drive is the desired source of truth. Local disk holds the desired cache and the active snapshot. Offline startup uses only the active snapshot as runtime last-known-good. Save publishes desired configuration; restart applies it to this node."
+    : "Local configuration is the source of truth for desired and active configuration. Save preserves atomic local writes; runtime changes use the existing restart flow.";
+  $("#sourceProvider").value = source.pending_provider || source.config_provider || "local";
+  $("#switchSourceButton").disabled = Boolean(source.pending_provider);
+  $("#syncSourceButton").disabled = Boolean(source.pending_provider);
+}
+
+async function syncSource() {
+  if (soundbankAuthoringBusy() || state.soundbankSaving) {
+    toast("Wait for soundbank authoring to finish before syncing.", true);
+    return;
+  }
+  if (Object.keys(state.patch).length > 0 && !window.confirm(
+    "Sync will discard your unsaved edits and load the latest desired configuration. Continue?"
+  )) return;
+  $("#syncSourceButton").disabled = true;
+  try {
+    const response = await fetch("/api/settings/sync", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    const payload = await response.json();
+    if (payload.configuration_source) state.configurationSource = payload.configuration_source;
+    if (!response.ok) throw new Error(payload.error || "Sync failed");
+    if (!await loadSettings()) throw new Error("Sync succeeded, but settings reload failed. Reload before saving.");
+    state.soundbankRetiredDrafts.clear();
+    toast("Desired configuration synced. Active configuration changes after restart.");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    renderSource();
+  }
+}
+
+async function switchSource() {
+  if (Object.keys(state.patch).length || soundbankAuthoringBusy() || state.soundbankSaving) {
+    toast("Save or discard edits and finish soundbank authoring before switching sources.", true);
+    return;
+  }
+  $("#switchSourceButton").disabled = true;
+  try {
+    const response = await fetch("/api/settings/source", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config_provider: $("#sourceProvider").value }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Source switch failed");
+    state.configurationSource = payload.configuration_source;
+    state.restartRequired = true;
+    renderAll();
+    toast("Source selected. Restart to apply it; configuration has not been copied between sources.");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    renderSource();
+  }
 }
 
 function activeStatusScope() {
@@ -110,7 +199,7 @@ function restartStatusPolling() {
 
 function updateDirtyState() {
   const dirty = Object.keys(state.patch).length > 0;
-  $("#saveButton").disabled = !dirty;
+  $("#saveButton").disabled = !dirty || Boolean(state.configurationSource.pending_provider);
   $("#discardButton").disabled = !dirty;
   $("#saveState").textContent = dirty ? "Unsaved changes" : "No unsaved changes";
 }
@@ -125,6 +214,8 @@ async function loadSettings() {
     state.patch = {};
     state.configuredSecrets = new Set(payload.configured_secrets || []);
     state.configPath = payload.config_path;
+    state.configurationSource = payload.configuration_source || {};
+    state.baseRevision = state.configurationSource.desired_revision;
     state.startupSoundbankDirectory = payload.soundbank_runtime_directory
       || payload.config?.static_soundbank?.directory
       || "data/soundbank";
@@ -137,9 +228,11 @@ async function loadSettings() {
     state.restartRequired = Boolean(payload.restart_required);
     $("#apiStatus").textContent = "Ready";
     renderAll();
+    return true;
   } catch (error) {
     $("#apiStatus").textContent = "Unavailable";
     toast(`Could not load settings: ${error.message}`, true);
+    return false;
   }
 }
 
@@ -158,14 +251,26 @@ async function saveSettings() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         config: state.patch,
+        base_revision: state.baseRevision,
         soundbank_draft_id: state.soundbankDraftId,
         soundbank_retired_drafts: [...state.soundbankRetiredDrafts],
       }),
     });
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Save failed");
+    if (!response.ok) {
+      if (payload.configuration_source) {
+        state.configurationSource = payload.configuration_source;
+        renderSource();
+      }
+      if (response.status === 409) {
+        throw new Error("Configuration conflict. Your edits are retained. Sync to reload the latest desired configuration, then re-enter your changes.");
+      }
+      throw new Error(payload.error || "Save failed");
+    }
     state.config = payload.config;
     state.configPath = payload.config_path;
+    state.configurationSource = payload.configuration_source || {};
+    state.baseRevision = state.configurationSource.desired_revision;
     state.original = clone(payload.config);
     state.patch = {};
     state.soundbankRetiredDrafts.clear();
@@ -287,6 +392,8 @@ $("#saveButton").addEventListener("click", saveSettings);
 $("#discardButton").addEventListener("click", discardChanges);
 $("#restartButton").addEventListener("click", restartServer);
 $("#restartNowButton").addEventListener("click", restartServer);
+$("#syncSourceButton").addEventListener("click", syncSource);
+$("#switchSourceButton").addEventListener("click", switchSource);
 initializeConfiguration(updateDirtyState);
 initializeMemory();
 initializeLogs();
