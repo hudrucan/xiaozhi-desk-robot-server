@@ -378,6 +378,24 @@ class GoogleDriveConfigStore(ConfigStore):
         return CloudMemoryStore(self.bootstrap, self.transport,
                                 self.cache_dir.parent / "cloud-memory", provider)
 
+    def verify_provisioning_readiness(self, source_memory):
+        """Live verification without cache writes, materialization or boot selection."""
+        with self.thread_lock:
+            self._load_cache()
+            snapshot, _ = self._cloud_snapshot()
+            effective = self._runtime_config(snapshot, self._repo_defaults())
+            self.soundbank_assets.verify_remote(effective, compare_local=True)
+            memory = self._memory_backend(effective)
+            if memory is None:
+                require_memory_match(source_memory, None)
+                memory_revision = None
+            else:
+                payload = memory.preflight(source_memory=source_memory)
+                if payload["manifest"]["writer_node_id"] != self.bootstrap["node_id"]:
+                    raise ConfigUnavailable("Cloud Memory writer differs; provisioning cannot claim readiness")
+                memory_revision = payload["manifest"]["revision"]
+            return snapshot["payload"]["manifest"]["revision"], memory_revision, effective
+
     def memory_storage(self, provider_config):
         if (self.memory_store is None or self.runtime_snapshot is None
                 or memory_path(provider_config) != self.memory_store.path):

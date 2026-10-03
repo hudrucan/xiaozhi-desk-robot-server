@@ -71,6 +71,10 @@ Never publish/share these files publicly. Put the resulting IDs and local
 credential path into
 `data/bootstrap.yaml`, keeping `config_provider: local` initially.
 
+The initializer above creates a new Config source and imports configuration and
+secrets only. For an existing folder/manifest, use the full-state provisioning
+command below to reconcile Config, Soundbank and explicit Memory before switching.
+
 In Settings → **Configuration Source**, select Google Drive and click **Switch
 source after restart**. The candidate's `validate_runtime_readiness()` requires
 a live Drive refresh, the current node assignment, current repo defaults and
@@ -92,7 +96,89 @@ is insufficient: a new node must complete an online startup before it can boot
 offline.
 
 V1 source switching assumes one administrator and pre-provisioned sources.
-It has no migration wizard or automatic local-to-cloud conflict resolution.
+It has no migration wizard or automatic conflict resolution between differing
+Local and Cloud Memory datasets.
+
+## Full-state provisioning into an existing source
+
+Keep `config_provider: local` and the existing `node_id`, Drive folder ID,
+Config manifest ID and credential path in bootstrap. The folder must be accessible
+to the same OAuth app with `drive.file`; provisioning checks its write capability
+without broadening the scope or creating another Config source.
+
+From the repository root:
+
+```bash
+main/xiaozhi-server/.venv/bin/python scripts/provision_cloud_state.py --from-local
+```
+
+Optional `--bootstrap` and `--local-config` select the bootstrap file and Local
+override root. Source configuration uses the Local config store, including
+sectioned `config.d`. This offline CLI imports the committed Local configuration.
+When the provisioning function receives an existing Local store with a runtime
+snapshot, it instead uses that snapshot's defaults and overrides, preserving
+Save-without-Apply semantics. Neither path changes the running provider.
+
+Provisioning has four ordered stages:
+
+1. Validate Local configuration, secrets, every retained sound asset and its P3
+   contract, and all explicit-memory device scopes with the lossless parser.
+   Read and validate the existing Cloud topology, node assignment, revision,
+   folder access and any existing Memory authority before uploading anything.
+2. Reconcile only this node's overrides using the existing Settings candidate
+   preparation and CAS-last publication. Keep global/environment/role semantics,
+   other nodes and assignments. Persist node-local secrets before publication;
+   Cloud configuration contains references only. Upload and verify canonical
+   WAV/MP3/P3 and optimized P3 assets with pointers at their file-owning layers.
+   Shared layers can gain dependent asset pointers without pinning inherited
+   filenames into this node. Files owned only by repository defaults receive an
+   explicit node file override so their pointers have a persisted owner.
+3. For selected `mem_local_explicit`, seed a canonical immutable snapshot with
+   every Local device scope, including inactive records and empty scopes. Verify
+   download/hash/schema, then create and exactly verify a Memory manifest at
+   revision 1 with bootstrap `node_id` as writer. Device IDs remain scope keys.
+   Non-explicit Memory creates and requires no Memory authority.
+4. Verify final live configuration, resolved secrets, remote asset bytes against
+   Local files, and exact Memory contents/writer through a read-only verifier.
+   Only then publish bootstrap using its durable writer, adding the Memory ID
+   when applicable and keeping `config_provider: local`.
+
+Local configuration, Memory YAML, sound files, deployment caches and active LKG
+are not overwritten. Private node-local secrets and a reference-only provisioning
+receipt are the only persistence needed before final bootstrap publication.
+Final verification does not call runtime preparation, materialization, Memory
+sync, source switching or `mark_applied()`.
+
+An identical rerun refreshes the live state, reuses valid asset pointers and
+matching secret references, and avoids a new Config revision or second Memory
+authority. Existing Memory with matching exact contents and writer is reused at
+its current revision, including revisions greater than 1. Differing contents,
+another writer, invalid/missing referenced objects or incompatible inherited
+configuration require explicit reconciliation; they are never replaced silently.
+In particular, recursive layers cannot delete a shared key absent from Local, so
+that case fails rather than changing the persisted layer format or shared scope.
+
+Config and Memory are separate transactions. A successful Config CAS remains
+authoritative if later Memory or bootstrap publication fails; Local remains
+runnable and bootstrap does not declare completion. Failed asset publication or
+Config CAS cannot publish Memory readiness. Immutable orphan objects are retained;
+provisioning never rolls back a committed Config manifest or runs remote GC.
+
+The source-bound receipt under `data/cloud-provisioning/` contains IDs and a
+checksum, never secret/configuration/Memory contents. A returned Memory manifest
+ID is saved before verification and bootstrap publication. Reruns strictly
+validate that authority after transient verification or bootstrap-write failures.
+A durable creation-intent receipt is written before manifest upload: if the
+upload response is lost or the returned ID cannot be persisted, rerun stops for
+explicit recovery instead of creating another authority. Recover the remote
+manifest ID and the receipt/bootstrap metadata only after inspecting the outcome;
+do not remove a pending receipt and blindly repeat creation.
+
+The complete lifecycle is: run Local normally → explicitly provision all required
+Cloud datasets → verify readiness → continue running Local → select Google Drive
+in Settings and switch source after restart → restart → materialize verified
+Soundbank/Memory caches during Cloud startup → call `mark_applied()` only after
+both listeners start. Provisioning reports readiness but never stages the switch.
 
 ## Cloud State: explicit Memory V1
 
@@ -114,10 +200,10 @@ memory manifest metadata.
 Cloud explicit memory requires the local-only
 `google_drive.memory_manifest_file_id` bootstrap field. Missing/invalid metadata
 rejects runtime preparation and source-switch readiness safely, with no Local
-memory fallback. **Creating/seeding a remote memory manifest is not implemented
-by this phase or `init_cloud_config.py`; it belongs to the upcoming full-state
-provisioning task.** The manifest must already exist and reference an immutable
-canonical JSON snapshot:
+memory fallback. `provision_cloud_state.py --from-local` creates and verifies the
+initial authority in the existing folder, then publishes its ID to Local bootstrap.
+`init_cloud_config.py` does not seed Memory. At Cloud startup the manifest must
+already exist and reference an immutable canonical JSON snapshot:
 
 ```json
 {
@@ -447,11 +533,12 @@ metadata does not change local saved/runtime/draft protections or cleanup journa
 There is no automatic remote deletion/GC: retired immutable objects remain usable
 by another node's active/LKG revision.
 
-This implements only the soundbank portion of Cloud State. Cloud Memory,
-`data/.memory.yaml` synchronization and full-state provisioning/migration remain
-out of scope. `init_cloud_config.py --from-local` still imports config metadata
-and secrets only; it does not migrate sound assets. Topology administration does
-not publish local sound binaries; use cloud Settings Save for that operation.
+Full-state provisioning publishes retained Local sound assets through this same
+Settings preparation path. `init_cloud_config.py --from-local` imports config
+metadata and secrets only. Topology administration does not publish local sound
+binaries; use Cloud Settings Save or explicit full-state provisioning. Generic
+data-directory synchronization and automatic background migration remain outside
+the Cloud State workflow.
 
 ## Node-local secrets
 

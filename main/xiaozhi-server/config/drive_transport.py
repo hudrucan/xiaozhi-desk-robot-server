@@ -11,6 +11,7 @@ from config.config_store import ConfigConflict, ConfigUnavailable
 
 
 class DriveTransport(Protocol):
+    def validate_folder(self, folder_id: str) -> None: ...
     def create_folder(self, name: str) -> str: ...
     def read_manifest(self, file_id: str) -> tuple[bytes, str]: ...
     def download(self, file_id: str) -> bytes: ...
@@ -93,6 +94,16 @@ class GoogleDriveTransport:
         if not isinstance(value, dict):
             raise ConfigUnavailable("Invalid Drive folder metadata")
         return self._id(value.get("id"))
+
+    def validate_folder(self, folder_id):
+        """Read-only provisioning preflight with the existing drive.file scope."""
+        value = self._request("GET", f"{self.API}/{self._id(folder_id)}", params={
+            "fields": "id,mimeType,capabilities(canAddChildren)", "supportsAllDrives": "true",
+        }).json()
+        if (not isinstance(value, dict) or value.get("id") != folder_id
+                or value.get("mimeType") != "application/vnd.google-apps.folder"
+                or value.get("capabilities", {}).get("canAddChildren") is not True):
+            raise ConfigUnavailable("Drive folder is unavailable for provisioning")
 
     def upload_immutable(self, folder_id, content, name):
         return self._upload(folder_id, content, name, "application/json")

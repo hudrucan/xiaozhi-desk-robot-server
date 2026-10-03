@@ -238,6 +238,7 @@ class CloudMemoryStore:
             envelope, _ = self._fetch(self._known_current())
             require_memory_match(source_memory, envelope["payload"]["snapshot"]["scopes"],
                                  allow_empty_source=True)
+            return copy.deepcopy(envelope["payload"])
 
     def scopes(self):
         with self.thread_lock:

@@ -165,14 +165,15 @@ class LocalConfigStoreAdapter(ConfigStore):
 
     def source_memory_unlocked(self):
         from config.memory_reconciliation import explicit_memory_config, read_local_memory
-        # A saved-but-unapplied Local config must not replace the running
-        # provider's path or normalization settings during reconciliation.
-        if self.runtime_snapshot is not None:
-            layers = self.runtime_snapshot[1]
-            effective = merge_configs(layers["defaults"], layers["overrides"])
-        else:
-            effective = merge_configs(self.defaults_unlocked(), self.read_unlocked())
+        layers = self.source_layers_unlocked()
+        effective = merge_configs(layers["defaults"], layers["overrides"])
         return read_local_memory(explicit_memory_config(effective))
+
+    def source_layers_unlocked(self):
+        """Applied runtime semantics when present; committed Local layers for CLI."""
+        if self.runtime_snapshot is not None:
+            return copy.deepcopy(self.runtime_snapshot[1])
+        return {"defaults": self.defaults_unlocked(), "overrides": self.read_unlocked()}
 
     def commit_unlocked(self, config, base_revision=None):
         self.validator(merge_configs(self.defaults_unlocked(), config))

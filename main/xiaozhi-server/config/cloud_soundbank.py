@@ -176,50 +176,124 @@ class CloudSoundbankAssets:
         except (ConfigUnavailable, OSError, ValueError, TypeError, KeyError, SoundbankError):
             raise ConfigUnavailable("Active cloud soundbank assets unavailable; runtime was not applied") from None
 
+    @staticmethod
+    def _publication_plan(updated, node_id, repo_defaults):
+        layers = updated["layers"]
+        if not centralized(updated):
+            sources = [None, layers["defaults"], layers["overrides"]]
+            baseline = {}
+        else:
+            node = layers["nodes"][node_id]
+            global_layer = layers["global"]
+            if legacy_centralized(updated):
+                sources = [None, global_layer["defaults"], global_layer["overrides"]]
+                baseline = {}
+            else:
+                sources = [None, global_layer]
+                baseline = repo_defaults
+            for name, scope in (("environment", "environments"), ("role", "roles")):
+                if node[name] is not None:
+                    sources.append(layers[scope][node[name]])
+            sources.append(node["overrides"])
+
+        def stamp(value, owner):
+            # Scalar replacement and recursive map merges mirror merge_configs.
+            if isinstance(value, Mapping):
+                return {key: stamp(child, owner) for key, child in value.items()}
+            return owner
+
+        origins = stamp(baseline, 0)
+        for owner, source in enumerate(sources[1:], 1):
+            origins = merge_configs(origins, stamp(source, owner))
+        defaults, overrides = resolve_layers(updated, node_id, repo_defaults)
+        effective = merge_configs(defaults, overrides)
+        destinations = []
+        for phrase, entry in effective.get("static_soundbank", {}).get("entries", {}).items():
+            origin = origins["static_soundbank"]["entries"][phrase]
+            canonical_owner = origin if isinstance(origin, int) else origin.get("file", 0)
+            owners = [(False, canonical_owner)]
+            if soundbank_entry_optimized(entry) is not None:
+                owners.append((True, origin.get("optimized", {}).get("file", 0)))
+            for optimized, owner in owners:
+                destinations.append((phrase, optimized, owner))
+        return sources, destinations, effective
+
+    def provisioning_overrides(self, obj, node_id, repo_defaults):
+        """Explicitly own only repo-default files, leaving cloud file owners intact."""
+        updated = copy.deepcopy(obj)
+        _, destinations, effective = self._publication_plan(updated, node_id, repo_defaults)
+        layer = (updated["layers"]["nodes"][node_id]["overrides"] if centralized(updated)
+                 else updated["layers"]["overrides"])
+        for phrase, optimized, owner in destinations:
+            if owner:
+                continue
+            entries = layer.setdefault("static_soundbank", {}).setdefault("entries", {})
+            entry = entries.setdefault(phrase, {})
+            source = effective["static_soundbank"]["entries"][phrase]
+            if optimized:
+                entry.setdefault("optimized", {})["file"] = soundbank_entry_filename(source["optimized"])
+            else:
+                entry["file"] = soundbank_entry_filename(source)
+        return layer
+
+    @staticmethod
+    def _known_pointers(*configs):
+        known = {}
+        for config in configs:
+            for _, _, _, metadata, _ in _assets(config, pointer_only=True):
+                pointer = metadata["cloud"]
+                validate_soundbank_cloud_pointer(pointer)
+                known[(pointer["sha256"], pointer["size"])] = dict(pointer)
+        return known
+
+    def _validated_local_assets(self, config):
+        validate_soundbank_cloud_metadata(config)
+        self._check_runtime_root(resolve_soundbank_root(config.get("static_soundbank", {})))
+        pending = []
+        for root, filename, _, metadata, optimized in _assets(config):
+            path = resolve_soundbank_asset(root, filename, require_file=True)
+            content = path.read_bytes()
+            if not content:
+                raise ValueError("Cloud soundbank asset is empty")
+            _validate_p3(content, path, config, metadata, optimized)
+            pending.append((root, path, metadata, optimized, content, (_digest(content), len(content))))
+        return pending
+
+    def validate_local(self, config, current_config=None):
+        """Read-only provisioning preflight, including every pointer we may reuse."""
+        pending = self._validated_local_assets(config)
+        if current_config is not None:
+            known = self._known_pointers(current_config, config)
+            for _, path, metadata, optimized, _, identity in pending:
+                pointer = known.get(identity)
+                if pointer is not None:
+                    content = self.transport.download(pointer["file_id"])
+                    if not _matches(content, pointer):
+                        raise ValueError("Existing soundbank pointer verification failed")
+                    _validate_p3(content, path, config, metadata, optimized)
+
+    def verify_remote(self, config, *, compare_local=False):
+        """Verify complete cloud assets without caches or runtime materialization."""
+        validate_soundbank_cloud_metadata(config)
+        for root, filename, path, metadata, optimized in _assets(config):
+            pointer = metadata.get("cloud")
+            validate_soundbank_cloud_pointer(pointer)
+            content = self.transport.download(pointer["file_id"])
+            if not _matches(content, pointer):
+                raise ValueError("Remote soundbank verification failed")
+            _validate_p3(content, path, config, metadata, optimized)
+            if compare_local:
+                local = resolve_soundbank_asset(root, filename, require_file=True).read_bytes()
+                if content != local:
+                    raise ValueError("Soundbank source changed during provisioning")
+
     def publish_layers(self, obj, node_id, repo_defaults, current_config):
         """Put storage metadata at each effective file's owner, never pin inheritance."""
         try:
             updated = copy.deepcopy(obj)
-            layers = updated["layers"]
-            if not centralized(updated):
-                sources = [None, layers["defaults"], layers["overrides"]]
-                baseline = {}
-            else:
-                node = layers["nodes"][node_id]
-                global_layer = layers["global"]
-                if legacy_centralized(updated):
-                    sources = [None, global_layer["defaults"], global_layer["overrides"]]
-                    baseline = {}
-                else:
-                    sources = [None, global_layer]
-                    baseline = repo_defaults
-                for name, scope in (("environment", "environments"), ("role", "roles")):
-                    if node[name] is not None:
-                        sources.append(layers[scope][node[name]])
-                sources.append(node["overrides"])
-
-            def stamp(value, owner):
-                # Scalar replacement and recursive map merges mirror merge_configs.
-                if isinstance(value, Mapping):
-                    return {key: stamp(child, owner) for key, child in value.items()}
-                return owner
-
-            origins = stamp(baseline, 0)
-            for owner, source in enumerate(sources[1:], 1):
-                origins = merge_configs(origins, stamp(source, owner))
-            defaults, overrides = resolve_layers(updated, node_id, repo_defaults)
-            effective = merge_configs(defaults, overrides)
-            destinations = []
-            for phrase, entry in effective.get("static_soundbank", {}).get("entries", {}).items():
-                origin = origins["static_soundbank"]["entries"][phrase]
-                canonical_owner = origin if isinstance(origin, int) else origin.get("file", 0)
-                owners = [(False, canonical_owner)]
-                if soundbank_entry_optimized(entry) is not None:
-                    owners.append((True, origin.get("optimized", {}).get("file", 0)))
-                for optimized, owner in owners:
-                    if not owner:
-                        raise ValueError("Repo-default soundbank assets need an explicit cloud file override")
-                    destinations.append((phrase, optimized, owner))
+            sources, destinations, effective = self._publication_plan(updated, node_id, repo_defaults)
+            if any(not owner for _, _, owner in destinations):
+                raise ValueError("Repo-default soundbank assets need an explicit cloud file override")
             published = self.publish(effective, current_config)
             for phrase, optimized, owner in destinations:
                 entries = sources[owner]["static_soundbank"]["entries"]
@@ -250,21 +324,9 @@ class CloudSoundbankAssets:
             for phrase, entry in list(entries.items()):
                 if isinstance(entry, str):
                     entries[phrase] = {"file": soundbank_entry_filename(entry)}
-            known = {}
-            for source in (current_config, candidate):
-                for _, _, _, metadata, _ in _assets(source, pointer_only=True):
-                    pointer = metadata["cloud"]
-                    validate_soundbank_cloud_pointer(pointer)
-                    known[(pointer["sha256"], pointer["size"])] = dict(pointer)
+            known = self._known_pointers(current_config, candidate)
             # Validate all local references before uploading any of the transaction.
-            pending = []
-            for root, filename, path, metadata, optimized in _assets(candidate):
-                path = resolve_soundbank_asset(root, filename, require_file=True)
-                content = path.read_bytes()
-                if not content:
-                    raise ValueError("Cloud soundbank asset is empty")
-                _validate_p3(content, path, candidate, metadata, optimized)
-                pending.append((root, path, metadata, optimized, content, (_digest(content), len(content))))
+            pending = self._validated_local_assets(candidate)
             for root, path, metadata, optimized, content, identity in pending:
                 pointer = known.get(identity)
                 if pointer is None:
