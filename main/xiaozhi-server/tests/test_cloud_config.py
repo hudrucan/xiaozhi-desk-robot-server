@@ -146,7 +146,8 @@ class CloudConfigTests(unittest.TestCase):
 
     def test_missing_bootstrap_defaults_to_local_without_creating_file(self):
         path = self.directory / "bootstrap.yaml"
-        self.assertEqual(load_bootstrap(path), {"config_provider": "local", "node_id": "mac-dev"})
+        with patch("config.node_identity.socket.gethostname", return_value="deskbox"):
+            self.assertEqual(load_bootstrap(path), {"config_provider": "local", "node_id": "deskbox"})
         self.assertFalse(path.exists())
 
     def test_bootstrap_rejects_missing_cloud_metadata(self):

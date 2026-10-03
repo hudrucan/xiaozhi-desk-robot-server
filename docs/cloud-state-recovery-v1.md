@@ -129,8 +129,13 @@ main/xiaozhi-server/.venv/bin/python scripts/restore_cloud_node.py \
 
 Authorize Google, select the source/node if multiple exist, and enter the recovery
 passphrase through hidden input. Single-source/single-node selection can be
-automatic. `node_id` is the existing logical identity, never a generated hostname.
-Explicit selection skips those selection prompts:
+automatic. With multiple nodes, enter an existing node ID from the displayed list.
+If the normalized hostname exactly matches a listed node, the prompt shows
+`Node ID [deskbox]:`; Enter accepts that default. Otherwise the prompt displays
+the hostname for context and requires a valid existing ID. Unknown IDs reject
+restore; it never creates a node. `node_id` remains the existing logical identity,
+and a saved bootstrap identity is unchanged by hostname changes.
+Explicit `--node-id` skips the node prompt:
 
 ```bash
 main/xiaozhi-server/.venv/bin/python scripts/restore_cloud_node.py \

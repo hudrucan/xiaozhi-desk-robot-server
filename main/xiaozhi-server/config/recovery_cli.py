@@ -5,6 +5,7 @@ import getpass
 import warnings
 
 from config.cloud_recovery import RecoveryError
+from config.node_identity import hostname_node_id
 
 
 class SafeParser(argparse.ArgumentParser):
@@ -39,5 +40,24 @@ def choose(items, title, *, input_fn=input):
         if not 1 <= selection <= len(items):
             raise RecoveryError()
         return items[selection - 1]
+    except Exception:
+        raise RecoveryError() from None
+
+
+def choose_node(nodes, *, input_fn=input):
+    if not nodes:
+        raise RecoveryError()
+    if len(nodes) == 1:
+        return next(iter(nodes))
+    hostname = hostname_node_id()
+    print("Available nodes:")
+    for node in sorted(nodes):
+        print(f"  {node}")
+    prompt = f"Node ID [{hostname}]: " if hostname in nodes else f"Node ID (hostname: {hostname}): "
+    try:
+        node = input_fn(prompt).strip() or hostname
+        if node not in nodes:
+            raise RecoveryError()
+        return node
     except Exception:
         raise RecoveryError() from None

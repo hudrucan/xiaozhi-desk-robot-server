@@ -9,7 +9,7 @@ sys.path.insert(0, str(PROJECT))
 from config.cloud_recovery import RecoveryError, discover_sources
 from config.cloud_restore import restore_cloud_node, select_node, select_source
 from config.drive_transport import GoogleDriveTransport
-from config.recovery_cli import SafeParser, choose, recovery_passphrase
+from config.recovery_cli import SafeParser, choose, choose_node, recovery_passphrase
 from config.recovery_oauth import obtain_credentials
 
 
@@ -44,7 +44,7 @@ def main(argv=None, *, credential_loader=obtain_credentials, transport_factory=G
         print(f"Cloud State source: {source.descriptor['label']} | source_id: {source.descriptor['source_id']}")
         node_id = args.node_id
         if node_id is None:
-            node_id = choose(sorted(source.descriptor["nodes"]), "Available nodes:", input_fn=input_fn)
+            node_id = choose_node(source.descriptor["nodes"], input_fn=input_fn)
         node = select_node(source, node_id)
         print(f"Node: {node}")
         passphrase = recovery_passphrase(prompt=prompt)

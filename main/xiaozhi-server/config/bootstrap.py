@@ -9,6 +9,7 @@ import yaml
 
 from config.config_loader import get_project_dir
 from config.local_config import LocalConfigStore
+from config.node_identity import hostname_node_id
 
 PROVIDERS = {"local", "google_drive"}
 _BOOTSTRAP_LOCK = threading.RLock()
@@ -17,7 +18,9 @@ _BOOTSTRAP_LOCK = threading.RLock()
 def load_bootstrap(path=None):
     path = Path(path or Path(get_project_dir()) / "data/bootstrap.yaml")
     value = LocalConfigStore._read_object(path) if path.exists() else {}
-    bootstrap = {"config_provider": "local", "node_id": "mac-dev", **value}
+    bootstrap = {"config_provider": "local", **value}
+    if "node_id" not in bootstrap:
+        bootstrap["node_id"] = hostname_node_id()
     if not isinstance(bootstrap["config_provider"], str) or bootstrap["config_provider"] not in PROVIDERS:
         raise ValueError("Unsupported config_provider in local bootstrap")
     if not isinstance(bootstrap["node_id"], str) or not bootstrap["node_id"].strip():

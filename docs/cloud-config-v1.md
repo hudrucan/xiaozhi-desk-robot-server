@@ -5,6 +5,12 @@ Local mode exactly as before: reference defaults plus private `.config.yaml` /
 `config.d/` overrides, including recoverable atomic Settings transactions.
 Firmware and audio/provider execution are unchanged.
 
+When bootstrap is absent or omits `node_id`, the default comes from the system
+hostname: trim surrounding whitespace and one trailing dot, preserve case and
+validate ASCII DNS labels (up to 192 characters overall). Invalid/empty/unavailable
+hostnames use deterministic `local-node`. Reading bootstrap writes no files.
+Once `node_id` is saved, hostname changes never rename that logical identity.
+
 ## Local bootstrap
 
 Create `main/xiaozhi-server/data/bootstrap.yaml` only when configuration source
