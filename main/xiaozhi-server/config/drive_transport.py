@@ -11,6 +11,8 @@ from config.config_store import ConfigConflict, ConfigUnavailable
 
 
 class DriveTransport(Protocol):
+    def list_state_descriptors(self) -> list[dict]: ...
+    def create_state_descriptor(self, folder_id: str, content: bytes, source_id: str) -> str: ...
     def validate_folder(self, folder_id: str) -> None: ...
     def create_folder(self, name: str) -> str: ...
     def read_manifest(self, file_id: str) -> tuple[bytes, str]: ...
@@ -113,12 +115,45 @@ class GoogleDriveTransport:
             raise ValueError("Unsupported soundbank blob MIME type")
         return self._upload(folder_id, content, name, mime_type)
 
-    def _upload(self, folder_id, content, name, mime_type):
+    def list_state_descriptors(self):
+        """Discover private app metadata, never arbitrary filenames or broader scope."""
+        result, seen = [], set()
+        params = {"q": "trashed = false and properties has { key='xiaozhi_cloud_state' and value='v1' and visibility='PRIVATE' }",
+                  "fields": "items(id,properties),nextPageToken,incompleteSearch", "maxResults": 100,
+                  "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"}
+        while True:
+            page = self._request("GET", self.API, params=params).json()
+            if not isinstance(page, dict) or page.get("incompleteSearch") or not isinstance(page.get("items"), list):
+                raise ConfigUnavailable("Cloud State discovery unavailable")
+            for item in page["items"]:
+                properties = {prop["key"]: prop.get("value") for prop in item.get("properties", [])
+                              if prop.get("visibility") == "PRIVATE"}
+                if properties.get("xiaozhi_cloud_state") != "v1":
+                    raise ConfigUnavailable("Invalid Cloud State discovery metadata")
+                result.append({"file_id": self._id(item.get("id")), "source_id": properties.get("source_id")})
+            token = page.get("nextPageToken")
+            if not token:
+                return result
+            if not isinstance(token, str) or token in seen:
+                raise ConfigUnavailable("Cloud State discovery unavailable")
+            seen.add(token)
+            params = {**params, "pageToken": token}
+
+    def create_state_descriptor(self, folder_id, content, source_id):
+        return self._upload(folder_id, content, "cloud-state.json", "application/json", properties=[
+            {"key": "xiaozhi_cloud_state", "value": "v1", "visibility": "PRIVATE"},
+            {"key": "source_id", "value": str(uuid.UUID(source_id)), "visibility": "PRIVATE"},
+        ])
+
+    def _upload(self, folder_id, content, name, mime_type, *, properties=None):
         boundary = "config_" + uuid.uuid4().hex
-        metadata = json.dumps({
+        metadata_value = {
             "title": name, "mimeType": mime_type,
             "parents": [{"id": self._id(folder_id)}],
-        }).encode()
+        }
+        if properties is not None:
+            metadata_value["properties"] = properties
+        metadata = json.dumps(metadata_value).encode()
         body = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n".encode()
                 + metadata + f"\r\n--{boundary}\r\nContent-Type: {mime_type}\r\n\r\n".encode()
                 + content + f"\r\n--{boundary}--\r\n".encode())

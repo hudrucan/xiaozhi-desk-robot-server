@@ -396,6 +396,17 @@ class GoogleDriveConfigStore(ConfigStore):
                 memory_revision = payload["manifest"]["revision"]
             return snapshot["payload"]["manifest"]["revision"], memory_revision, effective
 
+    def verify_recovery_readiness(self):
+        """Fresh-box live validation; no Local source or runtime/cache writes."""
+        with self.thread_lock:
+            self._load_cache()
+            snapshot, _ = self._cloud_snapshot()
+            effective = self._runtime_config(snapshot, self._repo_defaults())
+            self.soundbank_assets.verify_remote(effective)
+            memory = self._memory_backend(effective)
+            memory_revision = memory.preflight()["manifest"]["revision"] if memory is not None else None
+            return snapshot["payload"]["manifest"]["revision"], memory_revision
+
     def memory_storage(self, provider_config):
         if (self.memory_store is None or self.runtime_snapshot is None
                 or memory_path(provider_config) != self.memory_store.path):

@@ -101,6 +101,11 @@ Local and Cloud Memory datasets.
 
 ## Full-state provisioning into an existing source
 
+For discoverable source metadata, encrypted node-secret backups and fresh Linux
+recovery, see [Cloud State Recovery V1](cloud-state-recovery-v1.md). The provisioning
+CLI now confirms a hidden recovery passphrase and publishes that metadata after
+dataset verification; source switching remains a separate explicit action.
+
 Keep `config_provider: local` and the existing `node_id`, Drive folder ID,
 Config manifest ID and credential path in bootstrap. The folder must be accessible
 to the same OAuth app with `drive.file`; provisioning checks its write capability
@@ -582,12 +587,15 @@ reference is committed through normal CAS. The active revision keeps its previou
 secret until Apply succeeds. Named references are also immutable: rotate with a
 new name, then change the cloud reference. Missing local references fail startup
 safely with a generic error; values and reference names are not logged by this
-backend. The local secret store must be backed up privately alongside bootstrap
-and active LKG; caches alone are insufficient for recovery.
+backend. Caches alone are insufficient for secret recovery. Publish the encrypted
+node-secret backup described in [Cloud State Recovery V1](cloud-state-recovery-v1.md),
+or retain a private local backup; refresh recovery metadata after adding references.
 
 A failed upload/CAS can leave unused local secret entries and orphan reference-only
 Drive objects. Entries are retained so active LKG references continue to resolve;
-no automatic secret garbage collection or encryption backend is implemented.
+no automatic secret garbage collection is implemented. Runtime node-secrets remain
+the existing local plaintext store; encryption applies to the optional remote
+recovery bundle, not a redesigned runtime secret provider.
 
 ## Topology administration
 

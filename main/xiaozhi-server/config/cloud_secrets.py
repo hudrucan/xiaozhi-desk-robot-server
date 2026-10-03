@@ -21,6 +21,13 @@ REFERENCE = re.compile(r"\$\{secret:([A-Za-z0-9_][A-Za-z0-9_.-]{0,191})\}")
 _LOCK = threading.RLock()
 
 
+def _unique_secret_object(pairs):
+    value = dict(pairs)
+    if len(value) != len(pairs):
+        raise ValueError("Invalid local secret dataset")
+    return value
+
+
 def placeholder(value):
     if value is None or value == "":
         return True
@@ -124,6 +131,18 @@ class LocalSecretStore(SecretProvider):
                 # Neither values nor reference names are included in errors.
                 raise ValueError("Required node-local secret is unavailable")
             return values[name]
+
+    def export_dataset(self):
+        """Exact named-reference dataset for authenticated recovery backups."""
+        with self.locked():
+            value = (json.loads(self.path.read_bytes(), object_pairs_hook=_unique_secret_object) if self.path.exists()
+                     else {"node_id": self.node_id, "values": {}})
+            if (not isinstance(value, dict) or set(value) != {"node_id", "values"}
+                    or value["node_id"] != self.node_id or not isinstance(value["values"], dict)
+                    or any(not isinstance(name, str) or not REFERENCE.fullmatch("${secret:" + name + "}")
+                           or not isinstance(secret, str) for name, secret in value["values"].items())):
+                raise ValueError("Invalid local secret dataset")
+            return copy.deepcopy(value)
 
     def put_many(self, values):
         if not values:

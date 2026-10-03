@@ -54,6 +54,7 @@ class ProvisioningResult:
     config_revision: int
     memory_revision: int | None
     memory_reused: bool
+    descriptor_file_id: str | None = None
 
 
 def semantic_config(config):
@@ -206,7 +207,8 @@ def _seed_memory(bootstrap, transport, provider, snapshot, receipt):
 
 
 def provision_cloud_state(local_store, *, bootstrap_path=None, transport=None, secret_provider=None,
-                          receipt_path=None, runtime_cache_dir=None):
+                          receipt_path=None, runtime_cache_dir=None, recovery_passphrase=None,
+                          source_label=None, rotate_recovery_passphrase=False):
     """Provision a pre-existing Config source. Returns only safe status metadata."""
     try:
         if not isinstance(local_store, LocalConfigStoreAdapter) or local_store.bootstrap["config_provider"] != "local":
@@ -317,11 +319,25 @@ def provision_cloud_state(local_store, *, bootstrap_path=None, transport=None, s
                 _existing_memory(cloud_bootstrap, transport, runtime_cache_dir.parent / "cloud-memory",
                                  memory_provider, snapshot)
             final_bootstrap = {**cloud_bootstrap, "config_provider": "local"}
+            descriptor_id = None
+            if recovery_passphrase is not None:
+                from config.cloud_recovery import RecoveryConflict, authority_source_id, publish_recovery_descriptor
+                recovery_bootstrap = copy.deepcopy(final_bootstrap)
+                if memory_revision is None:
+                    recovery_bootstrap["google_drive"].pop("memory_manifest_file_id", None)
+                try:
+                    descriptor_id = publish_recovery_descriptor(recovery_bootstrap, transport, secrets,
+                        recovery_passphrase, label=source_label, rotate=rotate_recovery_passphrase,
+                        default_path=local_store.default_path, cache_dir=runtime_cache_dir,
+                        creation_receipt=receipt.path.parent / (authority_source_id(drive["folder_id"], drive["manifest_file_id"])
+                                                               + ".descriptor.json"))
+                except RecoveryConflict:
+                    raise ProvisioningConflict() from None
             try:
                 save_bootstrap(final_bootstrap, bootstrap_path)
             except Exception:
                 raise BootstrapPublicationError() from None
-            return ProvisioningResult(config_revision, memory_revision, memory_reused)
+            return ProvisioningResult(config_revision, memory_revision, memory_reused, descriptor_id)
     except ProvisioningError:
         raise
     except ConfigConflict:
