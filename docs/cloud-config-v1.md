@@ -16,6 +16,7 @@ node_id: mac-dev
 google_drive:
   folder_id: PRIVATE_FOLDER_ID
   manifest_file_id: MANIFEST_FILE_ID
+  memory_manifest_file_id: MEMORY_MANIFEST_FILE_ID # Only for Cloud explicit memory
   credentials_path: data/drive-credentials.json
 ```
 
@@ -92,6 +93,113 @@ offline.
 
 V1 source switching assumes one administrator and pre-provisioned sources.
 It has no migration wizard or automatic local-to-cloud conflict resolution.
+
+## Cloud State: explicit Memory V1
+
+The three datasets have independent persistence lifecycles:
+
+| Dataset | Authority and runtime behavior |
+| --- | --- |
+| Config | Revisioned desired/active snapshots; only applied `active.json` is offline runtime LKG. |
+| Soundbank | Immutable binary assets with the content-addressed `data/cloud-soundbank/objects` cache. |
+| Memory | Independent revisioned hot snapshots, device scopes, one authoritative writer and reader caches. |
+
+In Local mode, `mem_local_explicit` keeps its configured YAML path and all existing
+remember/forget/update/delete/recall behavior. It constructs no Cloud Memory store,
+creates no Cloud Memory cache, and makes no Drive calls. Cloud Memory activates
+only when `config_provider: google_drive` and the selected Memory provider's type
+is `mem_local_explicit` (including provider aliases). Other Memory types need no
+memory manifest metadata.
+
+Cloud explicit memory requires the local-only
+`google_drive.memory_manifest_file_id` bootstrap field. Missing/invalid metadata
+rejects runtime preparation and source-switch readiness safely, with no Local
+memory fallback. **Creating/seeding a remote memory manifest is not implemented
+by this phase or `init_cloud_config.py`; it belongs to the upcoming full-state
+provisioning task.** The manifest must already exist and reference an immutable
+canonical JSON snapshot:
+
+```json
+{
+  "schema_version": 1,
+  "revision": 1,
+  "writer_node_id": "deskbox",
+  "snapshot": {"file_id": "IMMUTABLE_SNAPSHOT_ID", "sha256": "64_lowercase_hex_characters"}
+}
+```
+
+The snapshot has exact shape `{"schema_version":1,"scopes":{"DEVICE_ID":[]}}`.
+Each entry retains the explicit-memory fields `id`, `content`, `type`, `project`,
+`entities`, `tags`, `importance`, `pinned`, `active`, `supersedes`, `created_at`,
+and `updated_at`. Cloud validation requires already-normalized entries, preserves
+inactive/superseded records and rejects malformed data. It verifies canonical
+bytes, SHA, source identity, and revision rollback/reuse before accepting state.
+The immutable objects contain memory content; keep the Drive source private.
+
+Memory scopes remain **robot/device IDs** (`role_id=self.device_id`). Server
+`node_id` is used only to authorize writes against the manifest's
+`writer_node_id`. Other nodes can recall/list and sync, but cannot mutate. V1 has
+no leases, promotion or multi-writer merge. Memory configuration (limits, aliases,
+recall settings and budgets) stays in Cloud Config; memory records never advance
+Config revision or require restart.
+
+Cloud runtime preparation syncs Memory before constructing providers. It writes
+`data/cloud-memory/current.json`, bound to the folder ID, memory manifest ID,
+full manifest and snapshot, with an envelope checksum. It then atomically
+materializes the configured YAML path (default `data/.memory.yaml`), preserving
+the device-scope root format. Cache/YAML writes use temp, file fsync, replace and
+directory fsync. Memory has one hot `current` revision, without desired/active
+slots. Settings GET refreshes it; `sync_memory()` also provides explicit hot
+refresh. Successful sync replaces runtime entries immediately. Recall/list use
+the validated local state and make no network calls themselves.
+
+If Drive is unavailable or a remote snapshot is invalid, a validated current
+cache can restore YAML and serve reads. An actual manifest read/CAS conflict or
+revision rollback/reuse is surfaced, never treated as a successful refresh.
+Offline with missing/corrupt/source-mismatched current cache fails safely;
+arbitrary old YAML is never Cloud authority. Reader and writer nodes both have
+offline reads. All Cloud writes require live Drive; there is no outbox or
+optimistic local mutation.
+
+All four provider mutations share one transaction for both Settings and the
+`manage_memory` tool: provider lock → Cloud Memory process/file lock → strict
+live refresh → writer/base revision check → clone full snapshot → edit candidate
+device scope → validate/canonicalize → immutable upload → download/SHA validation
+→ manifest If-Match CAS **last**. Only successful CAS updates current cache,
+YAML and live entries. Pre-CAS failures leave those unchanged. Failed CAS may
+leave an immutable orphan; no remote GC is performed. If cache/YAML persistence
+fails after CAS, remote success is reported, committed state remains in memory,
+and `cache_error` plus a generic diagnostic requests sync recovery. Do not retry
+the mutation as uncommitted. A process crash before local persistence needs
+online recovery from the authoritative manifest.
+
+Settings maps read-only/conflict to 409 and unavailable to 503. The tool catches
+storage failures for both remember and forget. Errors omit Drive IDs, paths,
+credentials and provider exception details. Additive inspection fields include
+`storage_source`, `memory_revision`, `writable`, `writer_node_id`, `sync_state`
+and `storage_error`.
+
+Source switching supplies the **currently running source's** memory state to
+candidate readiness. Local → Cloud uses the active Local effective config,
+including provider aliases, configured path and entry limits. Saved-but-unapplied
+settings do not replace that source config. The Cloud destination YAML is not
+used as the source. A non-explicit Local source ignores unrelated stale YAML.
+Missing/empty explicit Local memory is allowed; meaningful source records must
+match the remote snapshot exactly after representation-neutral YAML parsing.
+Source normalization is checked with Local settings, and any change to persisted
+values (truncation, metadata repair, missing defaults or entry filtering) requires
+explicit provisioning/reconciliation. Cloud limits cannot truncate Local records
+into a false match.
+
+Cloud → Local compares the committed hot snapshot with the Local candidate's
+actual selected provider/path and settings. The materialized path may be reused;
+a different path passes only if its records match without loss. Missing,
+mismatched or lossy destination state rejects switching while meaningful Cloud
+records exist. A post-CAS YAML write failure does not make stale YAML authoritative
+for this comparison. Readiness never copies/migrates memory, creates a Memory
+cache or writes either memory path. Bootstrap source selection is published only
+after all readiness checks pass. Subsequent Local edits trigger the same guard
+when switching back to Cloud.
 
 ## Storage and transactions
 

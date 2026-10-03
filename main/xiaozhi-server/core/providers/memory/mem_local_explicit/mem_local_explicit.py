@@ -4,40 +4,21 @@ import re
 import tempfile
 import threading
 import uuid
-from datetime import datetime
 from difflib import SequenceMatcher
 
 import yaml
 
 from config.config_loader import get_project_dir
+from core.memory_schema import EntryNormalization, _MEMORY_TYPES
 from ..base import MemoryProviderBase, logger
 
 
 TAG = __name__
 _FILE_LOCK = threading.RLock()
-_MEMORY_TYPES = {
-    "fact",
-    "preference",
-    "decision",
-    "project_state",
-    "hardware",
-    "todo",
-    "session",
-}
-_METADATA_FIELDS = {
-    "type",
-    "project",
-    "entities",
-    "tags",
-    "importance",
-    "pinned",
-    "active",
-    "supersedes",
-}
 
 
-class MemoryProvider(MemoryProviderBase):
-    """Explicit, deterministic local memory backed by a YAML file."""
+class MemoryProvider(EntryNormalization, MemoryProviderBase):
+    """Explicit deterministic memory with Local YAML or a synced Cloud backend."""
 
     def __init__(self, config, summary_memory=None):
         super().__init__(config)
@@ -86,6 +67,8 @@ class MemoryProvider(MemoryProviderBase):
         self._entries_lock = threading.RLock()
         self.entries = []
         self.scope_source = None
+        self.storage = None
+        self.memory_revision = None
 
     def init_memory(self, role_id, llm, summary_memory=None, **kwargs):
         with self._entries_lock:
@@ -328,72 +311,90 @@ class MemoryProvider(MemoryProviderBase):
         )
         return signal_score + importance_score + recency_score, rank_key
 
+    def bind_storage(self, storage):
+        """Local binds None; Cloud runtime preparation supplies a synced backend."""
+        with self._entries_lock:
+            self.storage = storage
+            if storage is not None:
+                self.memory_revision = storage.status()["memory_revision"]
+                self.entries = self._load_entries()
+
+    def sync_memory(self):
+        with self._entries_lock:
+            if self.storage is not None:
+                self.storage.sync()
+                self.memory_revision = self.storage.status()["memory_revision"]
+                self.entries = self._load_entries()
+
+    def _mutate_entries(self, transform):
+        with self._entries_lock:
+            if self.storage is not None:
+                result, entries = self.storage.mutate(
+                    self.role_id, self.memory_revision, transform
+                )
+                self.entries = entries[-self.max_entries :]
+                self.memory_revision = self.storage.status()["memory_revision"]
+                return result
+            # Keep Local's YAML save and externally observable failure behavior.
+            candidate = copy.deepcopy(self.entries)
+            result = transform(candidate)
+            if result:
+                self.entries = candidate
+                self._save_entries()
+            return result
+
     def remember(self, content: str, **metadata):
         normalized = self._normalize_content(content)
         if not normalized:
             return False
-
         normalized_metadata = self._normalize_metadata(metadata)
-        with self._entries_lock:
+
+        def transform(entries):
             supersedes = normalized_metadata.get("supersedes")
             if supersedes:
-                old_entry = self._find_entry(supersedes)
+                old_entry = self._find_entry(supersedes, entries)
                 if old_entry is None:
                     raise ValueError("Superseded memory was not found")
                 old_entry["active"] = False
                 old_entry["updated_at"] = self._now()
-
             matching_entry = next(
-                (
-                    entry
-                    for entry in self.entries
-                    if not supersedes
-                    and entry.get("content", "").casefold() == normalized.casefold()
-                    and self._same_text(
-                        entry.get("project"), normalized_metadata.get("project")
-                    )
-                ),
+                (entry for entry in entries
+                 if not supersedes
+                 and entry.get("content", "").casefold() == normalized.casefold()
+                 and self._same_text(entry.get("project"), normalized_metadata.get("project"))),
                 None,
             )
             if matching_entry is not None:
                 matching_entry.update(normalized_metadata)
                 matching_entry["updated_at"] = self._now()
-                self.entries.remove(matching_entry)
-                self.entries.append(matching_entry)
+                entries.remove(matching_entry)
+                entries.append(matching_entry)
             else:
                 timestamp = self._now()
-                entry = self._normalize_entry(
-                    {
-                        "id": uuid.uuid4().hex,
-                        "content": normalized,
-                        **normalized_metadata,
-                        "created_at": timestamp,
-                        "updated_at": timestamp,
-                    }
-                )
-                self.entries.append(entry)
-                self.entries = self.entries[-self.max_entries :]
+                entries.append(self._normalize_entry({
+                    "id": uuid.uuid4().hex, "content": normalized, **normalized_metadata,
+                    "created_at": timestamp, "updated_at": timestamp,
+                }))
+                entries[:] = entries[-self.max_entries :]
+            return True
 
-            self._save_entries()
-        return True
+        return self._mutate_entries(transform)
 
     def forget(self, query: str):
         normalized = self._normalize_for_search(query)
         if not normalized:
             return 0
 
-        with self._entries_lock:
+        def transform(entries):
             changed = 0
-            for entry in self.entries:
-                if entry.get("active") and normalized in self._normalize_for_search(
-                    entry.get("content")
-                ):
+            for entry in entries:
+                if entry.get("active") and normalized in self._normalize_for_search(entry.get("content")):
                     entry["active"] = False
                     entry["updated_at"] = self._now()
                     changed += 1
-            if changed:
-                self._save_entries()
-        return changed
+            return changed
+
+        return self._mutate_entries(transform)
 
     def list_entries(self):
         with self._entries_lock:
@@ -407,6 +408,7 @@ class MemoryProvider(MemoryProviderBase):
         """Return editable memory state for the local settings UI."""
         with self._entries_lock:
             return {
+                **(self.storage.status() if self.storage is not None else {"storage_source": "local"}),
                 "initialized": bool(self.role_id),
                 "device_id": self.role_id,
                 "scope_source": self.scope_source,
@@ -421,17 +423,17 @@ class MemoryProvider(MemoryProviderBase):
         normalized = self._normalize_content(content)
         if not normalized:
             raise ValueError("Memory content cannot be empty")
-
         normalized_metadata = self._normalize_metadata(metadata)
-        with self._entries_lock:
-            entry = self._find_entry(entry_id)
+
+        def transform(entries):
+            entry = self._find_entry(entry_id, entries)
             if entry is None:
                 return False
             supersedes = normalized_metadata.get("supersedes")
             if supersedes and supersedes == entry.get("id"):
                 raise ValueError("A memory cannot supersede itself")
             if supersedes:
-                old_entry = self._find_entry(supersedes)
+                old_entry = self._find_entry(supersedes, entries)
                 if old_entry is None:
                     raise ValueError("Superseded memory was not found")
                 old_entry["active"] = False
@@ -439,98 +441,21 @@ class MemoryProvider(MemoryProviderBase):
             entry["content"] = normalized
             entry.update(normalized_metadata)
             entry["updated_at"] = self._now()
-            self.entries.remove(entry)
-            self.entries.append(entry)
-            self._save_entries()
-        return True
+            entries.remove(entry)
+            entries.append(entry)
+            return True
+
+        return self._mutate_entries(transform)
 
     def delete_entry(self, entry_id: str):
-        with self._entries_lock:
-            kept = [entry for entry in self.entries if entry.get("id") != str(entry_id)]
-            if len(kept) == len(self.entries):
+        def transform(entries):
+            kept = [entry for entry in entries if entry.get("id") != str(entry_id)]
+            if len(kept) == len(entries):
                 return False
-            self.entries = kept
-            self._save_entries()
-        return True
+            entries[:] = kept
+            return True
 
-    def _normalize_entry(self, entry):
-        timestamp = self._now()
-        return {
-            "id": str(entry.get("id") or uuid.uuid4().hex),
-            "content": self._normalize_content(entry.get("content")),
-            "type": self._normalize_type(entry.get("type", "fact")),
-            "project": self._normalize_optional_text(entry.get("project")),
-            "entities": self._normalize_string_list(entry.get("entities", [])),
-            "tags": self._normalize_string_list(entry.get("tags", [])),
-            "importance": self._normalize_importance(entry.get("importance", 3)),
-            "pinned": self._as_bool(entry.get("pinned", False)),
-            "active": self._as_bool(entry.get("active", True)),
-            "supersedes": self._normalize_optional_text(entry.get("supersedes")),
-            "created_at": str(entry.get("created_at") or timestamp),
-            "updated_at": str(
-                entry.get("updated_at") or entry.get("created_at") or timestamp
-            ),
-        }
-
-    def _normalize_metadata(self, metadata):
-        provided = {key: value for key, value in metadata.items() if key in _METADATA_FIELDS}
-        normalized = {}
-        if "type" in provided:
-            normalized["type"] = self._normalize_type(provided["type"])
-        if "project" in provided:
-            normalized["project"] = self._normalize_optional_text(provided["project"])
-        if "entities" in provided:
-            normalized["entities"] = self._normalize_string_list(provided["entities"])
-        if "tags" in provided:
-            normalized["tags"] = self._normalize_string_list(provided["tags"])
-        if "importance" in provided:
-            normalized["importance"] = self._normalize_importance(provided["importance"])
-        if "pinned" in provided:
-            normalized["pinned"] = self._as_bool(provided["pinned"])
-        if "active" in provided:
-            normalized["active"] = self._as_bool(provided["active"])
-        if "supersedes" in provided:
-            normalized["supersedes"] = self._normalize_optional_text(provided["supersedes"])
-        return normalized
-
-    def _normalize_content(self, content):
-        normalized = " ".join(str(content or "").split()).strip()
-        return normalized[: self.entry_max_chars].rstrip()
-
-    @staticmethod
-    def _normalize_optional_text(value):
-        normalized = " ".join(str(value or "").split()).strip()
-        return normalized or None
-
-    @staticmethod
-    def _normalize_string_list(value):
-        if isinstance(value, str):
-            value = value.split(",")
-        if not isinstance(value, (list, tuple, set)):
-            return []
-        result = []
-        seen = set()
-        for item in value:
-            normalized = " ".join(str(item or "").split()).strip()
-            key = normalized.casefold()
-            if normalized and key not in seen:
-                seen.add(key)
-                result.append(normalized)
-        return result
-
-    @staticmethod
-    def _normalize_importance(value):
-        try:
-            return min(5, max(1, int(value)))
-        except (TypeError, ValueError):
-            return 3
-
-    @staticmethod
-    def _normalize_type(value):
-        normalized = str(value or "fact").strip().casefold()
-        if normalized not in _MEMORY_TYPES:
-            raise ValueError(f"Unsupported memory type: {normalized}")
-        return normalized
+        return self._mutate_entries(transform)
 
     def _normalize_for_search(self, value):
         terms = re.findall(r"\w+", str(value or "").casefold(), flags=re.UNICODE)
@@ -551,12 +476,6 @@ class MemoryProvider(MemoryProviderBase):
 
     def _same_text(self, left, right):
         return self._normalize_for_search(left) == self._normalize_for_search(right)
-
-    @staticmethod
-    def _as_bool(value):
-        if isinstance(value, str):
-            return value.strip().lower() not in {"0", "false", "no", "off", ""}
-        return bool(value)
 
     def _render_entry(self, entry):
         metadata = [f"id={entry.get('id')}", f"type={entry.get('type', 'fact')}"]
@@ -584,9 +503,10 @@ class MemoryProvider(MemoryProviderBase):
             used_chars += added_chars
         return "\n".join(rendered)
 
-    def _find_entry(self, entry_id):
+    def _find_entry(self, entry_id, entries=None):
         return next(
-            (entry for entry in self.entries if entry.get("id") == str(entry_id)),
+            (entry for entry in (self.entries if entries is None else entries)
+             if entry.get("id") == str(entry_id)),
             None,
         )
 
@@ -596,6 +516,18 @@ class MemoryProvider(MemoryProviderBase):
         return self._entries_for_role(self._read_memory_file(), self.role_id)
 
     def _read_memory_file(self):
+        if self.storage is not None:
+            validated = self.storage.scopes()
+            try:
+                with open(self.memory_path, "r", encoding="utf-8") as memory_file:
+                    materialized = yaml.safe_load(memory_file)
+                if materialized == validated:
+                    return materialized
+            except (OSError, yaml.YAMLError):
+                pass
+            # After a successful remote CAS, a failed YAML write cannot hide the
+            # committed state from reconnects. Arbitrary YAML is never authority.
+            return validated
         with _FILE_LOCK:
             if not os.path.exists(self.memory_path):
                 return {}
@@ -664,7 +596,3 @@ class MemoryProvider(MemoryProviderBase):
             finally:
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
-
-    @staticmethod
-    def _now():
-        return datetime.now().astimezone().isoformat(timespec="seconds")

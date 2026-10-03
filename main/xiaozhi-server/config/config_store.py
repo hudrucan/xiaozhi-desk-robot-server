@@ -85,11 +85,30 @@ class ConfigStore(ABC):
     def refresh_unlocked(self, strict=False):
         return self.read_unlocked()
 
-    def validate_runtime_readiness(self):
+    def memory_storage(self, provider_config):
+        """Local explicit memory keeps its existing YAML persistence."""
+        return None
+
+    def source_memory_unlocked(self):
+        """Non-explicit sources have no memory dataset to reconcile."""
+        return None
+
+    def validate_runtime_readiness(self, source_memory=None):
         """Validate a candidate without selecting runtime or marking it active."""
         with self.locked():
             self.refresh_unlocked(strict=True)
-            self.validator(merge_configs(self.defaults_unlocked(), self.read_unlocked()))
+            effective = merge_configs(self.defaults_unlocked(), self.read_unlocked())
+            self.validator(effective)
+            if source_memory is not None:
+                from config.memory_reconciliation import (
+                    explicit_memory_config, read_local_memory, require_memory_match,
+                )
+                from core.memory_storage import MemoryStorageError
+                try:
+                    destination = read_local_memory(explicit_memory_config(effective))
+                    require_memory_match(source_memory, destination)
+                except MemoryStorageError as error:
+                    raise ConfigUnavailable(str(error)) from None
 
     def prepare_runtime(self):
         with self.locked():
@@ -144,6 +163,17 @@ class LocalConfigStoreAdapter(ConfigStore):
             "defaults": self.defaults_unlocked(), "overrides": self.read_unlocked(),
         }, allow_unicode=True, sort_keys=True).encode("utf-8"))
 
+    def source_memory_unlocked(self):
+        from config.memory_reconciliation import explicit_memory_config, read_local_memory
+        # A saved-but-unapplied Local config must not replace the running
+        # provider's path or normalization settings during reconciliation.
+        if self.runtime_snapshot is not None:
+            layers = self.runtime_snapshot[1]
+            effective = merge_configs(layers["defaults"], layers["overrides"])
+        else:
+            effective = merge_configs(self.defaults_unlocked(), self.read_unlocked())
+        return read_local_memory(explicit_memory_config(effective))
+
     def commit_unlocked(self, config, base_revision=None):
         self.validator(merge_configs(self.defaults_unlocked(), config))
         self.local.write_unlocked(config)
@@ -189,7 +219,12 @@ def stage_provider_switch(provider):
         candidate = create_config_store(candidate_bootstrap)
         if provider == "local" and not candidate.local.local_path.is_file():
             raise ValueError("Create data/.config.yaml before switching to Local")
-        candidate.validate_runtime_readiness()
+        from core.memory_storage import MemoryStorageError
+        try:
+            source_memory = store.source_memory_unlocked()
+        except MemoryStorageError as error:
+            raise ConfigUnavailable(str(error)) from None
+        candidate.validate_runtime_readiness(source_memory=source_memory)
         save_bootstrap(candidate_bootstrap)
         store.pending_provider = provider
         return store.status_unlocked()

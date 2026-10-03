@@ -14,6 +14,9 @@ import portalocker
 from config.config_loader import get_project_dir, load_default_config, merge_configs
 from config.cloud_secrets import LocalSecretStore
 from config.cloud_soundbank import CloudSoundbankAssets
+from config.cloud_memory import CloudMemoryStore, explicit_memory_config, memory_path
+from config.memory_reconciliation import require_memory_match
+from core.memory_storage import MemoryConflict, MemoryStorageError, MemoryUnavailable
 from config.cloud_layers import (
     centralized, node_assignment, resolve_layers, update_node_overrides, validate_layers,
 )
@@ -88,6 +91,7 @@ class GoogleDriveConfigStore(ConfigStore):
         self.last_sync = None
         self.last_error = None
         self.sync_status = "not_synced"
+        self.memory_store = None
 
     def _repo_defaults(self):
         return load_default_config(self.default_path)
@@ -346,16 +350,45 @@ class GoogleDriveConfigStore(ConfigStore):
             raise ConfigUnavailable("Cloud runtime requires valid node-local secrets and configuration") from None
         return effective
 
-    def validate_runtime_readiness(self):
+    def source_memory_unlocked(self):
+        # The committed hot snapshot remains authoritative even after a
+        # post-CAS YAML persistence failure. Do not refresh or materialize here.
+        return self.memory_store.scopes() if self.memory_store is not None else None
+
+    def validate_runtime_readiness(self, source_memory=None):
         """Preflight requires live Drive and local secrets; it never selects a boot."""
         with self.locked():
             self.refresh_unlocked(strict=True)
-            self._runtime_config(self.desired_snapshot, self._repo_defaults())
+            effective = self._runtime_config(self.desired_snapshot, self._repo_defaults())
+            try:
+                memory = self._memory_backend(effective)
+                if memory is not None:
+                    memory.preflight(source_memory=source_memory)
+                else:
+                    require_memory_match(source_memory, None)
+            except MemoryConflict:
+                raise ConfigConflict(MemoryConflict.message) from None
+            except MemoryStorageError as error:
+                raise ConfigUnavailable(str(error)) from None
+
+    def _memory_backend(self, effective):
+        provider = explicit_memory_config(effective)
+        if provider is None:
+            return None
+        return CloudMemoryStore(self.bootstrap, self.transport,
+                                self.cache_dir.parent / "cloud-memory", provider)
+
+    def memory_storage(self, provider_config):
+        if (self.memory_store is None or self.runtime_snapshot is None
+                or memory_path(provider_config) != self.memory_store.path):
+            raise MemoryUnavailable()
+        return self.memory_store
 
     def prepare_runtime(self):
         with self.locked():
             self.runtime_snapshot = None
             self.runtime_source = None
+            self.memory_store = None
             self.refresh_unlocked()
             if self.cloud_synced:
                 snapshot = self.desired_snapshot
@@ -377,6 +410,14 @@ class GoogleDriveConfigStore(ConfigStore):
             if source == "active_lkg" and snapshot["payload"].get("repo_defaults_sha256") != fingerprint:
                 raise ConfigUnavailable("Active LKG is incompatible with current repo defaults; successful online startup required")
             effective = self._runtime_config(snapshot, repo_defaults)
+            try:
+                memory = self._memory_backend(effective)
+                if memory is not None:
+                    memory.sync()
+            except MemoryConflict:
+                raise ConfigConflict(MemoryConflict.message) from None
+            except MemoryStorageError as error:
+                raise ConfigUnavailable(str(error)) from None
             if source == "drive" and self.active_snapshot is not None:
                 active_defaults, active_overrides = self._resolve(self.active_snapshot["payload"]["object"], repo_defaults)
                 self.soundbank_assets.retain(merge_configs(active_defaults, active_overrides))
@@ -386,6 +427,7 @@ class GoogleDriveConfigStore(ConfigStore):
             )
             self.runtime_snapshot = copy.deepcopy(self.runtime_snapshot)
             self.runtime_source = source
+            self.memory_store = memory
             return effective
 
     def status_unlocked(self):

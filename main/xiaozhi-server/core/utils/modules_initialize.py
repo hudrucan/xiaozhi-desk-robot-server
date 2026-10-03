@@ -79,6 +79,11 @@ def initialize_modules(
             config["Memory"][select_memory_module],
             config.get("summaryMemory", None),
         )
+        if memory_type == "mem_local_explicit":
+            from config.config_store import get_config_store
+            modules["memory"].bind_storage(
+                get_config_store().memory_storage(config["Memory"][select_memory_module])
+            )
         logger.bind(tag=TAG).info(
             f"Component initialized: memory {select_memory_module}"
         )

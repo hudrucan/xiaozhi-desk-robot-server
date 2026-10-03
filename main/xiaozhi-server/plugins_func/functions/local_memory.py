@@ -1,4 +1,7 @@
+import asyncio
 from typing import TYPE_CHECKING
+
+from core.memory_storage import MemoryStorageError
 
 from plugins_func.register import Action, ActionResponse, ToolType, register_function
 
@@ -74,9 +77,10 @@ MANAGE_MEMORY_FUNCTION_DESC = {
 
 
 def _response(conn: "ConnectionHandler", key: str, default: str):
+    selected = conn.config.get("selected_module", {}).get("Memory", "mem_local_explicit")
     responses = (
         conn.config.get("Memory", {})
-        .get("mem_local_explicit", {})
+        .get(selected, {})
         .get("responses", {})
     )
     return str(responses.get(key, default))
@@ -84,7 +88,8 @@ def _response(conn: "ConnectionHandler", key: str, default: str):
 
 def _explicit_memory(conn: "ConnectionHandler"):
     selected_memory = conn.config.get("selected_module", {}).get("Memory")
-    if selected_memory != "mem_local_explicit":
+    provider_config = conn.config.get("Memory", {}).get(selected_memory, {})
+    if provider_config.get("type", selected_memory) != "mem_local_explicit":
         return None
     memory = getattr(conn, "memory", None)
     if not all(
@@ -133,7 +138,11 @@ async def manage_memory(
             if value is not None
         }
         try:
-            remembered = memory.remember(content, **metadata)
+            remembered = await asyncio.to_thread(memory.remember, content, **metadata)
+        except MemoryStorageError as error:
+            return ActionResponse(Action.ERROR, response=str(error))
+        except OSError:
+            return ActionResponse(Action.ERROR, response="Memory storage unavailable")
         except ValueError as error:
             return ActionResponse(Action.ERROR, response=str(error))
         if not remembered:
@@ -182,7 +191,12 @@ async def manage_memory(
             ),
         )
     elif normalized_action == "forget":
-        removed = memory.forget(content)
+        try:
+            removed = await asyncio.to_thread(memory.forget, content)
+        except MemoryStorageError as error:
+            return ActionResponse(Action.ERROR, response=str(error))
+        except OSError:
+            return ActionResponse(Action.ERROR, response="Memory storage unavailable")
         if removed:
             response = _response(conn, "forgotten", "I forgot that.")
         else:

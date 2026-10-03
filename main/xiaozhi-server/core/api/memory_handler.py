@@ -1,13 +1,29 @@
 import asyncio
 import ipaddress
+from functools import wraps
 
 from aiohttp import web
 
 from core.api.base_handler import BaseHandler
+from core.memory_storage import MemoryConflict, MemoryReadOnly, MemoryStorageError
+
+
+def storage_errors(handler):
+    @wraps(handler)
+    async def controlled(*args, **kwargs):
+        try:
+            return await handler(*args, **kwargs)
+        except (MemoryConflict, MemoryReadOnly) as error:
+            raise web.HTTPConflict(text=str(error)) from None
+        except MemoryStorageError as error:
+            raise web.HTTPServiceUnavailable(text=str(error)) from None
+        except OSError:
+            raise web.HTTPServiceUnavailable(text="Memory storage unavailable") from None
+    return controlled
 
 
 class MemoryHandler(BaseHandler):
-    """Expose the active explicit local-memory provider to the settings UI."""
+    """Expose the active explicit-memory provider to the settings UI."""
 
     def __init__(self, config, memory_provider):
         super().__init__(config)
@@ -63,7 +79,7 @@ class MemoryHandler(BaseHandler):
             return None
         return provider
 
-    async def _snapshot(self):
+    async def _snapshot(self, refresh=False):
         provider = self._supported_provider()
         selected = self.config.get("selected_module", {}).get("Memory")
         if provider is None:
@@ -76,6 +92,8 @@ class MemoryHandler(BaseHandler):
                 ),
                 "entries": [],
             }
+        if refresh and callable(getattr(provider, "sync_memory", None)):
+            await asyncio.to_thread(provider.sync_memory)
         if not getattr(provider, "role_id", None):
             select_stored_scope = getattr(provider, "select_stored_scope", None)
             if callable(select_stored_scope):
@@ -85,10 +103,12 @@ class MemoryHandler(BaseHandler):
         snapshot["selected_provider"] = selected
         return snapshot
 
+    @storage_errors
     async def handle_get(self, request):
         self._require_access(request)
-        return self._disable_cache(web.json_response(await self._snapshot()))
+        return self._disable_cache(web.json_response(await self._snapshot(refresh=True)))
 
+    @storage_errors
     async def handle_post(self, request):
         self._require_access(request)
         provider = await self._require_initialized_provider()
@@ -106,6 +126,7 @@ class MemoryHandler(BaseHandler):
             raise web.HTTPBadRequest(text="Memory content cannot be empty")
         return self._disable_cache(web.json_response(await self._snapshot()))
 
+    @storage_errors
     async def handle_put(self, request):
         self._require_access(request)
         provider = await self._require_initialized_provider()
@@ -126,6 +147,7 @@ class MemoryHandler(BaseHandler):
             raise web.HTTPNotFound(text="Memory entry was not found")
         return self._disable_cache(web.json_response(await self._snapshot()))
 
+    @storage_errors
     async def handle_delete(self, request):
         self._require_access(request)
         provider = await self._require_initialized_provider()
