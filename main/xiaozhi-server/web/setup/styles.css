@@ -28,6 +28,7 @@ input:not([type=file]), select { width: 100%; padding: 12px; color: var(--text);
 .drop-zone.dragging, :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 fieldset:disabled .drop-zone { cursor: default; }
 .hint, footer { font-size: 13px; color: var(--muted); margin-top: 16px; }
+.clone-warning { margin-top: 18px; padding: 14px 18px; border-left: 3px solid var(--accent); background: var(--bg); }
 details { margin: 18px 0 0; color: var(--muted); }
 details p { margin-top: 16px; }
 summary { cursor: pointer; }

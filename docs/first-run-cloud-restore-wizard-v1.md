@@ -3,7 +3,9 @@
 A fresh clone can start without local provider configuration. Run `python app.py`
 from `main/xiaozhi-server` after installing the server dependencies; open
 `http://localhost:8003/setup/`. This restores an existing recoverable logical node.
-It does not create a source/node or perform provisioning.
+It does not create a source or perform provisioning. Optional
+[Clone Node V1](clone-node-v1.md) creates a new node from an existing backup;
+existing-node restore remains the default.
 
 ## Browser flow
 
@@ -14,6 +16,9 @@ It does not create a source/node or perform provisioning.
 3. Choose the Cloud State source and node. One source selects automatically;
    an exact normalized-hostname node match wins, otherwise a single node selects
    automatically. Multiple unmatched nodes require an explicit selection.
+   To create a new node, select **Create a new node from selected backup** and
+   enter a new ID, prefilled from the hostname. Provider credentials and secrets
+   are copied intentionally; the UI states this before confirmation.
 4. Enter the recovery passphrase and click **Restore & Activate**. The password
    input clears on submission; neither passwords nor tokens are rendered back.
 5. After Config, Soundbank, Memory and Secrets show OK, click **Restart server**.

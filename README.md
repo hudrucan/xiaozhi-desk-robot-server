@@ -97,6 +97,8 @@ On a fresh clone, startup opens setup mode at `http://localhost:8003/setup/`.
 Use the [First-run Cloud Restore Wizard](docs/first-run-cloud-restore-wizard-v1.md)
 to upload the original Google Desktop OAuth JSON, authorize, select a Cloud
 source/node, enter the recovery passphrase, and restore/activate before restarting.
+Optionally [clone the selected backup into a new node ID](docs/clone-node-v1.md);
+the wizard explains that provider credentials and secrets are copied.
 SSH startup prints one tunnel command for both the UI and OAuth callback ports.
 Setup runs no robot runtime services and is always localhost-only.
 

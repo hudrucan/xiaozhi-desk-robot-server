@@ -10,7 +10,7 @@ from urllib.parse import unquote, urlsplit
 
 from aiohttp import web
 
-from config.cloud_recovery import RecoveryConflict, RecoveryError, discover_sources
+from config.cloud_recovery import RecoveryConflict, RecoveryError, RecoveryIdentityConflict, discover_sources
 from config.config_loader import get_project_dir
 from config.config_store import canonical_bytes
 from config.drive_transport import GoogleDriveTransport
@@ -68,12 +68,13 @@ async def setup_access(request, handler):
 
 class SetupHandler:
     def __init__(self, request_restart, *, data_dir=None, session_factory=OAuthLoopbackSession,
-                 transport_factory=GoogleDriveTransport, discover=discover_sources, restorer=None):
+                 transport_factory=GoogleDriveTransport, discover=discover_sources, restorer=None, cloner=None):
         self.data = Path(data_dir or Path(get_project_dir()) / "data")
         self.web_dir = Path(get_project_dir()) / "web/setup"
         self.request_restart = request_restart
         self.session_factory, self.transport_factory = session_factory, transport_factory
         self.discover, self.restorer = discover, restorer
+        self.cloner = cloner
         self._mutation = asyncio.Lock()
         self._jobs = set()
         self._oauth = self._oauth_task = None
@@ -127,10 +128,11 @@ class SetupHandler:
         return web.FileResponse(self.web_dir / name)
 
     async def handle_status(self, request):
+        from config.cloud_clone import clone_selection
         return _response({"setup_required": not self._completed, "completed": self._completed,
             "client_installed": (self.data / "oauth-client.json").is_file(),
             "credentials_installed": (self.data / "drive-credentials.json").is_file(),
-            "hostname": hostname_node_id()})
+            "hostname": hostname_node_id(), "clone_selection": await self._job(clone_selection, self.data)})
 
     def _install_client(self, content):
         temporary = None
@@ -234,12 +236,19 @@ class SetupHandler:
         # Recovery readiness needs asset validators, but opening the setup UI
         # must not import audio/runtime dependencies before this explicit step.
         from config.cloud_restore import restore_cloud_node, select_node, select_source
+        from config.cloud_clone import clone_cloud_node, clone_selection
 
         content, transport = self._transport()
         # Browser selection is never a descriptor authority. Rediscover at submit.
         source = select_source(self.discover(transport), body["source_id"])
         node = select_node(source, body["node_id"])
-        result = (self.restorer or restore_cloud_node)(source, node, body["passphrase"], content, transport, data_dir=self.data, activate=True)
+        if body.get("mode") == "clone":
+            result = (self.cloner or clone_cloud_node)(source, node, body["new_node_id"], body["passphrase"],
+                content, transport, data_dir=self.data)
+        else:
+            if clone_selection(self.data) is not None:
+                raise RecoveryIdentityConflict()
+            result = (self.restorer or restore_cloud_node)(source, node, body["passphrase"], content, transport, data_dir=self.data, activate=True)
         if result.provider != "google_drive":
             raise RecoveryError()
         finish_first_run(self.data)
@@ -256,11 +265,22 @@ class SetupHandler:
             if request.content_type != "application/json":
                 raise web.HTTPUnsupportedMediaType()
             body = await request.json()
-            if not isinstance(body, dict) or set(body) != {"source_id", "node_id", "passphrase"} or any(
+            keys = {"source_id", "node_id", "passphrase"}
+            clone = isinstance(body, dict) and body.get("mode") == "clone"
+            if clone:
+                keys |= {"mode", "new_node_id"}
+            if not isinstance(body, dict) or set(body) != keys or any(
                 not isinstance(body[key], str) or not body[key] or len(body[key]) > limit
-                for key, limit in (("source_id", 36), ("node_id", 192), ("passphrase", 4096))
+                for key, limit in (("source_id", 36), ("node_id", 192), ("passphrase", 4096)) +
+                    ((("new_node_id", 192),) if clone else ())
             ):
                 raise web.HTTPBadRequest()
+            if clone:
+                from config.cloud_clone import validate_new_node_id
+                try:
+                    validate_new_node_id(body["new_node_id"])
+                except RecoveryError:
+                    raise web.HTTPBadRequest(reason="Enter a valid new node ID using letters, digits, dots, underscores or hyphens.") from None
             try:
                 summary = await self._job(self._restore, body)
             finally:

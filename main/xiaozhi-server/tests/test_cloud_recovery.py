@@ -1,5 +1,6 @@
 """Encrypted recovery/discovery and format-box simulation; fake Drive only."""
 
+import base64
 import copy
 import errno
 import importlib.util
@@ -232,7 +233,9 @@ class CloudRecoveryTests(unittest.TestCase):
             with self.assertRaises(RecoveryError):
                 decrypt_dataset(canonical_bytes(transplanted), source_id, node, PASSPHRASE)
         envelope = json.loads(content)
-        envelope["cipher"]["ciphertext"] = "A" + envelope["cipher"]["ciphertext"][1:]
+        ciphertext = bytearray(base64.b64decode(envelope["cipher"]["ciphertext"]))
+        ciphertext[0] ^= 1
+        envelope["cipher"]["ciphertext"] = base64.b64encode(ciphertext).decode("ascii")
         with self.assertRaises(RecoveryError):
             decrypt_dataset(canonical_bytes(envelope), source.descriptor["source_id"], "test-node", PASSPHRASE)
 

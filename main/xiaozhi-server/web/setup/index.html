@@ -10,7 +10,7 @@
 <body>
   <main>
     <header><span class="eyebrow">XIAOZHI · FIRST RUN</span><h1>Restore your Desk Robot</h1>
-      <p>Connect Google Drive, choose your existing node, and recover its Cloud State.</p></header>
+      <p>Connect Google Drive and recover an existing node, or create a new node from its backup.</p></header>
     <ol class="steps" aria-label="Setup progress">
       <li id="step-google">1 · Google</li><li id="step-cloud">2 · Cloud State</li>
       <li id="step-recovery">3 · Recovery</li><li id="step-finished">4 · Finished</li>
@@ -37,13 +37,24 @@
       <p class="hint">On SSH, keep the two-port tunnel printed at startup open. Login opens in a new tab.</p>
     </section>
     <section id="cloud-panel" hidden>
-      <h2>Choose Cloud State</h2><p>Restore an existing logical node. This wizard does not create a new node.</p>
+      <h2>Choose Cloud State</h2><p>Choose the source and backup node to recover.</p>
       <label for="source">Cloud State source</label><select id="source"></select>
-      <label for="node">Node</label><select id="node"></select>
+      <label for="restore-mode">Recovery mode</label><select id="restore-mode">
+        <option value="restore">Restore existing node</option>
+        <option value="clone">Create a new node from selected backup</option>
+      </select>
+      <label id="node-label" for="node">Node</label><select id="node"></select>
+      <div id="new-node-block" hidden>
+        <label for="new-node-id">New node ID</label>
+        <input id="new-node-id" type="text" maxlength="192" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,191}" autocomplete="off" aria-describedby="new-node-hint">
+        <p id="new-node-hint" class="hint"></p>
+        <p class="clone-warning">Cloning intentionally copies the selected node's provider credentials and secrets, environment, role and overrides. The source node stays unchanged. Memory retains its existing writer; this new node does not become its writer.</p>
+      </div>
       <button id="continue" type="button" disabled>Continue to recovery</button>
     </section>
     <section id="recovery-panel" hidden>
       <h2>Unlock your recovery backup</h2><p id="selection"></p>
+      <p id="clone-warning" class="clone-warning" hidden>This creates a new Cloud node and a separately encrypted secret backup. Provider credentials and secrets are copied from the selected backup.</p>
       <form id="restore-form">
         <label for="passphrase">Recovery passphrase</label>
         <input id="passphrase" type="password" autocomplete="off" maxlength="4096" required>
@@ -53,7 +64,7 @@
       </form>
     </section>
     <section id="finished-panel" hidden>
-      <span class="success-mark" aria-hidden="true">✓</span><h2>Cloud State restored</h2>
+      <span class="success-mark" aria-hidden="true">✓</span><h2 id="finished-title">Cloud State restored</h2>
       <ul class="checks"><li>Config ✓</li><li>Soundbank ✓</li><li>Memory ✓</li><li>Secrets ✓</li></ul>
       <p>Provider: Google Drive. Restart to load your normal robot runtime.</p>
       <button id="restart" type="button">Restart server</button>
