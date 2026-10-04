@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cloud Restore · Xiaozhi</title>
+  <link rel="stylesheet" href="/setup/styles.css">
+  <script src="/setup/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><span class="eyebrow">XIAOZHI · FIRST RUN</span><h1>Restore your Desk Robot</h1>
+      <p>Connect Google Drive, choose your existing node, and recover its Cloud State.</p></header>
+    <ol class="steps" aria-label="Setup progress">
+      <li id="step-google">1 · Google</li><li id="step-cloud">2 · Cloud State</li>
+      <li id="step-recovery">3 · Recovery</li><li id="step-finished">4 · Finished</li>
+    </ol>
+    <p id="message" role="status" aria-live="polite"></p>
+    <div id="loading" class="loading" role="status" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span><span id="loading-text">Checking setup progress…</span>
+    </div>
+    <fieldset id="wizard" hidden disabled inert aria-busy="true" aria-label="Cloud restore setup">
+    <section id="google-panel">
+      <h2>Connect Google Drive</h2>
+      <p>Use the Desktop OAuth client that owns your Cloud State. Your client secret stays private on this server.</p>
+      <label id="drop-zone" class="drop-zone" for="client-file" tabindex="0">
+        <strong>Drop your Google Desktop OAuth JSON here</strong><span>or click to choose a file · up to 32 KB</span>
+        <input id="client-file" type="file" accept=".json,application/json">
+      </label>
+      <p id="client-status" class="hint">No OAuth client installed.</p>
+      <details><summary>Where do I get this file?</summary>
+        <p>In Google Cloud Console, enable Google Drive API and configure Google Auth Platform. Create a Desktop app client under Clients, then download its JSON. For personal Gmail use External; add yourself as a test user when Testing. Use scope <code>drive.file</code>.</p>
+        <p>For an existing Cloud State, reuse its original client. Google login creates user tokens; it does not create an application client.</p>
+        <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Open Google Cloud Console ↗</a>
+      </details>
+      <button id="authorize" type="button" disabled>Authorize Google</button>
+      <p class="hint">On SSH, keep the two-port tunnel printed at startup open. Login opens in a new tab.</p>
+    </section>
+    <section id="cloud-panel" hidden>
+      <h2>Choose Cloud State</h2><p>Restore an existing logical node. This wizard does not create a new node.</p>
+      <label for="source">Cloud State source</label><select id="source"></select>
+      <label for="node">Node</label><select id="node"></select>
+      <button id="continue" type="button" disabled>Continue to recovery</button>
+    </section>
+    <section id="recovery-panel" hidden>
+      <h2>Unlock your recovery backup</h2><p id="selection"></p>
+      <form id="restore-form">
+        <label for="passphrase">Recovery passphrase</label>
+        <input id="passphrase" type="password" autocomplete="off" maxlength="4096" required>
+        <p class="hint">Used in memory to unlock this node's secrets. It is never saved.</p>
+        <div class="actions"><button id="back" type="button" class="secondary">Change selection</button>
+          <button id="restore" type="submit">Restore &amp; Activate</button></div>
+      </form>
+    </section>
+    <section id="finished-panel" hidden>
+      <span class="success-mark" aria-hidden="true">✓</span><h2>Cloud State restored</h2>
+      <ul class="checks"><li>Config ✓</li><li>Soundbank ✓</li><li>Memory ✓</li><li>Secrets ✓</li></ul>
+      <p>Provider: Google Drive. Restart to load your normal robot runtime.</p>
+      <button id="restart" type="button">Restart server</button>
+      <a id="settings-link" href="/settings/" hidden>Open Settings after restart →</a>
+    </section>
+    </fieldset>
+    <footer>Local setup · credentials and recovery passphrases stay private</footer>
+  </main>
+</body>
+</html>

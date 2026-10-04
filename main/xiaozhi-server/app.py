@@ -3,17 +3,8 @@ import os
 import signal
 import sys
 import uuid
-from aioconsole import ainput
-from config.settings import load_config
-from config.logger import setup_logging
-from core.utils.util import get_local_ip, validate_mcp_endpoint
-from core.http_server import SimpleHttpServer
-from core.websocket_server import WebSocketServer
-from core.utils.util import check_ffmpeg_installed
-from core.utils.gc_manager import get_gc_manager
 
 TAG = __name__
-logger = setup_logging()
 
 
 async def wait_for_exit(restart_event: asyncio.Event) -> bool:
@@ -62,11 +53,31 @@ async def wait_for_listener(server, task):
 
 async def monitor_stdin():
     """Monitor stdin and consume Enter key presses."""
+    from aioconsole import ainput
     while True:
         await ainput()
 
 
 async def main():
+    from config.first_run import prepare_first_run
+    if prepare_first_run():
+        from core.setup_server import run_setup
+        await run_setup(wait_for_exit, wait_for_listener)
+        return
+    await run_normal()
+
+
+async def run_normal():
+    from config.settings import load_config
+    from config.logger import setup_logging
+    # Logging's uncached path runs its own configuration event loop, as it did
+    # before main(). Keep that bootstrap outside this running asyncio loop.
+    logger = await asyncio.to_thread(setup_logging)
+    from core.utils.util import get_local_ip, validate_mcp_endpoint, check_ffmpeg_installed
+    from core.http_server import SimpleHttpServer
+    from core.websocket_server import WebSocketServer
+    from core.utils.gc_manager import get_gc_manager
+
     check_ffmpeg_installed()
     config = await load_config()
 

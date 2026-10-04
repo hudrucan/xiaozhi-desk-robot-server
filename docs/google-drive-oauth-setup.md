@@ -1,5 +1,9 @@
 # Google Drive OAuth setup
 
+For a fresh clone, the [first-run browser wizard](first-run-cloud-restore-wizard-v1.md)
+can upload this JSON and authorize Google without CLI setup. The commands below
+remain available for Local provisioning and explicit CLI recovery.
+
 Register one Google Desktop OAuth client for the application and reuse it on
 every box. Google login issues user tokens; it does not register an OAuth client.
 To restore existing Cloud State, use the original application's client and the

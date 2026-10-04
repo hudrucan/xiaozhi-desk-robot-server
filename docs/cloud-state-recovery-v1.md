@@ -106,6 +106,10 @@ decryption or locally stored recovery passphrase is implemented.
 
 ## Fresh Linux restore
 
+Fresh clones can start `python app.py` and use the
+[localhost first-run wizard](first-run-cloud-restore-wizard-v1.md). The CLI flow
+below remains compatible and is also available for explicit recovery.
+
 Clone the repository and install its server dependencies, including the newly
 pinned `google-auth-oauthlib`. This helper supplies Google's supported installed
 application loopback OAuth flow with PKCE; it requests only `drive.file`.

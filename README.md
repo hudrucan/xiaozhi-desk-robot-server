@@ -90,12 +90,20 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-mkdir -p data
-touch data/.config.yaml
 python app.py
 ```
 
-`data/.config.yaml` is required, may initially be empty, and is gitignored. Existing
+On a fresh clone, startup opens setup mode at `http://localhost:8003/setup/`.
+Use the [First-run Cloud Restore Wizard](docs/first-run-cloud-restore-wizard-v1.md)
+to upload the original Google Desktop OAuth JSON, authorize, select a Cloud
+source/node, enter the recovery passphrase, and restore/activate before restarting.
+SSH startup prints one tunnel command for both the UI and OAuth callback ports.
+Setup runs no robot runtime services and is always localhost-only.
+
+For a new **Local** deployment, explicitly create `data/.config.yaml` before
+starting (`mkdir -p data` then `touch data/.config.yaml`) and configure your
+providers. That existing Local installation bypasses the wizard.
+`data/.config.yaml` may initially be empty and is gitignored. Existing
 monolithic overrides still load. After migration, put provider selections, model
 names, endpoints, and secrets in the corresponding `data/config.d/` files—never
 in the committed reference files. Extra, unrecognized roots stay in
@@ -109,6 +117,7 @@ in the committed reference files. Extra, unrecognized roots stay in
 | OTA/bootstrap | `http://<host>:8003/xiaozhi/ota/` |
 | Vision | `http://<host>:8003/mcp/vision/explain` |
 | Settings | `http://127.0.0.1:8003/settings/` |
+| First-run setup (setup mode only) | `http://localhost:8003/setup/` |
 
 Settings accepts loopback requests by default. Enable
 `server.settings.allow_remote` only on a trusted LAN. Configuration edits are

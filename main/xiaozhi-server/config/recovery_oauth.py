@@ -1,12 +1,19 @@
 """Explicit installed-app OAuth; credentials stay in memory until publication."""
 
 from pathlib import Path
+from contextlib import contextmanager
 import errno
+import hmac
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
 import os
+import secrets
 import shlex
 import sys
 import tempfile
+import threading
+import time
+from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 from config.cloud_recovery import RecoveryError, parse_json
@@ -34,10 +41,41 @@ class OAuthStorageError(RecoveryError):
     message = "OAuth setup could not save local credentials, or existing application/account credentials differ. Existing files were not replaced."
 
 
+class OAuthBusyError(RecoveryError):
+    message = "Google authorization is already pending; finish that login or wait for it to expire."
+
+
+_logging_guard = threading.Lock()
+_logging_users = 0
+_logging_previous = 0
+
+
+@contextmanager
+def _private_logging():
+    # start and the worker overlap. Restore the original level only when both
+    # have finished, rather than leaving global logging disabled after login.
+    global _logging_users, _logging_previous
+    with _logging_guard:
+        if _logging_users == 0:
+            _logging_previous = logging.root.manager.disable
+            logging.disable(logging.CRITICAL)
+        _logging_users += 1
+    try:
+        yield
+    finally:
+        with _logging_guard:
+            _logging_users -= 1
+            if _logging_users == 0:
+                logging.disable(_logging_previous)
+
+
 def load_oauth_client(path):
     """Validate Google's downloaded Desktop client without echoing its contents."""
     try:
-        config = parse_json(Path(path).read_bytes())
+        path = Path(path)
+        if path.is_symlink() or path.parent.is_symlink():
+            raise ValueError()
+        config = parse_json(path.read_bytes())
         if not isinstance(config, dict) or set(config) != {"installed"}:
             raise ValueError()
         installed = config["installed"]
@@ -123,40 +161,208 @@ def credential_payload(content):
     return value
 
 
-def obtain_credentials(*, existing_path=None, client_path=None, flow_factory=None, open_browser=None,
-                       oauth_port=8765, oauth_timeout=600, ssh_target=None):
-    """Return private credential bytes/session, never persist or print user tokens.
+class _QuietLoopbackServer(HTTPServer):
+    allow_reuse_address = False
 
-    Desktop OAuth client configuration is an external application identity, not
-    a user token. The same client must be used as the app owning the Drive files.
-    google-auth-oauthlib implements the supported loopback flow with PKCE.
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(2)
+        return connection, address
+
+    def handle_error(self, request, client_address):
+        pass  # Never traceback a request carrying an OAuth callback code.
+
+
+class OAuthLoopbackSession:
+    """One process-owned PKCE session, with a quiet IPv4 callback worker.
+
+    start() returns the login URL immediately; wait() consumes credentials after
+    the worker validates state and exchanges the code. close() cancels the wait.
+    Neither this primitive nor the CLI persists credentials. The explicit setup
+    caller uses install_oauth_file; restore retains its journal publication.
     """
-    old_logging_level = logging.root.manager.disable
-    # OAuth libraries can debug-log token exchange bodies or callback codes.
-    logging.disable(logging.CRITICAL)
-    try:
+    _guard = threading.Lock()
+    _owner = None
+
+    def __init__(self, client_path, *, port=8765, timeout=600, flow_factory=None, server_factory=_QuietLoopbackServer):
+        self.client_path = client_path
+        self.port, self.timeout = port, timeout
+        self.flow_factory, self.server_factory = flow_factory, server_factory
+        self._stop, self._done = threading.Event(), threading.Event()
+        self._lock = threading.Lock()
+        self._status, self._error, self._payload = "idle", None, None
+        self._flow = self._state = self._callback = self._server = self._thread = None
+
+    def status(self):
+        with self._lock:
+            return {"status": self._status, **({"error": self._error.message} if self._error else {})}
+
+    def start(self):
+        with _private_logging():
+            return self._start()
+
+    def _start(self):
+        with self._guard:
+            if OAuthLoopbackSession._owner is not None:
+                raise OAuthBusyError()
+            if self._status != "idle":
+                raise OAuthLoginError()
+            OAuthLoopbackSession._owner = self
         try:
-            from google.auth.transport.requests import AuthorizedSession
-        except ImportError:
-            raise OAuthDependencyError() from None
-        if existing_path is not None:
-            payload = credential_payload(Path(existing_path).read_bytes())
-            if payload["type"] == "authorized_user":
-                from google.oauth2.credentials import Credentials
-                credentials = Credentials.from_authorized_user_info(payload, scopes=GoogleDriveTransport.SCOPES)
-            else:
-                from google.oauth2 import service_account
-                credentials = service_account.Credentials.from_service_account_info(payload, scopes=GoogleDriveTransport.SCOPES)
-        else:
-            config = load_oauth_client(client_path)
-            if flow_factory is None:
+            if type(self.port) is not int or not 1 <= self.port <= 65535 or type(self.timeout) is not int or not 1 <= self.timeout <= 3600:
+                raise OAuthLoginError()
+            config = load_oauth_client(self.client_path)
+            factory = self.flow_factory
+            if factory is None:
                 try:
                     from google_auth_oauthlib.flow import InstalledAppFlow
                 except ImportError:
                     raise OAuthDependencyError() from None
-                flow_factory = InstalledAppFlow.from_client_config
-            if type(oauth_port) is not int or not 1 <= oauth_port <= 65535 or type(oauth_timeout) is not int or not 1 <= oauth_timeout <= 3600:
+                factory = InstalledAppFlow.from_client_config
+            self._state = secrets.token_urlsafe(32)
+            self._flow = factory(config, scopes=GoogleDriveTransport.SCOPES,
+                                 state=self._state, autogenerate_code_verifier=True)
+            owner = self
+
+            class CallbackHandler(BaseHTTPRequestHandler):
+                def log_message(self, *args):
+                    pass  # Callback paths contain the authorization code.
+
+                def do_GET(self):
+                    valid = owner._accept_callback(self.path)
+                    self.send_response(200 if valid else 400)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(b"Google callback received. Return to setup." if valid else b"Google authorization rejected. Retry from setup.")
+
+            self._server = self.server_factory(("127.0.0.1", self.port), CallbackHandler)
+            self._server.timeout = 0.25
+            self._flow.redirect_uri = f"http://127.0.0.1:{self.port}/"
+            url, state = self._flow.authorization_url(access_type="offline", prompt="consent", state=self._state)
+            if state != self._state:
                 raise OAuthLoginError()
+            self._deadline = time.monotonic() + self.timeout
+            self._status = "pending"
+            self._thread = threading.Thread(target=self._run, name="google-oauth-loopback", daemon=True)
+            self._thread.start()
+            return url
+        except Exception as error:
+            safe = self._safe_error(error)
+            self._fail(safe)
+            self._release()
+            raise safe from None
+
+    @staticmethod
+    def _safe_error(error):
+        if isinstance(error, (OAuthClientError, OAuthDependencyError, OAuthLoginError, OAuthBusyError)):
+            return error
+        if isinstance(error, OSError) and error.errno == errno.EADDRINUSE:
+            return OAuthPortError()
+        return OAuthLoginError()
+
+    def _fail(self, error):
+        with self._lock:
+            self._status, self._error, self._payload = "failed", error, None
+
+    def _accept_callback(self, path):
+        # Ignore probes such as favicon without consuming the OAuth session.
+        try:
+            if urlsplit(path).path != "/":
+                return False
+            query = parse_qs(urlsplit(path).query, strict_parsing=True)
+            if len(path) > 8192 or any(len(value) != 1 for value in query.values()):
+                raise ValueError()
+            state = query.get("state", [""])[0]
+            if not hmac.compare_digest(state, self._state) or not query.get("code") or "error" in query:
+                raise ValueError()
+            self._callback = f"https://127.0.0.1:{self.port}{path}"
+            return True
+        except Exception:
+            self._fail(OAuthLoginError())
+            self._stop.set()
+            return False
+
+    def _run(self):
+        with _private_logging():
+            self._exchange()
+
+    def _exchange(self):
+        try:
+            while not self._stop.is_set() and self._callback is None:
+                if time.monotonic() >= self._deadline:
+                    raise OAuthLoginError()
+                self._server.handle_request()
+            if self._stop.is_set():
+                raise OAuthLoginError()
+            self._flow.fetch_token(authorization_response=self._callback, timeout=20)
+            payload = credential_payload(canonical_bytes({"type": "authorized_user",
+                **parse_json(self._flow.credentials.to_json().encode("utf-8"))}))
+            if payload["type"] != "authorized_user" or self._stop.is_set():
+                raise OAuthLoginError()
+            with self._lock:
+                self._payload, self._status = canonical_bytes(payload), "authorized"
+        except Exception as error:
+            self._fail(self._safe_error(error))
+        finally:
+            self._release()
+
+    def _release(self):
+        try:
+            if self._server is not None:
+                self._server.server_close()
+        except Exception:
+            pass  # Cleanup diagnostics must not traceback OAuth state.
+        finally:
+            self._flow = self._state = self._callback = None
+            with self._guard:
+                if OAuthLoopbackSession._owner is self:
+                    OAuthLoopbackSession._owner = None
+            self._done.set()
+
+    def wait(self):
+        self._done.wait()
+        with self._lock:
+            if self._status != "authorized":
+                raise self._error or OAuthLoginError()
+            return self._payload
+
+    def close(self):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=21)
+        with self._lock:
+            self._payload = None
+
+
+def authorized_session(content):
+    """Create the same narrow transport session for UI and CLI callers."""
+    try:
+        from google.auth.transport.requests import AuthorizedSession
+        payload = credential_payload(content)
+        if payload["type"] == "authorized_user":
+            from google.oauth2.credentials import Credentials
+            credentials = Credentials.from_authorized_user_info(payload, scopes=GoogleDriveTransport.SCOPES)
+        else:
+            from google.oauth2 import service_account
+            credentials = service_account.Credentials.from_service_account_info(payload, scopes=GoogleDriveTransport.SCOPES)
+        return AuthorizedSession(credentials, refresh_timeout=20)
+    except ImportError:
+        raise OAuthDependencyError() from None
+    except Exception:
+        raise OAuthLoginError() from None
+
+
+def obtain_credentials(*, existing_path=None, client_path=None, flow_factory=None, open_browser=None,
+                       oauth_port=8765, oauth_timeout=600, ssh_target=None):
+    """CLI adapter over the same session as setup UI; no early persistence."""
+    session = None
+    old_logging_level = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    try:
+        if existing_path is not None:
+            content = canonical_bytes(credential_payload(Path(existing_path).read_bytes()))
+        else:
             target = ssh_target or "user@server"
             if not isinstance(target, str) or target.startswith("-") or any(ord(c) < 32 or ord(c) == 127 for c in target):
                 raise OAuthLoginError()
@@ -169,14 +375,17 @@ def obtain_credentials(*, existing_path=None, client_path=None, flow_factory=Non
                 if ssh_target is None:
                     print("Replace user@server with the SSH destination you normally use.")
                 print("Keep the tunnel open, then open the Google login link below on that machine.")
-            flow = flow_factory(config, scopes=GoogleDriveTransport.SCOPES, autogenerate_code_verifier=True)
-            credentials = flow.run_local_server(host="127.0.0.1", port=oauth_port, open_browser=open_browser,
-                timeout_seconds=oauth_timeout, access_type="offline", prompt="consent",
-                authorization_prompt_message="Authorize Google using this URL: {url}",
-                success_message="Google authorization completed. You may close this window.")
-            payload = credential_payload(canonical_bytes({"type": "authorized_user", **parse_json(credentials.to_json().encode("utf-8"))}))
-        return canonical_bytes(payload), AuthorizedSession(credentials, refresh_timeout=20)
-    except (OAuthClientError, OAuthDependencyError, OAuthLoginError):
+            session = OAuthLoopbackSession(client_path, port=oauth_port, timeout=oauth_timeout, flow_factory=flow_factory)
+            url = session.start()
+            print(f"Authorize Google using this URL: {url}")
+            if open_browser:
+                try:
+                    webbrowser.open(url, new=1, autoraise=True)
+                except webbrowser.Error:
+                    pass  # Link is already visible for manual browser use.
+            content = session.wait()
+        return content, authorized_session(content)
+    except (OAuthClientError, OAuthDependencyError, OAuthLoginError, OAuthPortError, OAuthBusyError):
         raise
     except OSError as error:
         if error.errno == errno.EADDRINUSE:
@@ -185,4 +394,6 @@ def obtain_credentials(*, existing_path=None, client_path=None, flow_factory=Non
     except Exception:
         raise OAuthLoginError() from None
     finally:
+        if session is not None:
+            session.close()
         logging.disable(old_logging_level)

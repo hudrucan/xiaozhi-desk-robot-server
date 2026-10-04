@@ -444,7 +444,10 @@ class CloudRecoveryTests(unittest.TestCase):
                             client_id="test-client", client_secret="client-private")
         client = self.box / "oauth-client.json"
         client.write_text(json.dumps(CLIENT))
-        credential_bytes, _ = obtain_credentials(client_path=client, flow_factory=Mock(return_value=Mock(run_local_server=Mock(return_value=creds))))
+        session = Mock(start=Mock(return_value="https://accounts.google.com/test"),
+                       wait=Mock(return_value=canonical_bytes({"type": "authorized_user", **json.loads(creds.to_json())})))
+        with patch("config.recovery_oauth.OAuthLoopbackSession", return_value=session), redirect_stdout(io.StringIO()):
+            credential_bytes, _ = obtain_credentials(client_path=client, open_browser=False)
         source = select_source(discover_sources(self.drive))
         result = restore_cloud_node(source, select_node(source), PASSPHRASE, credential_bytes, self.drive,
                                    data_dir=self.data, default_path=self.default_path, activate=True)
@@ -483,15 +486,14 @@ class RecoveryOAuthCLITests(unittest.TestCase):
         path.write_text(json.dumps(CLIENT))
         creds = Credentials(token="private-access", refresh_token="test-refresh-private", token_uri="https://oauth2.googleapis.com/token",
                             client_id="test-client", client_secret="client-private")
-        flow = Mock(run_local_server=Mock(return_value=creds))
-        factory = Mock(return_value=flow)
-        content, _ = obtain_credentials(client_path=path, flow_factory=factory)
+        session = Mock(start=Mock(return_value="https://accounts.google.com/test"),
+                       wait=Mock(return_value=canonical_bytes({"type": "authorized_user", **json.loads(creds.to_json())})))
+        with patch("config.recovery_oauth.OAuthLoopbackSession", return_value=session) as factory, redirect_stdout(io.StringIO()):
+            content, _ = obtain_credentials(client_path=path, open_browser=False)
         self.assertEqual(json.loads(content)["refresh_token"], "test-refresh-private")
-        self.assertEqual(factory.call_args.kwargs["scopes"], GoogleDriveTransport.SCOPES)
-        self.assertTrue(factory.call_args.kwargs["autogenerate_code_verifier"])
-        self.assertEqual(flow.run_local_server.call_args.kwargs["host"], "127.0.0.1")
-        self.assertEqual(flow.run_local_server.call_args.kwargs["port"], 8765)
-        self.assertEqual(flow.run_local_server.call_args.kwargs["timeout_seconds"], 600)
+        self.assertEqual(factory.call_args.kwargs["port"], 8765)
+        self.assertEqual(factory.call_args.kwargs["timeout"], 600)
+        session.close.assert_called_once()
         self.assertEqual(set(item.name for item in self.directory.iterdir()), {"client.json"})
 
     def test_oauth_errors_and_library_token_logs_are_sanitized(self):
@@ -517,14 +519,17 @@ class RecoveryOAuthCLITests(unittest.TestCase):
         path.write_text(json.dumps(CLIENT))
         creds = Credentials(token="private-access", refresh_token="test-refresh-private", token_uri="https://oauth2.googleapis.com/token",
                             client_id="test-client", client_secret="client-private")
-        flow = Mock(run_local_server=Mock(return_value=creds))
+        session = Mock(start=Mock(return_value="https://accounts.google.com/test"),
+                       wait=Mock(return_value=canonical_bytes({"type": "authorized_user", **json.loads(creds.to_json())})))
         output = io.StringIO()
-        with patch.dict("os.environ", {"SSH_CONNECTION": "present"}), redirect_stdout(output):
+        with patch.dict("os.environ", {"SSH_CONNECTION": "present"}), redirect_stdout(output), \
+                patch("config.recovery_oauth.OAuthLoopbackSession", return_value=session) as factory, \
+                patch("config.recovery_oauth.webbrowser.open") as browser:
             self.assertFalse(browser_available())
-            obtain_credentials(client_path=path, flow_factory=Mock(return_value=flow),
+            obtain_credentials(client_path=path,
                                oauth_port=8877, oauth_timeout=900, ssh_target="robot@deskbox")
-        self.assertFalse(flow.run_local_server.call_args.kwargs["open_browser"])
-        self.assertEqual(flow.run_local_server.call_args.kwargs["port"], 8877)
+        browser.assert_not_called()
+        self.assertEqual(factory.call_args.kwargs["port"], 8877)
         self.assertIn("127.0.0.1:8877:127.0.0.1:8877 robot@deskbox", output.getvalue())
         for private in ("private-access", "test-refresh-private", "client-private", str(path)):
             self.assertNotIn(private, output.getvalue())
@@ -539,9 +544,8 @@ class RecoveryOAuthCLITests(unittest.TestCase):
                 load_oauth_client(path)
             self.assertNotIn(PRIVATE, str(raised.exception))
         path.write_text(json.dumps(CLIENT))
-        flow = Mock(run_local_server=Mock(side_effect=OSError(errno.EADDRINUSE, PRIVATE)))
         with redirect_stdout(io.StringIO()), self.assertRaises(OAuthPortError) as raised:
-            obtain_credentials(client_path=path, flow_factory=Mock(return_value=flow), open_browser=False)
+            obtain_credentials(client_path=path, flow_factory=Mock(side_effect=OSError(errno.EADDRINUSE, PRIVATE)), open_browser=False)
         self.assertNotIn(PRIVATE, str(raised.exception))
         self.assertTrue(raised.exception.__suppress_context__)
 
