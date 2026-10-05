@@ -7,7 +7,7 @@ from pathlib import Path
 
 def provision_cloud_source(transport, defaults, overrides, node_id, *, folder_id=None, folder_name=None,
                            secret_provider=None):
-    from config.cloud_layers import initial_cloud_object
+    from config.cloud_layers import initial_cluster_object
     from config.config_store import canonical_bytes, checksum
     from config.config_validation import validate_config
     from config.google_drive_config import validate_object
@@ -17,7 +17,7 @@ def provision_cloud_source(transport, defaults, overrides, node_id, *, folder_id
         raise ValueError("Select an accessible folder ID or create a new app-owned folder")
     secrets = secret_provider or LocalSecretStore(node_id)
     overrides, pending = secrets.externalize(overrides)
-    obj = initial_cloud_object(overrides, node_id)
+    obj = initial_cluster_object(overrides, node_id)
     content = canonical_bytes(obj)
     manifest = {"schema_version": 1, "revision": 1, "config": {
         "file_id": "pending", "sha256": checksum(content),

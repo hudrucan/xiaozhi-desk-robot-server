@@ -1,6 +1,7 @@
 """Shared validation for Settings commits, cloud snapshots and LKG."""
 
 from collections.abc import Mapping
+from ipaddress import IPv4Address
 
 PROVIDER_GROUPS = ("VAD", "ASR", "LLM", "VLLM", "TTS", "Memory", "Intent")
 DIAGNOSTIC_THRESHOLD_KEYS = {
@@ -15,6 +16,23 @@ DIAGNOSTIC_THRESHOLD_KEYS = {
 
 def validate_config(config):
     from core.soundbank import normalize_soundbank_text, validate_soundbank_cloud_metadata
+
+    cluster = config.get("cluster", {})
+    if not isinstance(cluster, Mapping):
+        raise ValueError("cluster must be an object")
+    ingress = cluster.get("ingress", {})
+    if not isinstance(ingress, Mapping) or set(ingress) - {"vip"}:
+        raise ValueError("cluster.ingress supports only the portable vip field")
+    if "vip" in ingress:
+        try:
+            if not isinstance(ingress["vip"], str):
+                raise ValueError
+            vip = IPv4Address(ingress["vip"])
+            if (vip.is_unspecified or vip.is_multicast or vip.is_loopback
+                    or vip.is_reserved or vip.packed[0] == 0):
+                raise ValueError
+        except ValueError:
+            raise ValueError("cluster.ingress.vip must be an IPv4 unicast address, excluding unspecified, loopback, multicast and reserved addresses") from None
 
     selected = config.get("selected_module")
     if not isinstance(selected, Mapping):

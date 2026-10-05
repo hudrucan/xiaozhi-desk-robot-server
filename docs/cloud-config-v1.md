@@ -1,4 +1,4 @@
-# Cloud Config V1
+# Cloud Config: shared cluster and legacy compatibility
 
 Cloud configuration is optional. Without `data/bootstrap.yaml`, the server uses
 Local mode exactly as before: reference defaults plus private `.config.yaml` /
@@ -76,6 +76,10 @@ local overrides. `--from-local` imports normal overrides and replaces configured
 secret fields with references. Actual values are written only to this node's
 private `data/node-secrets/` store before any remote upload. Repository defaults
 are not uploaded. Provisioning leaves the original Local files unchanged.
+New sources use Config schema V2: imported overrides become `layers.cluster`,
+and the initial node holds assignments with empty explicit overrides. Before
+adding members, make the referenced named secrets available in each member's
+private store through provisioning or encrypted Clone/Recovery.
 Never publish/share these files publicly. Put the resulting IDs and local
 credential path into
 `data/bootstrap.yaml`, keeping `config_provider: local` initially.
@@ -139,14 +143,20 @@ Provisioning has four ordered stages:
    contract, and all explicit-memory device scopes with the lossless parser.
    Read and validate the existing Cloud topology, node assignment, revision,
    folder access and any existing Memory authority before uploading anything.
-2. Reconcile only this node's overrides using the existing Settings candidate
-   preparation and CAS-last publication. Keep global/environment/role semantics,
-   other nodes and assignments. Persist node-local secrets before publication;
+2. For V1, reconcile only this node's overrides using the existing Settings
+   candidate preparation and CAS-last publication. For an existing shared V2
+   authority, adopt only equivalent Local effective configuration; differences
+   require explicit reconciliation. Never flatten shared runtime into a node
+   copy or overwrite shared settings from one node's Local configuration.
+   Keep global/environment/role semantics, other nodes and assignments.
+   Persist node-local secrets before V1 publication;
    Cloud configuration contains references only. Upload and verify canonical
    WAV/MP3/P3 and optimized P3 assets with pointers at their file-owning layers.
    Shared layers can gain dependent asset pointers without pinning inherited
    filenames into this node. Files owned only by repository defaults receive an
-   explicit node file override so their pointers have a persisted owner.
+   explicit file override so their pointers have a persisted owner: node in V1,
+   cluster in V2. V2 preparation proves semantic equivalence for every assigned
+   node before publication, including repository-default file ownership changes.
 3. For selected `mem_local_explicit`, seed a canonical immutable snapshot with
    every Local device scope, including inactive records and empty scopes. Verify
    download/hash/schema, then create and exactly verify a Memory manifest at
@@ -303,22 +313,24 @@ when switching back to Cloud.
 
 ## Storage and transactions
 
-### Schema decision for V1
+### Current Config schema V2
 
-V1 now encodes a centralized collection, so the upcoming dual-box phase can use
-one manifest for shared configuration and cloud-managed assignments without
-splitting a full config into separate per-node manifests. This task adds config
-resolution only; it does not start workers or distribute ASR/TTS workloads.
+One manifest owns shared desired configuration and cloud-managed assignments.
+The Config object schema is V2; the manifest format remains V1. The optional
+[standalone control plane](control-plane-v1.md) reconciles desired state through
+startup/event/periodic Cloud refresh and non-authoritative Core NATS hints.
+Provider hot-apply, VIP failover and HAProxy deployment are not implemented.
 
 An immutable canonical JSON object contains these scopes:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "layers": {
     "global": {},
     "environments": {"dev": {}},
     "roles": {"server": {}},
+    "cluster": {"cluster": {"ingress": {"vip": "192.168.1.186"}}},
     "nodes": {
       "mac-dev": {"environment": "dev", "role": "server", "overrides": {}}
     }
@@ -329,25 +341,36 @@ An immutable canonical JSON object contains these scopes:
 The example is structural; each node's effective configuration must pass shared
 Settings validation. Resolution order is current **repo defaults** (loaded with
 `load_default_config()` from the running release) → cloud global overrides →
-assigned environment → assigned role → node overrides. Upgrading server defaults
+assigned environment → assigned role → cluster → explicit node overrides.
+`layers.cluster` is the normal shared Settings-editable override map; the nested
+`cluster.ingress.vip` key is runtime configuration, not a node identity.
+Upgrading server defaults
 introduces new default values without changing the Drive object. Environment/role
 assignments are stored in the cloud node record; nullable assignments inherit
-repo defaults plus global overrides. `node_id` remains exclusively local bootstrap identity,
+repo defaults plus shared overlays. `node_id` remains exclusively local bootstrap identity,
 used to look up that record. An unassigned node fails safely rather than adopting
 another node's config. Local bootstrap environment/role hints are not consulted.
 
-Settings Save edits only the current node's overrides. It preserves shared
-scopes, assignments and all other node records, without flattening inherited
-semantic values into the node layer. Soundbank storage pointers are added to the
+V2 Settings GET exposes the serving node's effective configuration and existing
+assignment/status metadata. Save from any member edits the same `layers.cluster`
+map. Explicit node exceptions retain highest precedence and may mask a shared
+change on that node; Save does not absorb those exceptions or inherited values.
+Global, environments, roles and node assignments retain their existing semantics.
+Soundbank storage pointers are added to the
 cloud layer owning the corresponding file definition, under the same CAS. Every assigned node
 is validated before publishing a shared config object using the current server
 release defaults. Topology editing
 is supported through the CLI below; UI topology editing is out of scope.
 
-Provisioning puts imported local overrides only in the specified node record.
-Global/environment/role override maps start empty. Cloud layers cannot contain
+New-source initialization puts imported Local overrides in `cluster`, with empty
+global/environment/role override maps and empty node exceptions. Cloud layers cannot contain
 bootstrap-only roots (`node_id`, `config_provider`, `google_drive`, or
 `credentials_path`).
+
+Override-only centralized V1 objects remain readable and keep node-scoped Settings
+until explicitly migrated using the procedure below. Status/UI reports the schema,
+Settings scope and migration requirement. No startup, Save, Clone or Recovery
+automatically changes the schema.
 
 Legacy compatibility is explicit: iteration-1 `layers: {defaults, overrides}`
 and iteration-2 centralized `global: {defaults, overrides}` retain their frozen
@@ -358,7 +381,54 @@ Topology mutations require the new override-only layout. Reprovision explicitly
 from retained Local configuration, review assignments, and select the new source;
 there is no silent rewrite/migration. In the centralized format, a global object
 with exactly the two keys `defaults` and `overrides` identifies iteration-2 legacy
-layout; those keys are reserved for compatibility.
+layout; those keys are reserved for compatibility. Frozen-default formats cannot
+use the V1 promotion migration and require explicit reprovisioning.
+
+### Explicit shared-cluster migration
+
+From the repository root, preview the live source without publishing:
+
+```bash
+main/xiaozhi-server/.venv/bin/python scripts/cloud_config_admin.py \
+  migrate-cluster --nodes deskb1x deskb2x deskb3x --check
+```
+
+Review the returned `base_revision`, selected `nodes` and `verified_nodes`. Apply
+that exact preview revision (replace `N` with its integer value):
+
+```bash
+main/xiaozhi-server/.venv/bin/python scripts/cloud_config_admin.py \
+  --base-revision N migrate-cluster --nodes deskb1x deskb2x deskb3x --apply
+```
+
+The store/API also exposes `migrate_cluster(node_ids, base_revision=N, apply=False)`
+for later Settings integration. Apply requires a preview revision. Both paths
+read and validate the live manifest/object; selected raw node overrides must be
+canonically identical, including exact secret reference strings. Different
+reference names reject even if an administrator believes their values match.
+Migration never reads, exports or writes secret material.
+
+Migration creates `cluster` from the common raw map and clears only the promoted
+node overrides. It compares canonical effective configuration for **every**
+assigned node before/after using the same captured repo defaults. Unselected
+nodes, assignments and existing shared scopes are preserved. An unselected node
+whose effective view would change causes rejection, rather than an invented
+compensating override. Different raw maps, invalid layers and unprovable
+equivalence reject before uploading. Publication uploads/verifies an immutable
+object, then CASes the existing manifest last; stale previews/conflicts preserve
+the winner. Active LKG/runtime and provider selection are untouched.
+
+After V2 migration, repeating with a fresh revision is a no-op, preserving any
+explicit node exceptions added afterward. A stale revision still conflicts.
+
+### Portable ingress desired state
+
+Repository defaults include `cluster.ingress.vip: 192.168.1.186`; V2 Settings can
+change it for all inheriting members. Validation requires IPv4 unicast and rejects
+unspecified, multicast, loopback and reserved addresses. No ingress HTTP port is
+exposed. Linux interface names are rejected from this portable ingress map and
+belong in node-local deployment configuration. The value alone assigns no address,
+starts no proxy and provides no failover or DHCP collision detection.
 
 Canonical encoding is UTF-8 JSON, keys sorted, separators `,` and `:`, Unicode
 preserved, and no NaN/Infinity.
@@ -450,7 +520,10 @@ successful Apply records B's fingerprint → offline restart with B succeeds.
 Settings includes `configuration_source` with current provider, node ID, desired
 and active revision, sync state/status, conflict flag, last sync/error, source,
 cache path and pending provider, plus desired/active environment and role,
-runtime revision and runtime source. Manifest read races as well as final commit
+runtime revision and runtime source. V2 also exposes `schema_version`,
+`settings_scope` and `cluster_migration_required`; legacy sources advertise that
+migration or reprovisioning is required for shared Settings.
+Manifest read races as well as final commit
 CAS races preserve `ConfigConflict` and return HTTP 409 from Save/manual Sync.
 Cloud desired/active mismatch reports
 `out_of_sync` and `restart_required: true`. Local diagnostic-only edits retain
@@ -473,7 +546,7 @@ new pointer. Matching current/candidate pointers and identical transaction asset
 are reused. No listing, remote index or folder tree is required.
 
 Pointers follow the effective `file` and `optimized.file` owners independently:
-node overrides, global, assigned environment or assigned role. Only storage
+node exceptions, cluster, global, assigned environment or assigned role. Only storage
 metadata changes in a shared layer; an unrelated node Save does not copy inherited
 file/text/provenance/audio-contract fields into node overrides. A legacy string
 can become `{file, cloud}` in its original cloud layer. Later shared semantic
@@ -491,7 +564,7 @@ The new file owner can provide its own complete valid pointer. Partial pointers
 cannot borrow fields from the previous file owner's pointer. Overrides of text,
 provenance or audio metadata without a file override retain the inherited pointer;
 string replacements retain scalar replacement semantics. This applies across
-global/environment/role/node layers, legacy Cloud layouts, effective validation,
+global/environment/role/cluster/node layers, legacy Cloud layouts, effective validation,
 Settings reads and runtime/LKG resolution. Stored layers are not rewritten during
 resolution. Generic Local configuration merging is unchanged.
 
@@ -502,8 +575,12 @@ file until it saves and publishes a pointer in the file's owning layer.
 Save requires all referenced files locally, validates P3 structure and the existing
 mono Opus/60ms audio contract, uploads missing objects, and downloads them to
 verify size and SHA-256 before uploading the config object. Manifest CAS remains
-last. Secret replacements are durable in the node-local store before any Drive
-publication. A missing asset, upload or verification failure aborts publication
+last. V2 prepares both the shared asset view and the serving node's effective
+view, so a node file exception cannot leave a masked shared file unpublished.
+Both views require local source bytes; absence fails safely before Config CAS.
+Legacy node-scoped secret replacements are durable before Drive publication;
+shared V2 plaintext changes are rejected before asset publication.
+A missing asset, upload or verification failure aborts publication
 without advancing desired/active state or running post-save cleanup. A final CAS
 conflict still returns HTTP 409; uploaded orphan objects can remain on Drive.
 
@@ -590,9 +667,16 @@ configuration isolation between separately administered hosts; it does not
 isolate processes sharing the same OS account/filesystem access.
 
 Settings GET masks secret fields and never resolves them into its response.
-Blank secret fields retain existing references/values. A new cloud Settings
-secret is persisted locally under a new opaque immutable reference, then that
-reference is committed through normal CAS. The active revision keeps its previous
+Blank secret fields retain existing references/values. Shared V2 Settings rejects
+new/changed plaintext secrets before local secret persistence or asset/config
+uploads: there is no atomic mechanism to update every member's private store.
+Blank/redacted fields cannot pull a serving node's exception into the shared map;
+a patch that would lose an inherited secret through list replacement is rejected.
+Pre-provision the same new named reference on every member that needs it, then
+change the reference through a reference-only shared patch or `set-cluster` CLI.
+Local Settings and historical node-scoped cloud Settings keep their prior rules:
+a legacy cloud Settings secret is persisted locally under a new opaque immutable
+reference before CAS. The active revision keeps its previous
 secret until Apply succeeds. Named references are also immutable: rotate with a
 new name, then change the cloud reference. Missing local references fail startup
 safely with a generic error; values and reference names are not logged by this
@@ -616,6 +700,8 @@ main/xiaozhi-server/.venv/bin/python scripts/cloud_config_admin.py show
 main/xiaozhi-server/.venv/bin/python scripts/cloud_config_admin.py \
   --base-revision 1 set-global --file global-overrides.yaml
 main/xiaozhi-server/.venv/bin/python scripts/cloud_config_admin.py \
+  --base-revision 2 set-cluster --file cluster-overrides.yaml
+main/xiaozhi-server/.venv/bin/python scripts/cloud_config_admin.py \
   set-environment production --file production-overrides.yaml
 main/xiaozhi-server/.venv/bin/python scripts/cloud_config_admin.py \
   set-role worker --file worker-overrides.yaml
@@ -631,7 +717,9 @@ main/xiaozhi-server/.venv/bin/python scripts/cloud_config_admin.py \
 optionally requires the revision previously inspected by `show`; put global
 options before the operation. Otherwise the command captures the live revision
 and ETag at its initial read. `set-* --file` **replaces** that scope's override
-object; node assignments omitted from `set-node` remain unchanged. Add-node may
+object; node assignments omitted from `set-node` remain unchanged.
+`set-cluster` requires V2 and replaces its shared override map. Use `set-node`
+only for deliberate node exceptions after migration. Add-node may
 omit assignments and overrides. `set-node NAME --environment - --role -` clears
 assignments. Deletion commands are `delete-environment NAME`, `delete-role NAME`
 and `delete-node NAME`. Referenced environments/roles cannot be deleted. First
@@ -666,8 +754,9 @@ revisions after both listeners start. Stop the server, make Drive unavailable,
 and confirm restart uses active LKG. Specifically apply revision 1, Save
 revision 2 without applying, then restart offline and confirm runtime stays at 1.
 Check that desired-only cache without active.json cannot boot offline. Verify
-Drive/cache objects contain references only, then replace a secret in
-Settings and check offline LKG still resolves the old secret until Apply. On a
+Drive/cache objects contain references only. For V2, confirm plaintext Settings
+changes reject; pre-provision a new named reference before changing the shared
+reference and check offline LKG resolves the old reference until Apply. On a
 second node, seed only its own references and confirm it cannot resolve the first
 node's references. Exercise CLI assignments and stale revision rejection. Confirm
 Local Settings saves, secret masking and soundbank authoring still work.

@@ -23,6 +23,7 @@ EDITABLE_ROOTS = {
     "asr_min_audio_ms",
     "close_connection_no_voice_time",
     "context_providers",
+    "cluster",
     "delete_audio",
     "device_mcp_tool_cache",
     "dump_full_llm_request",
@@ -197,9 +198,13 @@ class ConfigEditor:
             default_config = self.store.defaults_unlocked()
             local_config = self.store.read_unlocked()
             current_effective = merge_configs(default_config, local_config)
-            safe_patch = _drop_blank_secrets(patch, current_effective)
-            updated_local = _merge_editor_patch(local_config, safe_patch)
-            prepared = self.store.prepare_candidate_unlocked(updated_local)
+            editable = self.store.settings_overrides_unlocked()
+            # Cluster edits must not copy a serving node's exceptions (including
+            # redacted secrets) into the shared layer. Local behavior is unchanged.
+            secret_baseline = self.store.settings_secret_baseline_unlocked()
+            safe_patch = _drop_blank_secrets(patch, secret_baseline)
+            updated_local = _merge_editor_patch(editable, safe_patch)
+            prepared = self.store.prepare_settings_candidate_unlocked(updated_local, patch)
             effective_config = prepared.effective_config
             self._validate(effective_config)
             cleanup_prepared = False

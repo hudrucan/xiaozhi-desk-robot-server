@@ -232,6 +232,53 @@ class FullStateProvisioningTests(unittest.TestCase):
         self.assertEqual(reader["server"]["port"], 8012)
         self.assertEqual(self.effective()["server"]["port"], 8000)
 
+    def shared_authority(self):
+        self.run_provision()
+        obj = self.current_object()
+        obj["schema_version"] = 2
+        obj["layers"]["cluster"] = obj["layers"]["nodes"]["test-node"]["overrides"]
+        obj["layers"]["nodes"]["test-node"]["overrides"] = {}
+        self.drive.publish_object(obj, self.drive.manifest["revision"] + 1)
+        return copy.deepcopy(obj)
+
+    def test_shared_provisioning_adopts_equivalent_state_without_node_copies(self):
+        obj = self.shared_authority()
+        before = self.local_files()
+        uploads, revision = self.drive.uploads, self.drive.manifest["revision"]
+        result = self.run_provision()
+        self.assertEqual(result.config_revision, revision)
+        self.assertEqual(self.current_object(), obj)
+        self.assertEqual(self.drive.uploads, uploads)
+        self.assert_local_unchanged(before)
+
+        bootstrap = load_bootstrap(self.bootstrap_path)
+        candidate = GoogleDriveConfigStore({**bootstrap, "config_provider": "google_drive"},
+            transport=self.drive, secret_provider=self.fixture.secrets,
+            default_path=self.fixture.default_path, cache_dir=self.cache_dir)
+        with patch("config.config_store.get_config_store", return_value=self.local), \
+                patch("config.config_store.load_bootstrap", return_value=bootstrap), \
+                patch("config.config_store.create_config_store", return_value=candidate), \
+                patch("config.config_store.save_bootstrap") as save:
+            stage_provider_switch("google_drive")
+            save.assert_called_once()
+        self.assertEqual(self.current_object(), obj)
+        self.assertEqual(self.drive.uploads, uploads)
+        self.assertEqual(self.local_files(), before)
+
+    def test_shared_provisioning_rejects_local_difference_before_publication(self):
+        obj = self.shared_authority()
+        with self.local.locked():
+            overrides = self.local.read_unlocked()
+            overrides["prompt"] = "Conflicting local desired state"
+            self.local.commit_unlocked(overrides)
+        before = self.local_files()
+        uploads = self.drive.uploads
+        with self.assertRaises(ProvisioningReconciliation):
+            self.run_provision()
+        self.assertEqual(self.current_object(), obj)
+        self.assertEqual(self.drive.uploads, uploads)
+        self.assert_local_unchanged(before)
+
     def test_all_retained_formats_optimized_and_secrets_verified(self):
         self.run_provision()
         entries = self.effective()["static_soundbank"]["entries"]

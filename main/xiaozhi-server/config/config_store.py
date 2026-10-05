@@ -76,6 +76,15 @@ class ConfigStore(ABC):
         """Local candidates need no external assets or publication metadata."""
         return PreparedConfig(config, merge_configs(self.defaults_unlocked(), config))
 
+    def settings_overrides_unlocked(self):
+        return self.read_unlocked()
+
+    def settings_secret_baseline_unlocked(self):
+        return merge_configs(self.defaults_unlocked(), self.read_unlocked())
+
+    def prepare_settings_candidate_unlocked(self, config, patch):
+        return self.prepare_candidate_unlocked(config)
+
     def commit_prepared_unlocked(self, prepared, base_revision=None):
         """Explicit prepared path; direct commit_unlocked callers still prepare themselves."""
         if not isinstance(prepared, PreparedConfig):

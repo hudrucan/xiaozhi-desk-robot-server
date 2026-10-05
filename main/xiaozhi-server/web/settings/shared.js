@@ -1,4 +1,6 @@
 export const state = {
+  controlPlane: document.body.dataset.settingsMode === "control-plane",
+  cluster: null,
   config: {},
   configurationSource: {},
   baseRevision: null,

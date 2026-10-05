@@ -106,6 +106,27 @@ class CloudCloneTests(unittest.TestCase):
                 self.assertEqual(self.fixture.source().descriptor, self.original_source)
                 self.assert_no_identity()
 
+    def test_shared_clone_inherits_cluster_and_copies_only_explicit_exception(self):
+        from config.cloud_layers import resolve_layers
+        from config.config_loader import merge_configs
+
+        obj = self.config_object()
+        obj["schema_version"] = 2
+        obj["layers"]["cluster"] = obj["layers"]["nodes"]["test-node"]["overrides"]
+        obj["layers"]["nodes"]["test-node"]["overrides"] = {"server": {"port": 9002}}
+        self.drive.publish_object(obj, self.drive.manifest["revision"] + 1)
+        self.original_object = copy.deepcopy(obj)
+        self.clone()
+        cloned = self.config_object()
+        self.assertEqual(cloned["layers"]["cluster"], obj["layers"]["cluster"])
+        self.assertEqual(cloned["layers"]["nodes"]["new-box"], obj["layers"]["nodes"]["test-node"])
+        self.assertEqual(cloned["layers"]["nodes"]["new-box"]["overrides"], {"server": {"port": 9002}})
+        defaults = self.fixture.fixture.fixture.defaults
+        self.assertEqual(merge_configs(*resolve_layers(cloned, "new-box", defaults)),
+                         merge_configs(*resolve_layers(cloned, "test-node", defaults)))
+        self.assert_source_unchanged()
+        self.fixture.assert_no_runtime_state()
+
     def test_config_cas_conflict_resumes_with_new_cas_without_overwriting_source(self):
         self.drive.before_commit = lambda: setattr(self.drive, "etag", self.drive.etag + 1)
         with self.assertRaises(RecoveryConflict):

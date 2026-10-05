@@ -19,7 +19,7 @@ from config.config_loader import get_project_dir, merge_configs
 
 SECTION_ROOTS = {
     "runtime.yaml": (
-        "server", "delete_audio", "close_connection_no_voice_time", "tts_timeout",
+        "server", "cluster", "delete_audio", "close_connection_no_voice_time", "tts_timeout",
         "tool_call_timeout", "asr_min_audio_ms", "asr_audio_queue_max_frames",
         "stop_tts_notify_voice", "enable_websocket_ping", "tts_audio_send_delay",
         "xiaozhi",

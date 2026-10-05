@@ -17,6 +17,7 @@ import {
   renderSidebarLive,
 } from "./resources.js";
 import { $, clone, labelFor, state, toast, escapeHtml } from "./shared.js";
+import { renderCluster, setClusterActive } from "./cluster.js";
 
 const PAGE_IDS = [
   "overview",
@@ -30,18 +31,49 @@ const PAGE_IDS = [
   "integrations",
   "advanced",
   "source",
+  "cluster",
 ];
 const STATUS_SCOPES = { overview: "overview", diagnostics: "diagnostics" };
+const RUNTIME_PAGES = ["diagnostics", "logs", "soundbank", "memory"];
+
+function applyControlPlaneMode() {
+  document.querySelectorAll("[data-control-plane]").forEach((element) => {
+    element.classList.toggle("hidden", !state.controlPlane);
+  });
+  if (!state.controlPlane) return;
+  RUNTIME_PAGES.forEach((page) => {
+    document.querySelector(`.navigation a[href="#${page}"]`)?.classList.add("hidden");
+  });
+  document.querySelector(".sidebar-live").classList.add("hidden");
+  document.querySelector(".resource-panel").classList.add("hidden");
+  $("#endpointSummary").closest("article").classList.add("hidden");
+  $("#providerSummary").classList.add("hidden");
+  document.querySelector(".topbar h1").textContent = "Control-plane settings";
+  document.querySelector(".brand small").textContent = "Cluster control plane";
+  document.querySelector("#overview .badge").textContent = "Control plane";
+  $("#restartPanel p").textContent = "Desired configuration differs from the last recorded conversation startup. Cluster rolling restart is not implemented.";
+  ["restartButton", "restartNowButton"].forEach((id) => {
+    $(`#${id}`).disabled = true;
+    $(`#${id}`).textContent = "Rolling restart unavailable";
+  });
+  $("#sourceProvider").disabled = true;
+  $("#switchSourceButton").textContent = "Source switching unavailable";
+  $("#switchSourceButton").closest("article").querySelector(".section-copy").textContent =
+    "This process uses the node's provisioned Cloud bootstrap. Source switching is unavailable in standalone mode.";
+}
 
 function renderAll() {
   renderOverview();
   renderSource();
   renderConfiguration();
-  renderSoundbank();
-  renderMemory();
-  renderDiagnostics();
-  renderLogs();
-  renderSidebarLive();
+  if (state.controlPlane) renderCluster();
+  else {
+    renderSoundbank();
+    renderMemory();
+    renderDiagnostics();
+    renderLogs();
+    renderSidebarLive();
+  }
   $("#configPath").textContent = state.configurationSource.config_provider === "google_drive"
     ? `Desired: ${state.configPath} · Active/cache: local disk`
     : `Desired + active: ${state.configPath || "data/.config.yaml"}`;
@@ -55,6 +87,9 @@ function renderSource() {
     ["Current provider", source.config_provider === "google_drive" ? "Google Drive" : "Local"],
     ["Node ID", source.node_id],
     ...(source.config_provider === "google_drive" ? [
+      ["Config schema", source.schema_version],
+      ["Settings scope", source.settings_scope === "cluster" ? "Shared cluster" : "Legacy node"],
+      ["Shared cluster migration", source.cluster_migration_required ? "Explicit migration/reprovision required" : "Not required"],
       ["Desired environment", source.environment],
       ["Desired role", source.role],
       ["Active environment", source.active_environment],
@@ -77,10 +112,16 @@ function renderSource() {
   $("#sourceSummary").innerHTML = rows.map(([label, value]) =>
     `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd></div>`).join("");
   $("#sourceSemantics").textContent = source.config_provider === "google_drive"
-    ? "Drive is the desired source of truth. Local disk holds the desired cache and the active snapshot. Offline startup uses only the active snapshot as runtime last-known-good. Save publishes desired configuration; restart applies it to this node."
+    ? (source.settings_scope === "cluster"
+      ? "Save updates shared cluster desired configuration. Explicit node exceptions keep highest precedence. Plaintext secret changes are rejected because secrets remain node-local. Local disk retains desired cache and active LKG; restart applies the desired revision to this node."
+      : "Legacy Drive source: Save retains its node/legacy scope until explicit migration to shared cluster configuration. Local disk holds desired cache and active LKG; restart applies it to this node.")
     : "Local configuration is the source of truth for desired and active configuration. Save preserves atomic local writes; runtime changes use the existing restart flow.";
   $("#sourceProvider").value = source.pending_provider || source.config_provider || "local";
-  $("#switchSourceButton").disabled = Boolean(source.pending_provider);
+  if (state.controlPlane) {
+    $("#sourceSemantics").textContent =
+      "Standalone control plane manages desired configuration only. Node exceptions retain precedence; legacy sources keep their original scope until explicit migration. Conversation runtime is not started here, and cluster rolling restart is unavailable.";
+  }
+  $("#switchSourceButton").disabled = state.controlPlane || Boolean(source.pending_provider);
   $("#syncSourceButton").disabled = Boolean(source.pending_provider);
 }
 
@@ -102,7 +143,7 @@ async function syncSource() {
     if (!response.ok) throw new Error(payload.error || "Sync failed");
     if (!await loadSettings()) throw new Error("Sync succeeded, but settings reload failed. Reload before saving.");
     state.soundbankRetiredDrafts.clear();
-    toast("Desired configuration synced. Active configuration changes after restart.");
+    toast(state.controlPlane ? "Desired configuration synced; recorded active state is unchanged." : "Desired configuration synced. Active configuration changes after restart.");
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -135,6 +176,7 @@ async function switchSource() {
 }
 
 function activeStatusScope() {
+  if (state.controlPlane) return null;
   return STATUS_SCOPES[state.activePage] || null;
 }
 
@@ -193,7 +235,7 @@ function restartStatusPolling() {
   stopStatusPolling();
   state.statusGeneration += 1;
   const generation = state.statusGeneration;
-  renderSidebarLive();
+  if (!state.controlPlane) renderSidebarLive();
   if (activeStatusScope() && !document.hidden) loadStatus(generation);
 }
 
@@ -242,7 +284,7 @@ async function saveSettings() {
     return;
   }
   state.soundbankSaving = true;
-  renderSoundbank();
+  if (!state.controlPlane) renderSoundbank();
   $("#saveButton").disabled = true;
   $("#saveState").textContent = "Saving…";
   try {
@@ -252,8 +294,10 @@ async function saveSettings() {
       body: JSON.stringify({
         config: state.patch,
         base_revision: state.baseRevision,
-        soundbank_draft_id: state.soundbankDraftId,
-        soundbank_retired_drafts: [...state.soundbankRetiredDrafts],
+        ...(state.controlPlane ? {} : {
+          soundbank_draft_id: state.soundbankDraftId,
+          soundbank_retired_drafts: [...state.soundbankRetiredDrafts],
+        }),
       }),
     });
     const payload = await response.json();
@@ -277,7 +321,7 @@ async function saveSettings() {
     state.configuredSecrets = new Set(payload.configured_secrets || []);
     state.restartRequired = Boolean(payload.restart_required);
     renderAll();
-    toast(state.restartRequired
+    toast(state.controlPlane ? "Desired configuration saved. Cluster rolling restart is not implemented." : state.restartRequired
       ? "Configuration saved. Restart to apply it."
       : "Configuration saved and applied.");
     const cleanup = payload.soundbank_cleanup;
@@ -289,7 +333,7 @@ async function saveSettings() {
     toast(error.message, true);
   } finally {
     state.soundbankSaving = false;
-    renderSoundbank();
+    if (!state.controlPlane) renderSoundbank();
   }
 }
 
@@ -306,6 +350,10 @@ function discardChanges() {
 }
 
 async function restartServer() {
+  if (state.controlPlane) {
+    toast("Cluster rolling restart is not implemented.", true);
+    return;
+  }
   if (Object.keys(state.patch).length > 0) {
     toast("Save or discard changes before restarting.", true);
     return;
@@ -341,11 +389,13 @@ async function restartServer() {
 
 function pageFromHash() {
   const page = window.location.hash.slice(1);
-  return PAGE_IDS.includes(page) ? page : "overview";
+  return PAGE_IDS.includes(page) ? page : (state.controlPlane ? "cluster" : "overview");
 }
 
 function setActivePage(page, options = {}) {
-  const nextPage = PAGE_IDS.includes(page) ? page : "overview";
+  let nextPage = PAGE_IDS.includes(page) ? page : "overview";
+  if (state.controlPlane && RUNTIME_PAGES.includes(nextPage)) nextPage = "cluster";
+  if (!state.controlPlane && nextPage === "cluster") nextPage = "overview";
   state.activePage = nextPage;
   document.querySelectorAll(".page-section").forEach((section) => {
     section.classList.toggle("active", section.id === nextPage);
@@ -362,8 +412,11 @@ function setActivePage(page, options = {}) {
   document.title = `${labelFor(nextPage)} · Xiaozhi Server`;
   if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "auto" });
   restartStatusPolling();
-  setLogsActive(nextPage === "logs" && !document.hidden);
-  if (nextPage === "memory") loadMemory();
+  setClusterActive(state.controlPlane && nextPage === "cluster" && !document.hidden);
+  if (!state.controlPlane) {
+    setLogsActive(nextPage === "logs" && !document.hidden);
+    if (nextPage === "memory") loadMemory();
+  }
 }
 
 function initializeNavigation() {
@@ -379,10 +432,12 @@ function initializeNavigation() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       stopStatusPolling();
-      setLogsActive(false);
+      setClusterActive(false);
+      if (!state.controlPlane) setLogsActive(false);
     } else {
       restartStatusPolling();
-      setLogsActive(state.activePage === "logs");
+      setClusterActive(state.controlPlane && state.activePage === "cluster");
+      if (!state.controlPlane) setLogsActive(state.activePage === "logs");
     }
   });
   setActivePage(pageFromHash(), { scroll: false });
@@ -395,8 +450,11 @@ $("#restartNowButton").addEventListener("click", restartServer);
 $("#syncSourceButton").addEventListener("click", syncSource);
 $("#switchSourceButton").addEventListener("click", switchSource);
 initializeConfiguration(updateDirtyState);
-initializeMemory();
-initializeLogs();
-initializePushTts();
+applyControlPlaneMode();
+if (!state.controlPlane) {
+  initializeMemory();
+  initializeLogs();
+  initializePushTts();
+}
 initializeNavigation();
 loadSettings();

@@ -1,0 +1,9 @@
+# HTTP/Cloud Config/Core NATS only; no conversation providers or model runtimes.
+aiohttp==3.13.2
+PyYAML==6.0.3
+portalocker==3.2.0
+google-auth==2.59.0
+requests==2.32.5
+nats-py==2.16.0
+# Existing retained P3 cloud assets require codec validation during Config Save.
+opuslib_next==1.1.5

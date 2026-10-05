@@ -12,13 +12,14 @@ from pathlib import Path
 import portalocker
 
 from config.config_loader import get_project_dir, load_default_config, merge_configs
-from config.cloud_secrets import LocalSecretStore
+from config.cloud_secrets import LocalSecretStore, validate_blank_secret_preservation, validate_cloud_secrets
 from config.cloud_soundbank import CloudSoundbankAssets
 from config.cloud_memory import CloudMemoryStore, explicit_memory_config, memory_path
 from config.memory_reconciliation import require_memory_match
 from core.memory_storage import MemoryConflict, MemoryStorageError, MemoryUnavailable
 from config.cloud_layers import (
-    centralized, node_assignment, resolve_layers, update_node_overrides, validate_layers,
+    centralized, migrate_cluster_object, node_assignment, resolve_layers, shared_cluster,
+    update_settings_overrides, validate_layers,
 )
 from config.config_store import (
     ConfigConflict, ConfigStore, ConfigUnavailable, PreparedConfig, canonical_bytes, checksum,
@@ -50,7 +51,7 @@ def validate_object(content, manifest, validator, repo_defaults=None):
     value = json.loads(content)
     if (not isinstance(value, dict) or set(value) != {"schema_version", "layers"}
             or type(value.get("schema_version")) is not int
-            or value["schema_version"] != 1):
+            or value["schema_version"] not in (1, 2)):
         raise ValueError("Invalid cloud configuration object")
     # Cache original canonical layers, never a resolved effective secret snapshot.
     if canonical_bytes(value) != content:
@@ -92,6 +93,9 @@ class GoogleDriveConfigStore(ConfigStore):
         self.last_error = None
         self.sync_status = "not_synced"
         self.memory_store = None
+        # Optional, non-authoritative observer installed by the standalone control
+        # plane. It receives a committed revision only, never Config/secret data.
+        self.publication_observer = None
 
     def _repo_defaults(self):
         return load_default_config(self.default_path)
@@ -217,6 +221,14 @@ class GoogleDriveConfigStore(ConfigStore):
         obj = self._desired_view()["payload"]["object"]
         return self._resolve(obj)[0]
 
+    def settings_overrides_unlocked(self):
+        obj = self._desired_view()["payload"]["object"]
+        return copy.deepcopy(obj["layers"]["cluster"]) if shared_cluster(obj) else self.read_unlocked()
+
+    def settings_secret_baseline_unlocked(self):
+        obj = self._desired_view()["payload"]["object"]
+        return self.settings_overrides_unlocked() if shared_cluster(obj) else super().settings_secret_baseline_unlocked()
+
     def revision_unlocked(self):
         return self._desired_view()["payload"]["manifest"]["revision"]
 
@@ -239,29 +251,81 @@ class GoogleDriveConfigStore(ConfigStore):
         self.commit_object_unlocked(prepared.cloud_object, base_revision)
 
     def _persist_secrets(self, pending_secrets):
+        if not pending_secrets:
+            return
         try:
-            self.secrets.put_many(pending_secrets or {})
+            self.secrets.put_many(pending_secrets)
         except OSError:
             raise ConfigUnavailable(
                 "Node-local secret storage unavailable; cloud configuration was not published"
             ) from None
 
-    def prepare_candidate_unlocked(self, config):
-        config, pending_secrets = self.secrets.externalize(config)
-        self._persist_secrets(pending_secrets)
+    def prepare_settings_candidate_unlocked(self, config, patch):
+        return self.prepare_candidate_unlocked(config, settings_patch=patch)
+
+    def prepare_candidate_unlocked(self, config, *, settings_patch=None):
+        current_obj = self._desired_view()["payload"]["object"]
+        if shared_cluster(current_obj):
+            try:
+                validate_cloud_secrets(config)
+            except ValueError:
+                raise ValueError("Shared Cloud Settings cannot save plaintext secrets; provision the same named references on every member before changing shared configuration") from None
+            config = copy.deepcopy(config)
+        else:
+            config, pending_secrets = self.secrets.externalize(config)
+            self._persist_secrets(pending_secrets)
         repo_defaults = self._repo_defaults()
-        obj = update_node_overrides(
-            self._desired_view()["payload"]["object"], self.bootstrap["node_id"], config
-        )
+        obj = update_settings_overrides(current_obj, self.bootstrap["node_id"], config)
+        validate_layers(obj, self.validator, repo_defaults)
+        if shared_cluster(obj) and settings_patch is not None:
+            for node in obj["layers"]["nodes"]:
+                before = merge_configs(*resolve_layers(current_obj, node, repo_defaults))
+                after = merge_configs(*resolve_layers(obj, node, repo_defaults))
+                validate_blank_secret_preservation(settings_patch, before, after)
         defaults, overrides = self._resolve(obj, repo_defaults)
         effective = merge_configs(defaults, overrides)
         self.validator(effective)
         current_defaults, current_overrides = self._resolve(self._desired_view()["payload"]["object"], repo_defaults)
+        if shared_cluster(obj):
+            # Publish the shared view even when a serving-node exception masks
+            # its file. Restore raw exceptions before publishing the node view.
+            assignment = copy.deepcopy(obj["layers"]["nodes"][self.bootstrap["node_id"]])
+            shared_view = copy.deepcopy(obj)
+            shared_view["layers"]["nodes"][self.bootstrap["node_id"]]["overrides"] = {}
+            old_shared = copy.deepcopy(current_obj)
+            old_shared["layers"]["nodes"][self.bootstrap["node_id"]]["overrides"] = {}
+            obj = self.soundbank_assets.publish_layers(
+                shared_view, self.bootstrap["node_id"], repo_defaults,
+                merge_configs(*self._resolve(old_shared, repo_defaults)),
+            )
+            obj["layers"]["nodes"][self.bootstrap["node_id"]] = assignment
         published = self.soundbank_assets.publish_layers(
             obj, self.bootstrap["node_id"], repo_defaults, merge_configs(current_defaults, current_overrides)
         )
         defaults, overrides = self._resolve(published, repo_defaults)
-        return PreparedCloudConfig(overrides, merge_configs(defaults, overrides), self, published)
+        editable = published["layers"]["cluster"] if shared_cluster(published) else overrides
+        return PreparedCloudConfig(copy.deepcopy(editable), merge_configs(defaults, overrides), self, published)
+
+    def migrate_cluster(self, node_ids, *, base_revision=None, apply=False):
+        """Explicit preview/apply with live revision/ETag, never on startup."""
+        with self.locked():
+            super().prepare_commit_unlocked(base_revision)
+            self.refresh_unlocked(strict=True)
+            revision = self.revision_unlocked()
+            if apply and type(base_revision) is not int:
+                raise ValueError("Migration apply requires the preview base_revision")
+            if base_revision is not None and (type(base_revision) is not int or base_revision != revision):
+                self.conflict = True
+                raise ConfigConflict("Cloud revision changed; preview migration again before applying")
+            current = self._desired_view()["payload"]["object"]
+            updated = migrate_cluster_object(current, node_ids, self.validator, self._repo_defaults())
+            changed = canonical_bytes(current) != canonical_bytes(updated)
+            if apply and changed:
+                self.commit_object_unlocked(updated, revision)
+            return {"base_revision": revision, "desired_revision": self.revision_unlocked(),
+                    "changed": changed, "applied": apply and changed,
+                    "schema_version": updated["schema_version"], "nodes": sorted(node_ids),
+                    "verified_nodes": sorted(updated["layers"]["nodes"])}
 
     def mutate(self, mutation, base_revision=None):
         """CLI and Settings share validation, immutable upload, verification and CAS."""
@@ -322,6 +386,13 @@ class GoogleDriveConfigStore(ConfigStore):
             # Cloud has committed; returning a failed save could encourage retries.
             self.sync_status = "cache_error"
             self.last_error = "Cloud committed; local desired cache write failed"
+        if shared_cluster(obj) and self.publication_observer is not None:
+            try:
+                self.publication_observer(manifest["revision"])
+            except Exception:
+                # CAS already succeeded. Observer failure cannot fail/undo Save.
+                import logging
+                logging.getLogger("xiaozhi.config").warning("Committed config hint could not be queued")
 
     def mark_applied(self):
         with self.locked():
@@ -476,5 +547,8 @@ class GoogleDriveConfigStore(ConfigStore):
             active_source="data/cloud-config/active.json",
             cache_path="data/cloud-config/desired.json", sync_status=self.sync_status,
             last_sync=self.last_sync, last_error=self.last_error,
+            schema_version=self._desired_view()["payload"]["object"]["schema_version"],
+            settings_scope=("cluster" if shared_cluster(self._desired_view()["payload"]["object"]) else "legacy_node"),
+            cluster_migration_required=not shared_cluster(self._desired_view()["payload"]["object"]),
         )
         return result

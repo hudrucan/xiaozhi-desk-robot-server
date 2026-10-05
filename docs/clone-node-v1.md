@@ -3,7 +3,12 @@
 The first-run wizard offers **Restore existing node** (the default) and **Create
 a new node from selected backup**. Clone copies that backup's provider credentials
 and secrets intentionally. It also copies the source node's environment, role and
-node overrides; global/environment/role layers remain shared. Soundbank pointers
+node overrides; global/environment/role layers remain shared. With Config schema
+V2, `cluster` is also shared: the clone inherits it automatically and copies only
+the source assignment and explicit node exceptions, never a resolved runtime
+snapshot. Migrate homogeneous V1 clones using the preview/apply procedure in
+[Cloud Config](cloud-config-v1.md#explicit-shared-cluster-migration).
+Soundbank pointers
 continue to refer to immutable remote assets. No local cache, runtime directory
 or materialized Memory file is copied.
 
@@ -13,6 +18,11 @@ digits, dots, underscores and hyphens, begin with a letter/digit, and are limite
 to 192 characters. Both recovery descriptor and Cloud Config must lack this ID.
 Legacy Config, including the old centralized frozen-defaults variant, is rejected.
 Existing-node restore retains its original request and recovery flow.
+
+Shared secret references still resolve from each node's private store. Clone
+re-encrypts the selected backup's exact named values for the new identity; it does
+not make shared Settings capable of distributing or rotating plaintext secrets.
+An absent required reference fails preflight before activation.
 
 ## Publication and retry
 

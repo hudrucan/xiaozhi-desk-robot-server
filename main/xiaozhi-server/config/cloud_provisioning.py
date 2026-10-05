@@ -9,7 +9,7 @@ from pathlib import Path
 import portalocker
 
 from config.bootstrap import load_bootstrap, save_bootstrap
-from config.cloud_layers import centralized, update_node_overrides
+from config.cloud_layers import centralized, resolve_layers, shared_cluster, update_node_overrides, update_settings_overrides
 from config.cloud_memory import CloudMemoryStore, MemorySchema, parse_manifest as parse_memory_manifest
 from config.cloud_secrets import LocalSecretStore, REFERENCE, SecretProvider
 from config.config_loader import get_project_dir, merge_configs
@@ -263,16 +263,32 @@ def provision_cloud_state(local_store, *, bootstrap_path=None, transport=None, s
                 baseline, _ = cloud._resolve(update_node_overrides(current_obj, original_bootstrap["node_id"], {}))
                 current_defaults, current_overrides = cloud._resolve(current_obj)
                 current_effective = merge_configs(current_defaults, current_overrides)
-                local_overrides = secrets.resolve(semantic_config(layers["overrides"]))
-                comparison = _PreviewSecrets(secrets, comparison=True).resolve(semantic_config(baseline))
-                patch = merge_configs(local_overrides, _delta(source_semantics, merge_configs(comparison, local_overrides)))
-                patch = _reuse_references(patch, current_effective, secrets)
-                proposed = update_node_overrides(current_obj, original_bootstrap["node_id"], patch)
+                if shared_cluster(current_obj):
+                    # An existing shared authority is adopted, never overwritten
+                    # from one node's Local runtime or flattened into node overrides.
+                    comparison = _PreviewSecrets(secrets, comparison=True).resolve(semantic_config(current_effective))
+                    if not _equal(source_semantics, comparison):
+                        raise ProvisioningReconciliation()
+                    patch = copy.deepcopy(current_obj["layers"]["cluster"])
+                else:
+                    local_overrides = secrets.resolve(semantic_config(layers["overrides"]))
+                    comparison = _PreviewSecrets(secrets, comparison=True).resolve(semantic_config(baseline))
+                    patch = merge_configs(local_overrides, _delta(source_semantics, merge_configs(comparison, local_overrides)))
+                    patch = _reuse_references(patch, current_effective, secrets)
+                proposed = update_settings_overrides(current_obj, original_bootstrap["node_id"], patch)
                 patch = cloud.soundbank_assets.provisioning_overrides(proposed, original_bootstrap["node_id"], cloud._repo_defaults())
 
                 # Pure secret externalization and full all-node validation before any upload.
                 preview, pending = secrets.externalize(patch)
-                preview_obj = update_node_overrides(current_obj, original_bootstrap["node_id"], preview)
+                preview_obj = update_settings_overrides(current_obj, original_bootstrap["node_id"], preview)
+                if shared_cluster(current_obj):
+                    if pending:
+                        raise ProvisioningReconciliation()
+                    for node in current_obj["layers"]["nodes"]:
+                        before = semantic_config(merge_configs(*resolve_layers(current_obj, node, cloud._repo_defaults())))
+                        after = semantic_config(merge_configs(*resolve_layers(preview_obj, node, cloud._repo_defaults())))
+                        if not _equal(before, after):
+                            raise ProvisioningReconciliation()
                 content = canonical_bytes(preview_obj)
                 preview_manifest = {"schema_version": 1, "revision": revision + 1,
                                     "config": {"file_id": "pending", "sha256": checksum(content)}}

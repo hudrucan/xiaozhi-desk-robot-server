@@ -36,6 +36,7 @@
           <a href="#integrations"><span>09</span>Integrations</a>
           <a href="#advanced"><span>10</span>Advanced</a>
           <a href="#source"><span>11</span>Configuration Source</a>
+          <a href="#cluster" class="hidden" data-control-plane><span>12</span>Cluster</a>
         </nav>
 
         <div class="sidebar-live" aria-label="Live server status">
@@ -84,6 +85,21 @@
         </header>
 
         <div class="content">
+          <article class="panel hidden" data-control-plane>
+            <h3>Standalone control plane</h3>
+            <p>Edits update desired configuration. Conversation status, logs, Push TTS,
+              active Memory, soundbank generation/preview and rolling restart are unavailable here.
+              The configured VIP is desired state; assignment and failover are not deployed.</p>
+          </article>
+          <section id="cluster" class="page-section hidden" data-control-plane>
+            <div class="section-heading">
+              <div><p class="eyebrow">Shared desired state</p><h2>Cluster</h2></div>
+            </div>
+            <article class="panel">
+              <dl class="detail-list" id="clusterSummary"></dl>
+              <p id="clusterStatusNote" class="section-copy">Loading cluster status…</p>
+            </article>
+          </section>
           <section id="overview" class="page-section active">
             <div class="section-heading">
               <div>

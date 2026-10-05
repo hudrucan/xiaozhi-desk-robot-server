@@ -139,6 +139,23 @@ class CloudRecoveryTests(unittest.TestCase):
         self.assertEqual((self.drive.uploads, self.drive.files, self.drive.descriptor_updates), before)
         self.assertEqual(len(self.drive.markers), 1)
 
+    def test_shared_schema_restore_keeps_cluster_authority_and_node_local_secrets(self):
+        self.provision()
+        obj = json.loads(self.drive.download(self.drive.manifest["config"]["file_id"]))
+        obj["schema_version"] = 2
+        obj["layers"]["cluster"] = obj["layers"]["nodes"]["test-node"]["overrides"]
+        obj["layers"]["nodes"]["test-node"]["overrides"] = {}
+        self.drive.publish_object(obj, self.drive.manifest["revision"] + 1)
+        files, uploads = copy.deepcopy(self.drive.files), self.drive.uploads
+        result = self.restore()
+        self.assertEqual(result.provider, "google_drive")
+        self.assertEqual(self.drive.files, files)
+        self.assertEqual(self.drive.uploads, uploads)
+        dataset = json.loads(next((self.data / "node-secrets").glob("*.json")).read_bytes())
+        self.assertEqual(dataset, self.secret_store.export_dataset())
+        self.assertEqual(load_bootstrap(self.data / "bootstrap.yaml")["node_id"], "test-node")
+        self.assert_no_runtime_state()
+
     def test_lost_initial_descriptor_response_is_discovered_on_rerun(self):
         self.drive.lost_create_response = True
         before = self.fixture.bootstrap_path.read_bytes()

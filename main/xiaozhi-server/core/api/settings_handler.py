@@ -1,5 +1,4 @@
 import asyncio
-import ipaddress
 import os
 import re
 
@@ -8,6 +7,7 @@ from aiohttp import web
 from config.config_loader import get_project_dir
 from config.config_store import ConfigConflict, ConfigUnavailable, stage_provider_switch
 from core.api.base_handler import BaseHandler
+from core.api.settings_access import SettingsAccess
 from core.notification_audio import (
     PRESENTATION_FIELDS,
     PushTtsError,
@@ -21,7 +21,7 @@ from core.utils.runtime_diagnostics import runtime_diagnostics
 from core.utils.ui_log_buffer import ui_log_buffer
 
 
-class SettingsHandler(BaseHandler):
+class SettingsHandler(BaseHandler, SettingsAccess):
     def __init__(self, config, request_restart):
         super().__init__(config)
         self.request_restart = request_restart
@@ -40,35 +40,6 @@ class SettingsHandler(BaseHandler):
                 self.logger.info(f"Soundbank startup cleanup: {result}")
         except (OSError, ValueError, SoundbankError) as error:
             self.logger.warning(f"Soundbank startup cleanup deferred: {error}")
-
-    @staticmethod
-    def _disable_cache(response):
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        return response
-
-    def _require_access(self, request):
-        if self.allow_remote:
-            return
-        peer = request.transport.get_extra_info("peername") if request.transport else None
-        host = peer[0] if peer else ""
-        try:
-            address = ipaddress.ip_address(host)
-            mapped_address = getattr(address, "ipv4_mapped", None)
-            if address.is_loopback or (
-                mapped_address is not None and mapped_address.is_loopback
-            ):
-                return
-        except ValueError:
-            pass
-        raise web.HTTPForbidden(
-            text="Settings UI only accepts local requests. Set "
-            "server.settings.allow_remote in your local runtime config to enable LAN access."
-        )
-
-    def _require_json(self, request):
-        if request.content_type != "application/json":
-            raise web.HTTPUnsupportedMediaType(text="Expected application/json")
 
     @staticmethod
     def _soundbank_draft_id(body):
@@ -95,37 +66,6 @@ class SettingsHandler(BaseHandler):
         return not (
             isinstance(diagnostics_patch, dict)
             and set(diagnostics_patch) == {"thresholds_ms"}
-        )
-
-    async def handle_index(self, request):
-        self._require_access(request)
-        return self._disable_cache(
-            web.FileResponse(os.path.join(self.web_dir, "index.html"))
-        )
-
-    async def handle_redirect(self, request):
-        self._require_access(request)
-        raise web.HTTPFound("/settings/")
-
-    async def handle_asset(self, request):
-        self._require_access(request)
-        filename = request.match_info["filename"]
-        if filename not in {
-            "app.js",
-            "configuration.js",
-            "diagnostics.js",
-            "favicon.svg",
-            "memory.js",
-            "push_tts.js",
-            "resources.js",
-            "shared.js",
-            "soundbank.js",
-            "logs.js",
-            "styles.css",
-        }:
-            raise web.HTTPNotFound()
-        return self._disable_cache(
-            web.FileResponse(os.path.join(self.web_dir, filename))
         )
 
     async def handle_get(self, request):

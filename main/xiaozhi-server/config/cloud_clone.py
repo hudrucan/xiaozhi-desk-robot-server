@@ -267,6 +267,9 @@ def clone_cloud_node(source, source_node_id, new_node_id, passphrase, credential
             if value is None:
                 if new_node_id in obj["layers"]["nodes"]:
                     raise CloneNodeConflict()
+                # V2 cluster state is inherited from the same authority. Copy
+                # only the assignment and explicit exceptions, never a resolved
+                # runtime snapshot into the new node's overrides.
                 assignment = copy.deepcopy(obj["layers"]["nodes"][source_node_id])
                 _preflight(target_store, obj, assignment, new_node_id)
                 encrypted = encrypt_dataset(dataset, identity["source_id"], new_node_id, passphrase)

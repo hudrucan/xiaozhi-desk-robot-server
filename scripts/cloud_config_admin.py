@@ -11,7 +11,7 @@ PROJECT = Path(__file__).resolve().parents[1] / "main/xiaozhi-server"
 sys.path.insert(0, str(PROJECT))
 
 from config.bootstrap import load_bootstrap
-from config.cloud_layers import centralized, legacy_centralized
+from config.cloud_layers import centralized, legacy_centralized, shared_cluster
 from config.cloud_secrets import LocalSecretStore
 from config.config_store import ConfigConflict, ConfigUnavailable
 from config.google_drive_config import GoogleDriveConfigStore
@@ -28,6 +28,11 @@ def topology_mutation(obj, operation, *, name=None, layer=None, environment=None
     layers = obj["layers"]
     if operation == "set-global":
         layers["global"] = copy.deepcopy(layer)
+        return
+    if operation == "set-cluster":
+        if not shared_cluster(obj):
+            raise TopologyError("Explicitly migrate centralized V1 before editing the shared cluster layer")
+        layers["cluster"] = copy.deepcopy(layer)
         return
     if not isinstance(name, str) or not name.strip():
         raise TopologyError("Scope/node name must be a non-empty string")
@@ -71,6 +76,9 @@ def topology_mutation(obj, operation, *, name=None, layer=None, environment=None
 
 
 def run_operation(store, operation, *, base_revision=None, **options):
+    if operation == "migrate-cluster":
+        return {"operation": operation, **store.migrate_cluster(
+            options["nodes"], base_revision=base_revision, apply=options.get("apply", False))}
     if operation == "show":
         with store.locked():
             store.refresh_unlocked(strict=True)
@@ -89,8 +97,14 @@ def build_parser():
     parser.add_argument("--base-revision", type=int, help="Optional revision previously inspected with show")
     operations = parser.add_subparsers(dest="operation", required=True)
     operations.add_parser("show")
-    command = operations.add_parser("set-global")
-    command.add_argument("--file", type=Path, required=True, help="YAML/JSON override object replacing this scope")
+    for name in ("set-global", "set-cluster"):
+        command = operations.add_parser(name)
+        command.add_argument("--file", type=Path, required=True, help="YAML/JSON reference-only override object replacing this scope")
+    command = operations.add_parser("migrate-cluster", help="Preview/apply safe V1 node-to-cluster promotion")
+    command.add_argument("--nodes", nargs="+", required=True)
+    mode = command.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="Preview only (default)")
+    mode.add_argument("--apply", action="store_true", help="Publish using the inspected --base-revision")
     for scope in ("environment", "role"):
         command = operations.add_parser("set-" + scope)
         command.add_argument("name")
@@ -122,6 +136,8 @@ def main(argv=None, store_factory=GoogleDriveConfigStore):
             print("Stored secret locally; cloud source and provider selection unchanged.")
             return 0
         options = {}
+        if args.operation == "migrate-cluster":
+            options.update(nodes=args.nodes, apply=args.apply)
         for key in ("name", "environment", "role"):
             value = getattr(args, key, None)
             if args.operation == "add-node" and value == "-" and key != "name":

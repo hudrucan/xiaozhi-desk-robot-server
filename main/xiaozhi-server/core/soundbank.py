@@ -18,7 +18,7 @@ import unicodedata
 import wave
 
 from config.config_loader import get_project_dir
-from core.utils import opus_encoder_utils, p3, text_utils
+from core.utils import p3, text_utils
 from core.utils.config_secrets import is_credential_name, normalize_config_name
 
 
@@ -752,6 +752,9 @@ class SoundbankAuthoringService:
 
     @staticmethod
     def _compile_p3(normalized_path, output_path, sample_rate):
+        # Config validation/Settings reads need no encoder or NumPy runtime.
+        from core.utils import opus_encoder_utils
+
         frame_count, pcm_data = SoundbankAuthoringService._validate_wav(
             normalized_path, sample_rate
         )

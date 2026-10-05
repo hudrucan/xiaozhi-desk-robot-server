@@ -224,6 +224,9 @@ function renderRuntime() {
       field("server.settings.allow_remote", "Allow settings over LAN", { type: "boolean", help: "Disabled by default. Enable only on a trusted network." }),
       field("enable_websocket_ping", "WebSocket ping", { type: "boolean" }),
     ]),
+    settingsGroup("Cluster ingress", "Desired address only; VIP assignment and failover are not configured here.", [
+      field("cluster.ingress.vip", "Shared ingress VIP", { help: "Portable IPv4 unicast address. Network interface selection belongs to node deployment." }),
+    ]),
     settingsGroup("Turn limits", "Timeouts and queue boundaries for deterministic turn cleanup.", [
       field("close_connection_no_voice_time", "Idle disconnect (seconds)"),
       field("tts_timeout", "TTS timeout (seconds)"),

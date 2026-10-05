@@ -1,6 +1,11 @@
 # Reference defaults: runtime.
 # Put deployment-specific overrides and secrets in data/.config.yaml.
 
+cluster:
+  ingress:
+    # Shared desired state only; no VIP assignment or failover is performed here.
+    vip: 192.168.1.186
+
 server:
   # Server listen address and WebSocket port.
   ip: 0.0.0.0

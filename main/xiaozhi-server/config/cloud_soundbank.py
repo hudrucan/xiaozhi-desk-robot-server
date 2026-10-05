@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-from config.cloud_layers import centralized, legacy_centralized, resolve_layers
+from config.cloud_layers import centralized, legacy_centralized, resolve_layers, shared_cluster
 from config.config_loader import merge_configs
 from config.config_store import ConfigUnavailable
 from core.soundbank import (
@@ -194,6 +194,8 @@ class CloudSoundbankAssets:
             for name, scope in (("environment", "environments"), ("role", "roles")):
                 if node[name] is not None:
                     sources.append(layers[scope][node[name]])
+            if shared_cluster(updated):
+                sources.append(layers["cluster"])
             sources.append(node["overrides"])
 
         def stamp(value, owner):
@@ -222,7 +224,8 @@ class CloudSoundbankAssets:
         """Explicitly own only repo-default files, leaving cloud file owners intact."""
         updated = copy.deepcopy(obj)
         _, destinations, effective = self._publication_plan(updated, node_id, repo_defaults)
-        layer = (updated["layers"]["nodes"][node_id]["overrides"] if centralized(updated)
+        layer = (updated["layers"]["cluster"] if shared_cluster(updated) else
+                 updated["layers"]["nodes"][node_id]["overrides"] if centralized(updated)
                  else updated["layers"]["overrides"])
         for phrase, optimized, owner in destinations:
             if owner:

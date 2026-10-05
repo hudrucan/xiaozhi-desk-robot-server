@@ -61,6 +61,42 @@ def validate_cloud_secrets(value):
     _walk(value, validate)
 
 
+def validate_blank_secret_preservation(patch, before, after):
+    """A redacted shared edit must not remove inherited/per-node references."""
+    missing = object()
+
+    def existing_item(item, index, values):
+        values = values if isinstance(values, list) else []
+        if isinstance(item, dict):
+            identified = False
+            for key in ("url", "name", "id"):
+                if item.get(key) not in (None, ""):
+                    identified = True
+                    match = next((value for value in values
+                                  if isinstance(value, dict) and value.get(key) == item[key]), missing)
+                    if match is not missing:
+                        return match
+            if identified:
+                return missing
+        return values[index] if index < len(values) else missing
+
+    def walk(value, previous, candidate):
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                walk(item, existing_item(item, index, previous), existing_item(item, index, candidate))
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                old = previous.get(key, missing) if isinstance(previous, dict) else missing
+                new = candidate.get(key, missing) if isinstance(candidate, dict) else missing
+                if is_secret_name(key) and (child is None or str(child).strip() == ""):
+                    if old != new:
+                        raise ValueError("Shared blank secret fields cannot safely retain inherited/node exceptions; use coordinated secret references")
+                else:
+                    walk(child, old, new)
+
+    walk(patch, before, after)
+
+
 class SecretProvider(ABC):
     """Settings supplies values; only references cross the cloud boundary."""
 

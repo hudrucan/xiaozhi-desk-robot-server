@@ -5,6 +5,13 @@ exact named node-secret dataset. Config, Soundbank and Memory retain their exist
 authorities and persistence protocols. It restores no arbitrary `data/` files and
 starts no server. Firmware is unchanged.
 
+Config schema V2 adds shared `cluster` desired state above role and below explicit
+node exceptions. Recovery reads this authority without flattening it into node
+overrides or Local files. It retains the encrypted backup's exact reference names
+in the restored node-local secret store. Legacy sources remain recoverable under
+their existing rules; recovery never migrates a source implicitly. See
+[Cloud Config migration](cloud-config-v1.md#explicit-shared-cluster-migration).
+
 ## Prepare a recoverable source
 
 With an existing app-owned Drive folder/Config manifest and Local deployment,
@@ -35,7 +42,9 @@ omit it retain the earlier Config/Soundbank/Memory-only behavior and do not gain
 format-box secret recovery. The normal CLI always requests encrypted recovery.
 
 For an already-provisioned Local or Cloud node, refresh the recovery backup after
-Settings creates new secret references:
+new named references are provisioned locally (or legacy node-scoped Settings
+creates references). Shared V2 Settings rejects plaintext secret changes; it
+cannot rotate every member's local secret store atomically:
 
 ```bash
 main/xiaozhi-server/.venv/bin/python scripts/provision_cloud_state.py --backup-secrets

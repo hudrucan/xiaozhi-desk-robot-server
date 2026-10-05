@@ -820,6 +820,50 @@ class CloudSoundbankTests(unittest.TestCase):
         self.assertEqual(second_store.active_revision, 3)
         self.assertEqual(self.drive.events[-1][0], "cas")
 
+    def test_shared_settings_pointers_stay_at_cluster_owner(self):
+        obj = copy.deepcopy(self.obj)
+        obj["schema_version"] = 2
+        obj["layers"]["cluster"] = obj["layers"]["nodes"]["test-node"]["overrides"]
+        obj["layers"]["nodes"]["test-node"]["overrides"] = {}
+        obj["layers"]["nodes"]["node2"] = {"environment": None, "role": None, "overrides": {}}
+        self.drive.publish_object(obj, 2)
+        self.save({"log": {"log_level": "DEBUG"}}, revision=2)
+        saved = self.current_object()
+        entry = saved["layers"]["cluster"]["static_soundbank"]["entries"]["Hello"]
+        self.assertIn("cloud", entry)
+        self.assertIn("cloud", entry["optimized"])
+        for node in ("test-node", "node2"):
+            self.assertEqual(saved["layers"]["nodes"][node]["overrides"], {})
+            self.assertEqual(self.resolved_entry(saved, node), entry)
+        changed = wav_bytes(500)
+        (self.root / "updated.wav").write_bytes(changed)
+        self.save({"static_soundbank": {"entries": {"Hello": {
+            **self.entry, "file": "updated.wav"}}}}, revision=3)
+        saved = self.current_object()
+        for node in ("test-node", "node2"):
+            effective = self.resolved_entry(saved, node)
+            self.assertEqual(effective["file"], "updated.wav")
+            self.assertEqual(effective["cloud"]["sha256"], checksum(changed))
+        self.assertEqual(self.drive.events[-1][0], "cas")
+
+    def test_shared_file_is_published_even_when_serving_node_masks_it(self):
+        obj = self.two_node_soundbank({"file": "node2.wav", "optimized": {"file": "node2.p3"}}, pointers=False)
+        obj["schema_version"] = 2
+        obj["layers"]["cluster"] = obj["layers"]["global"]
+        obj["layers"]["global"] = {}
+        self.drive.publish_object(obj, 2)
+        masked_store = self.node2_store()
+        ConfigEditor(masked_store).update({"prompt": "Shared update"}, base_revision=2)
+        saved = self.current_object()
+        shared = self.resolved_entry(saved, "test-node")
+        exception = self.resolved_entry(saved, "node2")
+        self.assertEqual(shared["cloud"]["sha256"], checksum(self.canonical))
+        self.assertEqual(shared["optimized"]["cloud"]["sha256"], checksum(self.optimized))
+        self.assertEqual(exception["cloud"]["sha256"], checksum(self.node2_wav))
+        self.assertEqual(exception["optimized"]["cloud"]["sha256"], checksum(self.node2_p3))
+        self.assertEqual(saved["layers"]["nodes"]["test-node"], obj["layers"]["nodes"]["test-node"])
+        self.assertEqual(saved["layers"]["cluster"]["prompt"], "Shared update")
+
     def test_environment_and_role_file_owners_invalidate_global_pointers_before_node_merge(self):
         obj = self.two_node_soundbank({"text": "Node2 metadata only"})
         layers = obj["layers"]

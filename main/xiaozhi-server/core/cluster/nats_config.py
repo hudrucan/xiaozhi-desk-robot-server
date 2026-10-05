@@ -1,4 +1,4 @@
-"""Environment-only configuration for the standalone worker."""
+"""Credential-safe Core NATS connection configuration and worker identity."""
 
 import ipaddress
 import os
@@ -9,8 +9,12 @@ from urllib.parse import urlsplit
 from config.node_identity import hostname_node_id
 
 
-class WorkerConfigError(ValueError):
-    """Invalid worker configuration, with a credential-safe error message."""
+class NatsConfigError(ValueError):
+    """Invalid configuration, with a credential-safe error message."""
+
+
+# Retain the worker's public error boundary.
+WorkerConfigError = NatsConfigError
 
 
 def validate_worker_id(worker_id: str) -> str:
@@ -56,14 +60,13 @@ def _validate_server(server: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class NatsConfig:
+class NatsConnectionConfig:
     servers: tuple[str, ...] = field(repr=False)
     username: str = field(repr=False)
     password: str = field(repr=False)
-    worker_id: str
 
     @classmethod
-    def from_env(cls) -> "NatsConfig":
+    def from_env(cls) -> "NatsConnectionConfig":
         entries = os.environ.get("XIAOZHI_NATS_SERVERS", "").split(",")
         if any(not entry.strip() for entry in entries):
             raise WorkerConfigError(
@@ -76,8 +79,18 @@ class NatsConfig:
             raise WorkerConfigError(
                 "XIAOZHI_NATS_USER and XIAOZHI_NATS_PASSWORD are required"
             )
+        return cls(servers, username, password)
+
+
+@dataclass(frozen=True, slots=True)
+class NatsConfig(NatsConnectionConfig):
+    worker_id: str
+
+    @classmethod
+    def from_env(cls) -> "NatsConfig":
+        connection = NatsConnectionConfig.from_env()
         # Hostname identities may contain dots; subjects require a single token.
         worker_id = os.environ.get("XIAOZHI_WORKER_ID")
         if worker_id is None:
             worker_id = hostname_node_id().replace(".", "-")
-        return cls(servers, username, password, validate_worker_id(worker_id))
+        return cls(connection.servers, connection.username, connection.password, validate_worker_id(worker_id))

@@ -207,7 +207,7 @@ similarly to the Settings UI:
 
 | Reference file | Settings |
 | --- | --- |
-| `runtime.yaml` | Listeners, authentication/gateways, turn limits, audio delivery, protocol hello |
+| `runtime.yaml` | Listeners, authentication/gateways, turn limits, audio delivery, protocol hello, cluster ingress desired state |
 | `assistant.yaml` | Prompts, wake/exit phrases, responses, behavior switches |
 | `diagnostics.yaml` | Logging, turn metrics, request dumps, warning thresholds |
 | `integrations.yaml` | MCP, context sources, plugins, voiceprint |
@@ -262,8 +262,15 @@ Bundled and optional speech assets are documented in
 
 Optional centralized configuration is available through private Google Drive.
 Local remains the default when `data/bootstrap.yaml` is absent. See
-[Cloud Config V1](docs/cloud-config-v1.md) for provisioning, explicit source
-switching, desired/active revisions and offline last-known-good behavior.
+[Cloud Config](docs/cloud-config-v1.md) for shared cluster Settings, explicit V1
+migration, provisioning/source switching, desired/active revisions and offline
+last-known-good behavior. Ingress VIP is desired configuration only.
+
+For a symmetric Settings service without conversation/provider runtime, see
+[Standalone control plane](docs/control-plane-v1.md). It uses
+`requirements-control-plane.txt`, Cloud CAS authority and Core NATS revision
+hints with periodic reconciliation. Rolling restart and VIP deployment are not
+implemented yet; the normal server continues to use `app.py`.
 
 ## Memory v2
 
