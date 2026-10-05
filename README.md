@@ -134,17 +134,22 @@ does not use it or require a NATS connection. No ASR, LLM, VLM or TTS providers
 are distributed yet; the worker initializes no providers, device transports,
 MCP execution, HTTP/WebSocket listeners or setup UI. It uses no JetStream.
 
-From `main/xiaozhi-server`, use Python 3.11 with the pinned
-`nats-py==2.16.0` dependency (included in `requirements.txt`). Supply credentials
-through the process environment; never place NATS passwords in either YAML
-configuration file.
+From `main/xiaozhi-server`, use Python 3.11. Production/cluster worker installs
+use the minimal `requirements-worker.txt` dependency set below.
+`requirements.txt` remains the full server/runtime dependency set and also
+includes the same `nats-py==2.16.0` pin for normal development environments.
+Supply credentials through the process environment; never place NATS passwords
+in either YAML configuration file.
 
 ```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-worker.txt
+
 export XIAOZHI_NATS_SERVERS='nats://10.10.10.11:4222,nats://10.10.10.12:4222,nats://10.10.10.13:4222'
 export XIAOZHI_NATS_USER='xiaozhi'
 # Supply XIAOZHI_NATS_PASSWORD securely in the environment before starting.
 export XIAOZHI_WORKER_ID='deskb1x'  # optional
-python worker.py
+.venv/bin/python worker.py
 ```
 
 The server list, username and password are required. Deployment must use the
