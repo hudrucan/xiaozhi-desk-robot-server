@@ -282,6 +282,34 @@ class ControlPlaneApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.store.active_revision)
         self.assertFalse((self.store.cache_dir / "active.json").exists())
 
+    async def test_unrelated_shared_http_save_keeps_cloud_assets_without_local_bytes(self):
+        from config.config_store import canonical_bytes, checksum
+        obj = copy.deepcopy(self.store.desired_snapshot["payload"]["object"])
+        asset_path = self.fixture.directory / "soundbank/hello.wav"
+        content = asset_path.read_bytes()
+        self.fixture.drive.files["retained-wav"] = content
+        soundbank = obj["layers"]["cluster"]["static_soundbank"]
+        soundbank["entries"]["Hello"]["cloud"] = {
+            "file_id": "retained-wav", "sha256": checksum(content), "size": len(content),
+        }
+        self.fixture.drive.publish_object(obj, 2)
+        await self.service.reconcile()
+        asset_path.unlink()
+        asset_path.parent.rmdir()
+        with patch.object(self.store.soundbank_assets, "publish_layers", side_effect=AssertionError("Asset publication")), \
+                patch.object(self.fixture.drive, "upload_blob", side_effect=AssertionError("Blob upload")), \
+                patch.object(self.fixture.drive, "download", wraps=self.fixture.drive.download) as download:
+            response = await self.client.put("/api/settings", json={"config": {"prompt": "Shared without audio bytes"}, "base_revision": 2})
+            self.assertEqual(response.status, 200)
+            self.assertNotIn("retained-wav", [call.args[0] for call in download.call_args_list])
+        await until(lambda: len(self.nats.messages) == 1)
+        self.assertEqual(parse_config_changed(self.nats.messages[0][1]), 3)
+        self.assertEqual(self.fixture.drive.manifest["revision"], 3)
+        saved = self.store.desired_snapshot["payload"]["object"]
+        self.assertEqual(canonical_bytes(saved["layers"]["cluster"]["static_soundbank"]), canonical_bytes(soundbank))
+        self.assertFalse(asset_path.parent.exists())
+        self.assertIsNone(self.store.active_revision)
+
     async def test_failed_hint_and_cache_write_keep_successful_cas_successful(self):
         self.nats.fail_publish = True
         writer = self.store._write_cache

@@ -285,6 +285,10 @@ class GoogleDriveConfigStore(ConfigStore):
         defaults, overrides = self._resolve(obj, repo_defaults)
         effective = merge_configs(defaults, overrides)
         self.validator(effective)
+        if shared_cluster(obj) and settings_patch is not None and "static_soundbank" not in settings_patch:
+            # Unrelated V2 Settings edits retain raw asset owners/pointers. All-node
+            # metadata validation above needs no local bytes or asset publication.
+            return PreparedCloudConfig(copy.deepcopy(obj["layers"]["cluster"]), effective, self, obj)
         current_defaults, current_overrides = self._resolve(self._desired_view()["payload"]["object"], repo_defaults)
         if shared_cluster(obj):
             # Publish the shared view even when a serving-node exception masks

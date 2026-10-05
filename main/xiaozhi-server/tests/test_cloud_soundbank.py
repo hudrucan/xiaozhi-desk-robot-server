@@ -14,7 +14,7 @@ import yaml
 from config.cloud_layers import initial_cloud_object, resolve_layers, validate_layers
 from config.cloud_secrets import LocalSecretStore
 from config.config_loader import merge_configs
-from config.config_store import ConfigConflict, ConfigUnavailable, checksum, create_config_store
+from config.config_store import ConfigConflict, ConfigUnavailable, canonical_bytes, checksum, create_config_store
 from config.config_validation import validate_config
 from config.drive_transport import GoogleDriveTransport
 from core.soundbank import SoundbankAuthoringService
@@ -196,6 +196,116 @@ class CloudSoundbankTests(unittest.TestCase):
         self.assertEqual(self.fixture.status()["desired_revision"], 1)
         self.assertEqual(self.fixture.status()["active_revision"], 1)
         cleanup.after_save.assert_not_called()
+
+    def shared_pointers_without_local_bytes(self):
+        entry = self.publish_pointer_config(revision=2)
+        obj = self.current_object()
+        obj["schema_version"] = 2
+        layers = obj["layers"]
+        layers["cluster"] = layers["nodes"]["test-node"]["overrides"]
+        layers["nodes"]["test-node"]["overrides"] = {}
+        # Retain asset owners at every scope, including a node exception.
+        layers["global"] = {"static_soundbank": {"entries": {"Global": copy.deepcopy(entry)}}}
+        layers["environments"]["production"] = {"static_soundbank": {"entries": {"Environment": copy.deepcopy(entry)}}}
+        layers["roles"]["desk"] = {"static_soundbank": {"entries": {"Role": copy.deepcopy(entry)}}}
+        layers["nodes"]["node2"] = {
+            "environment": "production", "role": "desk",
+            "overrides": {"static_soundbank": {"entries": {"Hello": copy.deepcopy(entry)}}},
+        }
+        for path in self.root.iterdir():
+            path.unlink()
+        self.root.rmdir()
+        validate_layers(obj, validate_config, self.fixture.defaults)
+        self.drive.publish_object(obj, 2)
+        # A new Settings process has pointers but no local Soundbank directory.
+        self.store = self.fixture.new_cloud()
+        self.editor = ConfigEditor(self.store)
+        self.drive.events.clear()
+        return obj
+
+    def test_unrelated_shared_settings_preserve_all_asset_layers_without_local_bytes(self):
+        expected = self.shared_pointers_without_local_bytes()
+        uploads = self.drive.uploads
+        with patch.object(self.store.soundbank_assets, "publish_layers", side_effect=AssertionError("Asset publication")), \
+                patch.object(self.drive, "upload_blob", side_effect=AssertionError("Blob upload")):
+            for revision, settings_patch in enumerate((
+                {"prompt": "Shared without local audio"},
+                {"selected_module": {"LLM": "Test"}, "LLM": {"Test": {"temperature": 0.4}}},
+                {"cluster": {"ingress": {"vip": "192.168.1.187"}}},
+            ), 2):
+                result = self.save(settings_patch, revision=revision)
+                expected["layers"]["cluster"] = merge_configs(expected["layers"]["cluster"], settings_patch)
+                self.assertEqual(canonical_bytes(self.current_object()), canonical_bytes(expected))
+                self.assertEqual(result["configuration_source"]["desired_revision"], revision + 1)
+                self.assertEqual(self.drive.events[-1][0], "cas")
+        self.assertEqual(self.drive.uploads, uploads + 3)  # Config objects only.
+        downloads = [file_id for kind, file_id in self.drive.events if kind == "download"]
+        self.assertTrue(downloads)
+        self.assertFalse({"wav-asset", "p3-asset"} & set(downloads))
+        self.assertFalse(self.root.exists())
+
+    def test_unrelated_shared_settings_keep_cas_conflict_guard_without_asset_io(self):
+        original = self.shared_pointers_without_local_bytes()
+        manifest = copy.deepcopy(self.drive.manifest)
+        self.drive.before_commit = lambda: setattr(self.drive, "etag", self.drive.etag + 1)
+        with patch.object(self.store.soundbank_assets, "publish_layers", side_effect=AssertionError("Asset publication")):
+            with self.assertRaises(ConfigConflict):
+                self.save({"prompt": "Lost CAS"}, revision=2)
+            with self.assertRaises(ConfigConflict):
+                self.save({"prompt": "Stale base"}, revision=1)
+        self.assertEqual(self.drive.manifest, manifest)
+        self.assertEqual(canonical_bytes(self.current_object()), canonical_bytes(original))
+        self.assertFalse(self.drive.blobs)
+
+    def test_explicit_shared_soundbank_patch_still_requires_local_bytes(self):
+        original = self.shared_pointers_without_local_bytes()
+        manifest = copy.deepcopy(self.drive.manifest)
+        with patch.object(self.store.soundbank_assets, "publish_layers", wraps=self.store.soundbank_assets.publish_layers) as publication:
+            with self.assertRaises(ConfigUnavailable):
+                self.save({"static_soundbank": {}}, revision=2)
+            publication.assert_called_once()
+        self.assertEqual(self.drive.manifest, manifest)
+        self.assertEqual(canonical_bytes(self.current_object()), canonical_bytes(original))
+        self.assertEqual(self.drive.uploads, 0)
+        self.assertFalse(self.root.exists())
+
+    def test_unrelated_legacy_settings_keep_existing_local_asset_requirement(self):
+        self.publish_pointer_config(revision=2)
+        for path in self.root.iterdir():
+            path.unlink()
+        manifest = copy.deepcopy(self.drive.manifest)
+        with patch.object(self.store.soundbank_assets, "publish_layers", wraps=self.store.soundbank_assets.publish_layers) as publication:
+            with self.assertRaises(ConfigUnavailable):
+                self.save({"prompt": "Legacy retained-asset save"}, revision=2)
+            publication.assert_called_once()
+        self.assertEqual(self.drive.manifest, manifest)
+        self.assertEqual(self.drive.uploads, 0)
+
+    def test_unrelated_shared_settings_still_validate_every_node_asset_metadata(self):
+        self.shared_pointers_without_local_bytes()
+        candidate = copy.deepcopy(self.current_object()["layers"]["cluster"])
+        candidate["prompt"] = "Unrelated edit"
+        manifest = copy.deepcopy(self.drive.manifest)
+        with self.store.locked():
+            self.store.refresh_unlocked(strict=True)
+            original = copy.deepcopy(self.store.desired_snapshot["payload"]["object"])
+            for change in ("pointer", "path", "audio_contract"):
+                with self.subTest(change=change):
+                    obj = copy.deepcopy(original)
+                    entry = obj["layers"]["nodes"]["node2"]["overrides"]["static_soundbank"]["entries"]["Hello"]
+                    if change == "pointer":
+                        entry["cloud"]["size"] = 0
+                    elif change == "path":
+                        entry["file"] = "../outside.wav"
+                    else:
+                        entry["optimized"]["channels"] = 2
+                    self.store.desired_snapshot["payload"]["object"] = obj
+                    with patch.object(self.store.soundbank_assets, "publish_layers", side_effect=AssertionError("Asset publication")):
+                        with self.assertRaises(ValueError):
+                            self.store.prepare_settings_candidate_unlocked(candidate, {"prompt": "Unrelated edit"})
+            self.store.desired_snapshot["payload"]["object"] = original
+        self.assertEqual(self.drive.manifest, manifest)
+        self.assertEqual(self.drive.uploads, 0)
 
     def test_save_cloudifies_retained_wav_and_p3_before_config_cas(self):
         cleanup = Mock()
@@ -827,7 +937,7 @@ class CloudSoundbankTests(unittest.TestCase):
         obj["layers"]["nodes"]["test-node"]["overrides"] = {}
         obj["layers"]["nodes"]["node2"] = {"environment": None, "role": None, "overrides": {}}
         self.drive.publish_object(obj, 2)
-        self.save({"log": {"log_level": "DEBUG"}}, revision=2)
+        self.save({"static_soundbank": {}}, revision=2)
         saved = self.current_object()
         entry = saved["layers"]["cluster"]["static_soundbank"]["entries"]["Hello"]
         self.assertIn("cloud", entry)
@@ -853,7 +963,7 @@ class CloudSoundbankTests(unittest.TestCase):
         obj["layers"]["global"] = {}
         self.drive.publish_object(obj, 2)
         masked_store = self.node2_store()
-        ConfigEditor(masked_store).update({"prompt": "Shared update"}, base_revision=2)
+        ConfigEditor(masked_store).update({"prompt": "Shared update", "static_soundbank": {}}, base_revision=2)
         saved = self.current_object()
         shared = self.resolved_entry(saved, "test-node")
         exception = self.resolved_entry(saved, "node2")

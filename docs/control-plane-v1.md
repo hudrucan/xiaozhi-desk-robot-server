@@ -20,8 +20,11 @@ The minimal set includes HTTP, YAML/locks, Drive authorization/requests, Core NA
 and the codec used to validate retained P3 Cloud assets during Config Save. It
 contains no provider SDKs or model runtimes. Native `libopus` is needed when
 validating P3 assets, but no encoder/provider is loaded merely to start Settings.
-Retained soundbank assets still require local bytes under the existing ownership
-and publication rules; this process does not generate or materialize runtime audio.
+V2 Settings patches without `static_soundbank` preserve existing asset layers and
+pointers without local bytes or Soundbank publication. Structural, pointer/path
+and audio-contract metadata validation still runs for every node. Patches containing
+`static_soundbank` and V1/legacy saves retain the existing local-byte ownership and
+publication rules; this process does not generate or materialize runtime audio.
 
 Use the node's already-provisioned `data/bootstrap.yaml` with
 `config_provider: google_drive`. Node identity follows its bootstrap/hostname
