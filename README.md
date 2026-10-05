@@ -126,6 +126,62 @@ Settings accepts loopback requests by default. Enable
 validated and saved to the corresponding private `data/config.d/` files. A save
 normally requires a restart; Memory edits apply to the next turn immediately.
 
+## Standalone Core NATS worker
+
+[`worker.py`](main/xiaozhi-server/worker.py) is a separate, stateless process for
+queue-group RPC probes against the three-node Core NATS cluster. Normal `app.py`
+does not use it or require a NATS connection. No ASR, LLM, VLM or TTS providers
+are distributed yet; the worker initializes no providers, device transports,
+MCP execution, HTTP/WebSocket listeners or setup UI. It uses no JetStream.
+
+From `main/xiaozhi-server`, use Python 3.11 with the pinned
+`nats-py==2.16.0` dependency (included in `requirements.txt`). Supply credentials
+through the process environment; never place NATS passwords in either YAML
+configuration file.
+
+```bash
+export XIAOZHI_NATS_SERVERS='nats://10.10.10.11:4222,nats://10.10.10.12:4222,nats://10.10.10.13:4222'
+export XIAOZHI_NATS_USER='xiaozhi'
+# Supply XIAOZHI_NATS_PASSWORD securely in the environment before starting.
+export XIAOZHI_WORKER_ID='deskb1x'  # optional
+python worker.py
+```
+
+The server list, username and password are required. Deployment must use the
+same application/client username configured by the cluster Ansible role
+(`nats_client_user`, currently `xiaozhi`). Only `nats://host[:port]`
+URLs without embedded credentials, paths, queries or fragments are accepted.
+Worker IDs contain 1–192 ASCII letters, digits, underscores or hyphens. The
+default uses the existing hostname identity helper, replacing dots with hyphens.
+Choose a unique ID for each worker so targeted requests reach one process.
+Invalid configuration fails before connecting; logs omit credentials and URLs.
+
+| Probe    | Subject                              | Queue group       |
+| -------- | ------------------------------------ | ----------------- |
+| Balanced | `xiaozhi.v1.worker.ping`             | `xiaozhi-workers` |
+| Targeted | `xiaozhi.v1.worker.<worker_id>.ping` | None              |
+
+Both return compact UTF-8 JSON:
+
+```json
+{
+  "protocol": "xiaozhi-worker-v1",
+  "worker_id": "deskb1x",
+  "status": "ok",
+  "capabilities": []
+}
+```
+
+`capabilities` is currently always empty. Ping payloads may be empty and their
+contents are ignored. Requests without a valid reply subject, with a reply
+subject over 512 ASCII bytes or with payloads over 4096 bytes are dropped.
+Replies are capped at 1024 bytes; request headers are not echoed. Each subscription
+buffers at most 64 messages / 256 KiB, and reply publishing has a two-second limit.
+All supplied servers participate in connection/failover; reconnection retries
+continue indefinitely with a two-second delay. SIGTERM/SIGINT stop connection
+attempts and drain subscriptions/replies before exit when connected. If draining
+is unavailable (for example, during a disconnect), shutdown closes the client.
+
 ## Providers
 
 Provider selection lives under `selected_module` in YAML.
