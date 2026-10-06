@@ -1,2 +1,3 @@
-# Transport/health only. No providers, models, Cloud assets or NATS execution yet.
+# Transport/health and bounded Core NATS worker probes. No providers or Cloud assets.
 aiohttp==3.13.2
+nats-py==2.16.0

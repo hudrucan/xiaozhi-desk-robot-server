@@ -21,7 +21,8 @@ Unsupported requests get a bounded `conversation_runtime_unavailable` error,
 suppressed after the first error until abort. The hello and status explicitly
 report `conversation_runtime: false` and empty capabilities.
 
-It does not serve bootstrap/OTA, Vision, Settings or worker RPC. The future
+It does not serve bootstrap/OTA, Vision or Settings. Optional worker RPC currently
+exercises the existing worker ping contract only. The future
 conversation coordinator and provider dispatch must be implemented before real
 robot conversations can pass acceptance. Transport readiness must not be used
 as evidence of conversation availability.
@@ -35,8 +36,8 @@ python3 -m venv .venv-core
 .venv-core/bin/pip install -r requirements-core.txt
 ```
 
-The full server requirements already pin the same aiohttp version. No models,
-FFmpeg, Opus codec, NATS or Google Drive packages are required for this process.
+The full server requirements already pin the same aiohttp and nats-py versions.
+No models, FFmpeg, Opus codec or Google Drive packages are required.
 
 | Environment | Contract |
 | --- | --- |
@@ -47,6 +48,9 @@ FFmpeg, Opus codec, NATS or Google Drive packages are required for this process.
 | `XIAOZHI_CORE_GATEWAY_IPS` | Required comma-separated allowed gateway source IPv4 addresses |
 | `XIAOZHI_CORE_MANAGEMENT_INTERFACE` | Required interface holding the management IP/VIP |
 | `XIAOZHI_CORE_INGRESS_STATE_FILE` | Applied public ingress snapshot path; default `/etc/xiaozhi-ingress.json` |
+| `XIAOZHI_CORE_WORKER_RPC` | Optional `true`/`false`, default `false`; enables worker probes |
+| `XIAOZHI_NATS_SERVERS` | When RPC enabled, all three credential-free `nats://host:port` URLs, comma-separated |
+| `XIAOZHI_NATS_USER`, `XIAOZHI_NATS_PASSWORD` | Required when RPC enabled; match cluster application credentials, never logged |
 
 After provisioning the environment, run `.venv-core/bin/python core_server.py`.
 SIGTERM/SIGINT stops admission, closes sessions and cleans up the listener.
@@ -72,6 +76,29 @@ Do not commit environment secrets. Deployment runs with stdin disabled.
   `xiaozhi-core-transport-v1`, `core_id`, readiness, active established sessions,
   aggregate received frame count, capabilities and actual local VIP ownership.
   It exposes no device IDs, session IDs, secrets or backend URLs.
+
+## Core to worker RPC
+
+With `XIAOZHI_CORE_WORKER_RPC=true`, authenticated private `POST
+/api/workers/probe` accepts `{}` for the queue-balanced subject or
+`{"worker_id":"deskb2x"}` for a targeted worker. It requires the same source IP
+allowlist and gateway HMAC headers as the WebSocket, with no query parameters.
+The Settings/MQTT ingress does not expose this endpoint. Bodies are bounded to
+512 bytes and read within two seconds; subjects are fixed or built only from a
+validated worker ID. No arbitrary headers, reply subjects, config or secrets are
+forwarded to workers. The request data is empty, preserving worker V1 behavior.
+
+The core validates replies against the exact worker V1 ping schema, empty
+capabilities, identity and 1024-byte limit. Each core admits at most eight probes
+with a two-second NATS request timeout. Failures return fixed error codes; requests
+are not retried because future operations may not be idempotent. Client disconnect
+and core shutdown cancel owned calls. NATS connection/reconnection uses all supplied
+servers indefinitely; a disconnect is reflected in `status.worker_rpc` and does
+not make transport `/readyz` fail. Startup connection runs independently of HTTP.
+
+This confirms `core -> NATS -> worker -> core`, not provider execution, distributed
+conversation state or automatic worker scheduling. No new worker capability is
+advertised, and the normal Xiaozhi ping/pong, hello, audio and abort remain unchanged.
 
 VIP observation uses the applied ingress snapshot and interface addresses once
 per second. Unknown/invalid snapshot or failed observation reports null; gateways

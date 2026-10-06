@@ -108,8 +108,9 @@ def decode_message(data):
 
 
 class TransportCore:
-    def __init__(self, config):
+    def __init__(self, config, worker_rpc=None):
         self.config = config
+        self.worker_rpc = worker_rpc
         self.sockets = set()
         self.sessions = set()
         self.received_audio_frames = 0
@@ -161,7 +162,37 @@ class TransportCore:
             "status": "stopping" if self.stopping else "ready",
             "active_sessions": len(self.sessions), "local_vip_owner": self.vip_owner,
             "received_audio_frames": self.received_audio_frames,
-            "capabilities": [], "conversation_runtime": False})
+            "capabilities": [], "conversation_runtime": False,
+            "worker_rpc": self.worker_rpc.status() if self.worker_rpc else {"state": "disabled"}})
+
+    async def worker_probe(self, request):
+        # A private deployment diagnostic; never mounted in Settings or exposed
+        # through the management VIP frontend.
+        if request.query_string or not authenticated(request, self.config):
+            raise web.HTTPUnauthorized()
+        if self.stopping or self.worker_rpc is None:
+            return web.json_response({"error": "worker_rpc_unavailable"}, status=503)
+        try:
+            raw = await asyncio.wait_for(request.read(), timeout=2)
+            if len(raw) > 512:
+                raise ValueError("Oversize probe")
+            value = json.loads(raw)
+            if not isinstance(value, dict) or set(value) - {"worker_id"}:
+                raise ValueError("Invalid probe")
+            worker_id = value.get("worker_id")
+            if "worker_id" in value and not isinstance(worker_id, str):
+                raise ValueError("Invalid worker identity")
+            from .worker_rpc import WorkerRpcError
+            try:
+                reply = await self.worker_rpc.ping(worker_id)
+            except WorkerRpcError as error:
+                return web.json_response({"error": error.code}, status=503)
+            return web.json_response({"protocol": "xiaozhi-core-worker-rpc-v1",
+                                      "core_id": self.config.node_id, "worker": reply})
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            return web.json_response({"error": "invalid_worker_probe"}, status=400)
+        except asyncio.TimeoutError:
+            return web.json_response({"error": "worker_probe_timeout"}, status=408)
 
     async def ready(self, request):
         return web.json_response({"status": "not_ready" if self.stopping else "ready",
@@ -231,14 +262,19 @@ class TransportCore:
         app.router.add_get("/xiaozhi/v1/", self.websocket)
         app.router.add_get("/status", self.status)
         app.router.add_get("/readyz", self.ready)
-        self.runner = web.AppRunner(app, access_log=None, shutdown_timeout=5)
+        app.router.add_post("/api/workers/probe", self.worker_probe)
+        self.runner = web.AppRunner(app, access_log=None, shutdown_timeout=5, handler_cancellation=True)
         await self.runner.setup()
         await web.TCPSite(self.runner, self.config.host, self.config.port).start()
         self.vip_task = asyncio.create_task(self.refresh_vip())
+        if self.worker_rpc:
+            self.worker_rpc.start()
         LOGGER.info("core_id=%s transport ready; provider execution disabled", self.config.node_id)
 
     async def close(self):
         self.stopping = True
+        if self.worker_rpc:
+            await self.worker_rpc.close()
         if self.vip_task:
             self.vip_task.cancel()
             await asyncio.gather(self.vip_task, return_exceptions=True)
