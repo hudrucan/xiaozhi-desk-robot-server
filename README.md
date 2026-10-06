@@ -383,3 +383,5 @@ Derived from
 [`xinnan-tech/xiaozhi-esp32-server`](https://github.com/xinnan-tech/xiaozhi-esp32-server).
 Please preserve applicable upstream notices and review each downloaded model's
 own license before redistribution.
+
+Shared Settings supports opt-in [all-node API key provisioning](docs/settings-cluster-secrets.md) through the standalone control plane. Keys stay in private node-local storage; Cloud Config contains references only.

@@ -6,6 +6,7 @@ import {
   setPath,
   state,
 } from "./shared.js";
+import { clusterSecretField, bindClusterSecretFields } from "./secrets.js";
 import { renderOverview } from "./resources.js";
 
 const PROVIDER_GROUPS = ["VAD", "ASR", "LLM", "VLLM", "TTS", "Memory", "Intent"];
@@ -23,6 +24,7 @@ export function initializeConfiguration(onDirtyStateChange) {
 }
 
 export function updateValue(path, value) {
+  if (state.secretProvisioning) return;
   setPath(state.config, path, value);
   setPath(state.patch, path, value);
   dirtyStateHandler();
@@ -39,6 +41,10 @@ function pathHint(path) {
 }
 
 function field(path, label, options = {}) {
+  if (state.controlPlane && path.split(".").length === 3 && path.endsWith(".api_key")) {
+    const [group, provider, key] = path.split(".");
+    return clusterSecretField(group, provider, key, label, path);
+  }
   const value = getPath(state.config, path, options.defaultValue ?? "");
   const wide = options.wide ? " wide" : "";
   const help = options.help ? `<p class="field-help">${escapeHtml(options.help)}</p>` : "";
@@ -180,6 +186,7 @@ function renderProviders() {
       <div class="provider-fields">${fields || '<p class="field-help">No configurable values.</p>'}</div>
     </article>`;
   attachFieldListeners($("#providerEditors"));
+  bindClusterSecretFields($("#providerEditors"));
 }
 
 function renderAssistant() {

@@ -1,7 +1,7 @@
 import {
   initializeConfiguration,
   renderConfiguration,
-} from "./configuration.js?v=34";
+} from "./configuration.js?v=35";
 import { renderDiagnostics } from "./diagnostics.js";
 import { initializeMemory, loadMemory, renderMemory } from "./memory.js";
 import {
@@ -17,6 +17,7 @@ import {
   renderSidebarLive,
 } from "./resources.js";
 import { $, clone, labelFor, state, toast, escapeHtml } from "./shared.js";
+import { initializeSecrets } from "./secrets.js";
 import { renderCluster, setClusterActive } from "./cluster.js";
 
 const PAGE_IDS = [
@@ -251,6 +252,7 @@ async function loadSettings() {
     const response = await fetch("/api/settings", { cache: "no-store" });
     if (!response.ok) throw new Error(await response.text());
     const payload = await response.json();
+    state.secretCapabilities = Boolean(payload.control_plane?.capabilities?.secret_provisioning);
     state.config = payload.config;
     state.original = clone(payload.config);
     state.patch = {};
@@ -279,6 +281,7 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
+  if (state.secretProvisioning) return;
   if (soundbankAuthoringBusy() || state.soundbankSaving) {
     toast("Wait for soundbank generation or cleanup to finish before saving.", true);
     return;
@@ -311,6 +314,7 @@ async function saveSettings() {
       }
       throw new Error(payload.error || "Save failed");
     }
+    state.secretCapabilities = Boolean(payload.control_plane?.capabilities?.secret_provisioning);
     state.config = payload.config;
     state.configPath = payload.config_path;
     state.configurationSource = payload.configuration_source || {};
@@ -450,6 +454,7 @@ $("#restartNowButton").addEventListener("click", restartServer);
 $("#syncSourceButton").addEventListener("click", syncSource);
 $("#switchSourceButton").addEventListener("click", switchSource);
 initializeConfiguration(updateDirtyState);
+initializeSecrets(loadSettings);
 applyControlPlaneMode();
 if (!state.controlPlane) {
   initializeMemory();

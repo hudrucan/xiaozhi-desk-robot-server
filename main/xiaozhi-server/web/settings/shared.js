@@ -1,4 +1,6 @@
 export const state = {
+  secretCapabilities: false,
+  secretProvisioning: false,
   controlPlane: document.body.dataset.settingsMode === "control-plane",
   cluster: null,
   config: {},

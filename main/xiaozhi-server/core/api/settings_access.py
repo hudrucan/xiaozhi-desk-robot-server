@@ -50,7 +50,7 @@ class SettingsAccess:
         if filename not in {
             "app.js", "configuration.js", "cluster.js", "diagnostics.js", "favicon.svg",
             "memory.js", "push_tts.js", "resources.js", "shared.js", "soundbank.js",
-            "logs.js", "styles.css",
+            "logs.js", "secrets.js", "styles.css",
         }:
             raise web.HTTPNotFound()
         return self._disable_cache(web.FileResponse(os.path.join(self.web_dir, filename)))
