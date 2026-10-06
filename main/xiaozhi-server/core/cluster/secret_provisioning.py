@@ -134,10 +134,12 @@ class SecretProvisioning:
                                      json=envelope, allow_redirects=False) as response:
             if response.status != 200:
                 raise ValueError('Secret peer did not confirm')
-            data = await response.content.read(16385)
-            if len(data) > 16384:
-                raise ValueError('Secret acknowledgement exceeds limit')
-            return data
+            data = bytearray()
+            async for chunk in response.content.iter_chunked(4096):
+                data.extend(chunk)
+                if len(data) > 16384:
+                    raise ValueError('Secret acknowledgement exceeds limit')
+            return bytes(data)
 
     async def _peer(self, node, action, payload, operation):
         payload = {**payload, 'authority': self.authority}

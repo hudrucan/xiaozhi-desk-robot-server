@@ -269,6 +269,26 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.fixture.drive.manifest['revision'],2)
         self.assertNotIn(VALUE,json.dumps(value))
 
+    async def test_fragmented_encrypted_http_acknowledgement_is_read_completely(self):
+        from aiohttp import web
+        async def reply(request):
+            envelope=json.loads(await request.read())
+            data=canonical(self.service.cipher.seal('checked','node-b','node-a',envelope['operation'],{'status':'missing'}))
+            response=web.StreamResponse(headers={'Content-Type':'application/json'})
+            await response.prepare(request)
+            await response.write(data[:20])
+            await asyncio.sleep(.01)
+            await response.write(data[20:])
+            await response.write_eof()
+            return response
+        app=web.Application();app.router.add_post('/internal/settings/secret',reply)
+        server=TestServer(app);await server.start_server();self.addAsyncCleanup(server.close)
+        nodes=tuple((node,str(server.make_url('')).rstrip('/') if node=='node-b' else endpoint) for node,endpoint in NODES)
+        self.service.config=SecretProvisionConfig(KEY,nodes)
+        self.service.exchange=None
+        result=await self.service._peer('node-b','status',{'name':self.reference()},'e'*32)
+        self.assertEqual(result,{'status':'missing'})
+
     async def test_secret_values_and_invalid_requests_never_enter_normal_settings_or_peer_urls(self):
         for args in (('server','Test','api_key',VALUE,1),('LLM','Test','password',VALUE,1),('LLM','Test','api_key','has whitespace',1),('LLM','Test','api_key',VALUE,True)):
             with self.assertRaises((ValueError,TypeError)):await self.service.provision(*args)
