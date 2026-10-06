@@ -1,10 +1,12 @@
 """Opt-in bounded text LLM worker, preserving the original empty ping contract."""
 import asyncio
+import hashlib
 import logging
 import time
 from collections import OrderedDict
 
 from . import llm_protocol as protocol
+from . import llm_stream_protocol as streaming
 from .protocol import valid_reply_subject
 from .worker import Worker
 
@@ -21,10 +23,13 @@ class LLMWorker(Worker):
         self.cancelled = OrderedDict()
         self.stopping = False
         self.activity = None
+        self.streaming_jobs = set()
 
     async def _start(self):
         await super()._start()
         await self.client.subscribe(protocol.SUBJECT, queue=protocol.QUEUE_GROUP, cb=self._receive,
+                                    pending_msgs_limit=16, pending_bytes_limit=16 * protocol.MAX_REQUEST_BYTES)
+        await self.client.subscribe(streaming.SUBJECT, queue=streaming.QUEUE_GROUP, cb=self._receive_stream,
                                     pending_msgs_limit=16, pending_bytes_limit=16 * protocol.MAX_REQUEST_BYTES)
         # All workers see cancellation, including if it races queue delivery.
         await self.client.subscribe(protocol.CANCEL_SUBJECT, cb=self._cancel,
@@ -62,10 +67,16 @@ class LLMWorker(Worker):
             LOGGER.warning('LLM reply unavailable; worker_id=%s', self.config.worker_id)
 
     async def _receive(self, message):
+        await self._admit(message, streamed=False)
+
+    async def _receive_stream(self, message):
+        await self._admit(message, streamed=True)
+
+    async def _admit(self, message, *, streamed):
         if self.stopping or not valid_reply_subject(message.reply) or not message.reply.startswith('_INBOX.'):
             return
         try:
-            value = protocol.request(message.data)
+            value = streaming.request(message.data) if streamed else protocol.request(message.data)
         except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
             return
         self._prune_cancelled()
@@ -82,9 +93,22 @@ class LLMWorker(Worker):
         elif len(self.jobs) >= MAX_JOBS:
             error = 'llm_busy'
         if error:
-            await self._send(message.reply, value, error=error)
+            if streamed:
+                # Do not block the admission subscription waiting for an ACK.
+                # Errors have no provider job or streaming state to retain.
+                try:
+                    if self.client.is_connected:
+                        await asyncio.wait_for(self.client.publish(message.reply,
+                            streaming.event(value, self.config.worker_id, 'error', 0, error=error)), timeout=2)
+                except Exception:
+                    LOGGER.warning('LLM admission reply unavailable; worker_id=%s', self.config.worker_id)
+            else:
+                await self._send(message.reply, value, error=error)
             return
-        task = asyncio.create_task(self._execute(message.reply, value))
+        execute = self._execute_stream if streamed else self._execute
+        task = asyncio.create_task(execute(message.reply, value))
+        if streamed:
+            self.streaming_jobs.add(task)
         self.jobs[value['request_id']] = (value['cancel_token'], task)
         if self.activity:
             self.activity.change('llm', 1)
@@ -93,6 +117,7 @@ class LLMWorker(Worker):
                     self.config.worker_id, self.bundle['revision'], len(self.jobs))
 
     def _finished(self, request_id, task):
+        self.streaming_jobs.discard(task)
         if self.activity:
             self.activity.change('llm', -1)
         job = self.jobs.get(request_id)
@@ -100,6 +125,80 @@ class LLMWorker(Worker):
             self.jobs.pop(request_id, None)
         if not task.cancelled():
             task.exception()  # Observe any unexpected cleanup exception.
+
+    async def _disconnected(self):
+        # A stream cannot resume safely across Core NATS at-most-once gaps.
+        # Subscriptions reconnect normally for subsequent, newly owned turns.
+        for task in tuple(self.streaming_jobs):
+            task.cancel()
+        await super()._disconnected()
+
+    async def _stream_event(self, subject, value, kind, seq, **fields):
+        if not self.client.is_connected:
+            raise ConnectionError('LLM stream unavailable')
+        data = streaming.event(value, self.config.worker_id, kind, seq, **fields)
+        try:
+            reply = await asyncio.wait_for(self.client.request(subject, data,
+                timeout=streaming.ACK_SECONDS), timeout=streaming.ACK_SECONDS + .25)
+            streaming.validate_ack(reply.data,
+                streaming.parse_event(data, value['request_id'], value['revision']))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise ConnectionError('LLM stream acknowledgment unavailable') from None
+
+    async def _execute_stream(self, reply_subject, value):
+        stream, seq = None, 0
+        try:
+            seconds = max(0, (value['deadline_ms'] - time.time() * 1000) / 1000)
+            async with asyncio.timeout(min(seconds, protocol.MAX_SECONDS)):
+                await self._stream_event(reply_subject, value, 'started', seq)
+                seq += 1
+                messages = ([{'role': 'system', 'content': self.bundle['prompt']}]
+                    if self.bundle['prompt'] else []) + value['dialogue']
+                total, digest = 0, hashlib.sha256()
+                stream = self.provider.response_text_async(messages)
+                async for part in stream:
+                    if not isinstance(part, str):
+                        raise ValueError('Invalid provider chunk')
+                    encoded = part.encode('utf-8')
+                    if total + len(encoded) > protocol.MAX_TEXT_BYTES:
+                        await self._stream_event(reply_subject, value, 'error', seq, error='llm_output_too_large')
+                        return
+                    total += len(encoded)
+                    digest.update(encoded)
+                    for text in streaming.chunks(part):
+                        if seq > streaming.MAX_CHUNKS:
+                            await self._stream_event(reply_subject, value, 'error', seq, error='llm_output_too_large')
+                            return
+                        await self._stream_event(reply_subject, value, 'chunk', seq, text=text)
+                        seq += 1
+                if not total:
+                    await self._stream_event(reply_subject, value, 'error', seq, error='llm_empty_response')
+                else:
+                    await self._stream_event(reply_subject, value, 'complete', seq,
+                        text_bytes=total, sha256=digest.hexdigest())
+        except asyncio.CancelledError:
+            LOGGER.info('LLM stream cancelled; worker_id=%s', self.config.worker_id)
+        except Exception as error:
+            # Public errors are fixed codes; provider/transport strings and
+            # partial output are never included in logs or terminal failures.
+            code = ('llm_expired' if isinstance(error, asyncio.TimeoutError) else
+                    'llm_stream_unavailable' if isinstance(error, ConnectionError) else 'llm_provider_failed')
+            LOGGER.warning('LLM stream failed; worker_id=%s code=%s', self.config.worker_id, code)
+            try:
+                await self._stream_event(reply_subject, value, 'error', seq, error=code)
+            except Exception:
+                pass
+        finally:
+            try:
+                if stream is not None:
+                    await asyncio.wait_for(stream.aclose(), timeout=4)
+            except Exception:
+                LOGGER.warning('LLM stream close unavailable; worker_id=%s', self.config.worker_id)
+            finally:
+                self.jobs.pop(value['request_id'], None)
+                LOGGER.info('LLM stream released; worker_id=%s inflight=%d', self.config.worker_id, len(self.jobs))
 
     async def _execute(self, reply_subject, value):
         stream = None

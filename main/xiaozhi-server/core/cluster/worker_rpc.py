@@ -53,6 +53,7 @@ class WorkerRPC:
         self.state = "not_started"
         self.stopping = False
         self.calls = set()
+        self.streams = set()
         self.startup = None
         self.completed = 0
         self.failed = 0
@@ -62,6 +63,8 @@ class WorkerRPC:
                 "inflight": len(self.calls), "completed": self.completed, "failed": self.failed}
 
     async def _disconnected(self):
+        for stream in tuple(self.streams):
+            stream.fail()
         if not self.stopping:
             self.state = "disconnected"
         LOGGER.warning("NATS disconnected; core_id=%s", self.core_id)
@@ -72,6 +75,8 @@ class WorkerRPC:
         LOGGER.info("NATS reconnected; core_id=%s", self.core_id)
 
     async def _closed(self):
+        for stream in tuple(self.streams):
+            stream.fail()
         self.state = "closed"
         LOGGER.info("NATS closed; core_id=%s", self.core_id)
 
@@ -191,6 +196,36 @@ class WorkerRPC:
                 LOGGER.warning("LLM cancellation unavailable; core_id=%s", self.core_id)
             finally:
                 self.calls.discard(task)
+
+    async def generate_stream(self, revision, messages, on_chunk, seconds=30):
+        from . import llm_protocol as protocol
+        from .llm_stream_client import LLMStreamClient
+        if (type(revision) is not int or revision < 1 or type(seconds) is not int
+                or not 1 <= seconds <= protocol.MAX_SECONDS or not callable(on_chunk)):
+            raise ValueError('Invalid LLM stream parameters')
+        protocol.dialogue(messages)
+        if self.stopping or not self.client.is_connected:
+            raise WorkerRpcError('worker_rpc_unavailable')
+        if len(self.calls) >= MAX_INFLIGHT:
+            raise WorkerRpcError('worker_rpc_busy')
+        stream = LLMStreamClient(self.client, self.core_id, revision, messages, seconds, on_chunk)
+        task = asyncio.current_task()
+        self.calls.add(task)
+        self.streams.add(stream)
+        try:
+            result = await stream.run()
+            if self.stopping:
+                raise WorkerRpcError('worker_rpc_unavailable')
+            self.completed += 1
+            return result
+        except asyncio.CancelledError:
+            raise
+        except WorkerRpcError:
+            self.failed += 1
+            raise
+        finally:
+            self.streams.discard(stream)
+            self.calls.discard(task)
 
     async def close(self):
         if self.stopping:

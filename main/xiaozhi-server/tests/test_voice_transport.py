@@ -21,10 +21,12 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         self.worker = ASRService(self.bus,'deskb2x',{'revision':8},Pipeline)
         await self.worker.start()
         self.generated = []
-        async def generate(revision, dialogue):
+        async def generate_stream(revision, dialogue, on_chunk):
             self.generated.append((revision,dialogue))
+            await on_chunk('ans', 0)
+            await on_chunk('wer', 1)
             return {'status':'ok','text':'answer'}
-        self.rpc = SimpleNamespace(client=self.bus,core_id='deskb1x',generate=generate)
+        self.rpc = SimpleNamespace(client=self.bus,core_id='deskb1x',generate_stream=generate_stream)
         self.config = CoreConfig('deskb1x','127.0.0.1',8000,frozenset(['127.0.0.1']),'wlan0','/tmp/unused','fixture-key')
         self.core = TransportCore(self.config,self.rpc,8)
         self.app = web.Application()
@@ -65,6 +67,10 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.generated),1)
         self.assertTrue(any(message.get('text')=='transcript' for message in messages))
         self.assertTrue(any(message.get('text')=='answer' for message in messages))
+        partials = [message for message in messages if message.get('type') == 'llm' and message.get('state') == 'partial']
+        self.assertEqual([(message['seq'], message['text']) for message in partials], [(0, 'ans'), (1, 'wer')])
+        self.assertLess(messages.index(partials[-1]), next(index for index, message in enumerate(messages)
+            if message.get('type') == 'llm' and message.get('state') == 'final'))
         self.assertFalse(any(message['type']=='tts' for message in messages))
         await ws.close()
         await asyncio.sleep(0)

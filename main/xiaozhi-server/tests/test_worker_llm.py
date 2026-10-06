@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.cluster import llm_protocol as wire
+from core.cluster import llm_stream_protocol as stream_wire
 from core.cluster.llm_config import load_bundle, validate_bundle
 from core.cluster.llm_worker import LLMWorker, MAX_JOBS, MAX_TOMBSTONES
 from core.cluster.nats_config import NatsConfig, NatsConnectionConfig
@@ -87,6 +88,7 @@ class LLMWorkerTests(unittest.IsolatedAsyncioTestCase):
         await self.worker._start()
         subscriptions = dict(self.client.subscriptions)
         self.assertEqual(subscriptions[wire.SUBJECT]['queue'], 'xiaozhi-llm-workers')
+        self.assertEqual(subscriptions[stream_wire.SUBJECT]['queue'], 'xiaozhi-llm-workers')
         self.assertNotIn('queue', subscriptions[wire.CANCEL_SUBJECT])
         self.assertEqual(json.loads(self.worker.response)['capabilities'], [])
         await self.receive();await self.settle()

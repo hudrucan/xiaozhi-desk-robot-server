@@ -67,8 +67,15 @@ class VoiceTurn:
             self.ending = True
             await self.emit({'type': 'stt', 'state': 'final', 'text': text})
             if text:
+                async def chunk(value, seq):
+                    if generation != self.generation:
+                        raise asyncio.CancelledError
+                    # Additive progress event; existing firmware still handles
+                    # the unchanged full final text and text-only completion.
+                    await self.emit({'type': 'llm', 'state': 'partial', 'seq': seq, 'text': value})
                 # The same immutable revision is required by both worker stages.
-                result = await self.rpc.generate(self.revision, [{'role': 'user', 'content': text}])
+                result = await self.rpc.generate_stream(self.revision,
+                    [{'role': 'user', 'content': text}], chunk)
                 if result['status'] != 'ok':
                     raise WorkerRpcError(result['error'])
                 if generation != self.generation:

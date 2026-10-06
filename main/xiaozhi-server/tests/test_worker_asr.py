@@ -185,11 +185,11 @@ class ASRTests(unittest.IsolatedAsyncioTestCase):
         sent = []
         async def send(value):
             sent.append(value)
-        async def generate(revision, dialogue):
+        async def generate_stream(revision, dialogue, on_chunk):
             self.assertEqual(revision, 8)
             self.assertEqual(dialogue, [{'role': 'user', 'content': 'transcript'}])
             return {'status': 'ok', 'text': 'answer'}
-        rpc = SimpleNamespace(client=self.bus, core_id='deskb1x', generate=generate)
+        rpc = SimpleNamespace(client=self.bus, core_id='deskb1x', generate_stream=generate_stream)
         voice = VoiceTurn(rpc, 8, AUDIO, 'session', send)
         await voice.start('manual')
         await voice.audio_frame(b'frame')
@@ -209,7 +209,7 @@ class ASRTests(unittest.IsolatedAsyncioTestCase):
         sent=[]
         async def send(value): sent.append(value)
         async def generate(*_): self.fail('ASR revision failure must not reach LLM')
-        rpc=SimpleNamespace(client=self.bus,core_id='deskb1x',generate=generate)
+        rpc=SimpleNamespace(client=self.bus,core_id='deskb1x',generate_stream=generate)
         voice=VoiceTurn(rpc,9,AUDIO,'session',send)
         await voice.start('manual')
         await voice.task
