@@ -22,7 +22,10 @@ async def main():
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
-    core = TransportCore(config, rpc)
+    revision = os.environ.get('XIAOZHI_CORE_ASR_REVISION')
+    if revision is not None and (not revision.isascii() or not revision.isdigit() or int(revision) < 1):
+        raise ValueError('Invalid voice configuration revision')
+    core = TransportCore(config, rpc, int(revision) if revision is not None else None)
     try:
         await core.start()
         await stop.wait()

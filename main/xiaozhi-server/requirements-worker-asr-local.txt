@@ -1,0 +1,3 @@
+# Local Sherpa ASR opt-in; pinned like the existing optional server provider.
+-r requirements-worker-asr.txt
+sherpa-onnx==1.13.8

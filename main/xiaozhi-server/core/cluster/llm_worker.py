@@ -20,6 +20,7 @@ class LLMWorker(Worker):
         self.jobs = {}
         self.cancelled = OrderedDict()
         self.stopping = False
+        self.activity = None
 
     async def _start(self):
         await super()._start()
@@ -85,11 +86,15 @@ class LLMWorker(Worker):
             return
         task = asyncio.create_task(self._execute(message.reply, value))
         self.jobs[value['request_id']] = (value['cancel_token'], task)
+        if self.activity:
+            self.activity.change('llm', 1)
         task.add_done_callback(lambda done: self._finished(value['request_id'], done))
         LOGGER.info('LLM job admitted; worker_id=%s revision=%d inflight=%d',
                     self.config.worker_id, self.bundle['revision'], len(self.jobs))
 
     def _finished(self, request_id, task):
+        if self.activity:
+            self.activity.change('llm', -1)
         job = self.jobs.get(request_id)
         if job and job[1] is task:
             self.jobs.pop(request_id, None)

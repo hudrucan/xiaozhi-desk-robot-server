@@ -108,9 +108,12 @@ def decode_message(data):
 
 
 class TransportCore:
-    def __init__(self, config, worker_rpc=None):
+    def __init__(self, config, worker_rpc=None, voice_revision=None):
         self.config = config
         self.worker_rpc = worker_rpc
+        if voice_revision is not None and (type(voice_revision) is not int or voice_revision < 1 or worker_rpc is None):
+            raise ValueError('Voice runtime requires an explicit revision and worker RPC')
+        self.voice_revision = voice_revision
         self.sockets = set()
         self.sessions = set()
         self.received_audio_frames = 0
@@ -162,7 +165,7 @@ class TransportCore:
             "status": "stopping" if self.stopping else "ready",
             "active_sessions": len(self.sessions), "local_vip_owner": self.vip_owner,
             "received_audio_frames": self.received_audio_frames,
-            "capabilities": [], "conversation_runtime": False,
+            "capabilities": ['voice_text'] if self.voice_revision is not None else [], "conversation_runtime": False,
             "worker_rpc": self.worker_rpc.status() if self.worker_rpc else {"state": "disabled"}})
 
     async def worker_probe(self, request):
@@ -230,16 +233,22 @@ class TransportCore:
         self.sockets.add(ws)
         session = None
         unavailable_sent = False
+        voice = None
         try:
             await ws.prepare(request)
             first = await asyncio.wait_for(ws.receive(), timeout=3)
             if first.type != WSMsgType.TEXT:
                 raise ValueError("Hello required")
             audio = hello_audio(decode_message(first.data))
+            if self.voice_revision is not None and audio != {'format':'opus','sample_rate':16000,'channels':1,'frame_duration':60}:
+                raise ValueError('Voice worker requires 16kHz mono 60ms Opus')
             session = uuid.uuid4().hex
+            if self.voice_revision is not None:
+                from .voice_turn import VoiceTurn
+                voice = VoiceTurn(self.worker_rpc, self.voice_revision, audio, session, ws.send_json)
             await ws.send_json({"type": "hello", "version": 2, "transport": "websocket",
                 "session_id": session, "audio_params": audio, "core_id": self.config.node_id,
-                "capabilities": [], "conversation_runtime": False})
+                "capabilities": ['voice_text'] if voice else [], "conversation_runtime": False})
             self.sessions.add(session)
             LOGGER.info("core_id=%s session opened active=%d", self.config.node_id, len(self.sessions))
             async for frame in ws:
@@ -249,6 +258,8 @@ class TransportCore:
                             or not 0 < int.from_bytes(data[12:16], "big") == len(data) - 16):
                         raise ValueError("Invalid audio frame")
                     self.received_audio_frames += 1
+                    if voice:
+                        await voice.audio_frame(data[16:])
                 elif frame.type == WSMsgType.TEXT:
                     message = decode_message(frame.data)
                     if message["type"] == "goodbye":
@@ -258,8 +269,20 @@ class TransportCore:
                     if message["type"] == "ping":
                         await ws.send_json({"type": "pong", "session_id": session})
                     elif message["type"] == "abort":
-                        # No provider job exists in this transport-only phase.
+                        if voice:
+                            await voice.abort()
+                            await voice.emit({'type': 'stt', 'state': 'clear'})
                         unavailable_sent = False
+                    elif voice and message['type'] == 'listen':
+                        if message.get('state') == 'start':
+                            await voice.start(message.get('mode', 'auto'))
+                        elif message.get('state') == 'stop':
+                            await voice.stop()
+                        elif message.get('state') == 'detect' and message.get('input_mode') != 'text':
+                            # Wake notification is not a user speech transcript.
+                            pass
+                        else:
+                            raise ValueError('Unsupported voice request')
                     elif not unavailable_sent:
                         await ws.send_json({"type": "error", "session_id": session,
                             "code": "conversation_runtime_unavailable",
@@ -271,6 +294,8 @@ class TransportCore:
             if ws.prepared:
                 await ws.close(code=1008, message=b"Invalid transport message")
         finally:
+            if voice:
+                await voice.abort()
             self.sockets.discard(ws)
             if session is not None:
                 self.sessions.discard(session)

@@ -1,0 +1,5 @@
+# Explicit ASR + LLM composition; full server dependencies are not required.
+-r requirements-worker-llm.txt
+opuslib_next==1.1.5
+numpy==1.26.4
+onnxruntime==1.30.0
