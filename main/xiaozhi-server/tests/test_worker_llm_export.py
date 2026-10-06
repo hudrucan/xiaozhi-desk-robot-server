@@ -72,5 +72,24 @@ class ExportTests(unittest.TestCase):
         with self.assertRaises(ValueError):build_bundle(store)
         self.assertEqual(self.resolved,[])
 
+    def test_expected_revision_drift_fails_before_secret_resolution(self):
+        store = self.store()
+        with self.assertRaises(ValueError):
+            build_bundle(store, expected_revision=7)
+        self.assertEqual(self.resolved, [])
+
+    def test_unchanged_private_bundle_is_not_rewritten(self):
+        value = build_bundle(self.store())
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'bundle.json'
+            self.assertTrue(write_private(str(path), value))
+            before = path.stat().st_mtime_ns
+            path.chmod(0o640)
+            self.assertFalse(write_private(str(path), value))
+            self.assertEqual(path.stat().st_mtime_ns, before)
+            path.chmod(0o644)
+            with self.assertRaises(ValueError):
+                write_private(str(path), value)
+
 
 if __name__=='__main__':unittest.main()

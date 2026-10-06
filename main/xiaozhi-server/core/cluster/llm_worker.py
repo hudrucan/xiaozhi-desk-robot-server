@@ -86,6 +86,8 @@ class LLMWorker(Worker):
         task = asyncio.create_task(self._execute(message.reply, value))
         self.jobs[value['request_id']] = (value['cancel_token'], task)
         task.add_done_callback(lambda done: self._finished(value['request_id'], done))
+        LOGGER.info('LLM job admitted; worker_id=%s revision=%d inflight=%d',
+                    self.config.worker_id, self.bundle['revision'], len(self.jobs))
 
     def _finished(self, request_id, task):
         job = self.jobs.get(request_id)
@@ -116,10 +118,11 @@ class LLMWorker(Worker):
             else:
                 await self._send(reply_subject, value, error='llm_empty_response')
         except asyncio.TimeoutError:
+            LOGGER.info('LLM job expired; worker_id=%s', self.config.worker_id)
             await self._send(reply_subject, value, error='llm_expired')
         except asyncio.CancelledError:
             # Core no longer owns/waits for this result. Do not send late text.
-            pass
+            LOGGER.info('LLM job cancelled; worker_id=%s', self.config.worker_id)
         except Exception:
             LOGGER.warning('LLM execution failed; worker_id=%s', self.config.worker_id)
             await self._send(reply_subject, value, error='llm_provider_failed')
@@ -131,6 +134,7 @@ class LLMWorker(Worker):
                 LOGGER.warning('LLM stream close unavailable; worker_id=%s', self.config.worker_id)
             finally:
                 self.jobs.pop(value['request_id'], None)
+                LOGGER.info('LLM job released; worker_id=%s inflight=%d', self.config.worker_id, len(self.jobs))
 
     async def _shutdown(self):
         self.stopping = True

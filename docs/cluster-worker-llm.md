@@ -24,6 +24,10 @@ only the selected LLM, and writes an atomic mode-600 bundle. It does not fetch
 Drive, publish Config, mark runtime active or materialize Soundbank assets.
 The destination directory must already exist and be private. No key or secret
 reference is printed. Provision the worker ownership/group after export.
+An immutable worker checkout can run the exporter with the existing control-plane
+venv and `--source-root /opt/xiaozhi-control-plane/repo/main/xiaozhi-server`.
+`--expected-revision` rejects Cloud drift before resolving credentials. Identical
+private bundles are not rewritten. Export output contains only changed/revision/node metadata.
 
 ```bash
 # Run from the control-plane server checkout, using its existing dependencies.
@@ -62,9 +66,8 @@ python3 -m venv .venv-worker-llm
 ```
 
 Run `worker_llm.py` in place of the ping-only process on an enabled node; do not
-run both under the same worker identity. The current Ansible worker role still
-deploys ping-only workers. Text-worker deployment is not enabled by this source
-addition and requires separately provisioned credentials/bundles.
+run both under the same worker identity. The Ansible worker role defaults to
+ping-only; its explicit LLM opt-in uses separately provisioned credentials/bundles.
 
 Gemini reuses the existing adapter and generation settings with an added async
 text-only interface. It uses the async SDK directly, with no background generator
@@ -110,6 +113,23 @@ with ping probes. It returns one final text response, not audio/streaming events
 Client disconnect/core shutdown cancels the owned call and emits a best-effort
 cancel hint; no late result can advance a robot turn. It is not mounted in the
 Settings UI or management VIP frontend. There is no robot turn coordinator yet.
+
+`probe_worker_llm.py` sends an authenticated private HTTP request using
+`XIAOZHI_CORE_AUTH_KEY` from the existing private core environment. It accepts only
+the three private Desk IPs, disables proxies/redirects and bounds the payload,
+response and deadline. Default output contains worker ID, revision, elapsed time,
+text length and optional expected-text match; use `--show-text` only when needed.
+`--cancel-after 0.3` closes the request to exercise cancellation; this result only
+proves the client closed it. Check the core inflight count and the worker's fixed
+`LLM job cancelled` / `LLM job released ... inflight=0` diagnostics for cleanup.
+Diagnostics never include request text, API keys or cancellation tokens.
+
+The cluster's explicit `worker-llm.yml` playbook opts into this entrypoint under
+the existing `xiaozhi-worker` unit, with a separate immutable source/venv path.
+It checks all three validated Cloud revisions, supports a one-node canary and
+rolls selected workers serially. `verify-worker-llm.yml` runs the authenticated
+probe without changing deployments. Normal full-site worker deployment remains
+ping-only unless the LLM deployment variables are explicitly retained.
 
 ## Validation and next acceptance
 

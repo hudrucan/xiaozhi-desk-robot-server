@@ -109,12 +109,10 @@ are never moved on ownership changes. A core/node failure requires a fresh sessi
 
 ## Panel
 
-The cluster panel polls its local core status. `C- NN` means the local core owns
-an established session; `CP NN` additionally marks actual VIP ownership. Uppercase
-C uses the top, both left and bottom segments. Idle remains `-- NN` or `iP NN`.
-When fallback puts both gateway and core sessions on one node without VIP, the
-panel shows `tC NN` continuously. With all three roles, it alternates `tC NN` and
-`iP NN` once per polling cycle.
+The cluster panel polls its local core status. `Co NN` means the local core owns
+an established session, `nt NN` marks an authenticated MQTT connection (including
+idle), and `iP NN` marks actual VIP ownership. Multiple roles rotate in that order
+approximately every 1.5 seconds; a node with no active roles shows `-- NN`.
 The colon remains disabled. Counts describe local roles across all sessions,
 not provider execution or a single globally elected core.
 
