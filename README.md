@@ -272,6 +272,12 @@ For a symmetric Settings service without conversation/provider runtime, see
 hints with periodic reconciliation. Rolling restart and VIP deployment are not
 implemented yet; the normal server continues to use `app.py`.
 
+For the isolated MQTT cluster transport acceptance phase, see
+[Cluster transport core](docs/cluster-transport-core.md). `core_server.py` uses
+`requirements-core.txt`, exposes real session ownership for the panel, and does
+not load providers. It is transport-only; distributed conversation execution,
+bootstrap and Vision are not implemented by this entrypoint.
+
 ## Memory v2
 
 Select `mem_local_explicit` to store durable records in

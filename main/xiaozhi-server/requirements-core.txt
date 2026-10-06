@@ -1,0 +1,2 @@
+# Transport/health only. No providers, models, Cloud assets or NATS execution yet.
+aiohttp==3.13.2
