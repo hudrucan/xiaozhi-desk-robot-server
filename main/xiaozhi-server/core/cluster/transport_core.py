@@ -194,6 +194,28 @@ class TransportCore:
         except asyncio.TimeoutError:
             return web.json_response({"error": "worker_probe_timeout"}, status=408)
 
+    async def worker_llm_probe(self, request):
+        if request.query_string or not authenticated(request, self.config):
+            raise web.HTTPUnauthorized()
+        if self.stopping or self.worker_rpc is None:
+            return web.json_response({"error": "worker_rpc_unavailable"}, status=503)
+        try:
+            raw = await asyncio.wait_for(request.read(), timeout=2)
+            from . import llm_protocol as protocol
+            value = protocol.decode(raw, MAX_JSON)
+            if not isinstance(value, dict) or set(value) - {"revision", "dialogue", "timeout_seconds"} or not {"revision", "dialogue"} <= set(value):
+                raise ValueError("Invalid text probe")
+            from .worker_rpc import WorkerRpcError
+            try:
+                reply = await self.worker_rpc.generate(value["revision"], value["dialogue"], value.get("timeout_seconds", 30))
+            except WorkerRpcError as error:
+                return web.json_response({"error": error.code}, status=503)
+            return web.json_response(reply, status=200 if reply["status"] == "ok" else 503)
+        except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+            return web.json_response({"error": "invalid_llm_probe"}, status=400)
+        except asyncio.TimeoutError:
+            return web.json_response({"error": "worker_probe_timeout"}, status=408)
+
     async def ready(self, request):
         return web.json_response({"status": "not_ready" if self.stopping else "ready",
             "protocol": PROTOCOL, "conversation_runtime": False}, status=503 if self.stopping else 200)
@@ -263,6 +285,7 @@ class TransportCore:
         app.router.add_get("/status", self.status)
         app.router.add_get("/readyz", self.ready)
         app.router.add_post("/api/workers/probe", self.worker_probe)
+        app.router.add_post("/api/workers/llm", self.worker_llm_probe)
         self.runner = web.AppRunner(app, access_log=None, shutdown_timeout=5, handler_cancellation=True)
         await self.runner.setup()
         await web.TCPSite(self.runner, self.config.host, self.config.port).start()

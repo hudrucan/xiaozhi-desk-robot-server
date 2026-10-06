@@ -12,12 +12,11 @@ from google import genai
 from google.genai import types
 
 from core.providers.llm.base import LLMProviderBase
-from core.utils.util import check_model_key
-from config.logger import setup_logging
+from core.providers.llm.model_key import check_model_key
+from loguru import logger as log
 from requests import RequestException
 from .tooling import GeminiTooling
 
-log = setup_logging()
 TAG = __name__
 _THINKING_LEVELS = ("minimal", "low", "medium", "high")
 
@@ -178,6 +177,35 @@ class LLMProvider(LLMProviderBase):
             function_mode=False,
             event_loop=kwargs.get("event_loop"),
         )
+
+    async def response_text_async(self, dialogue):
+        """Cancellable text-only stream for an isolated worker, without tools."""
+        contents = [
+            {"role": "model" if message["role"] == "assistant" else "user",
+             "parts": [{"text": message["content"]}]}
+            for message in dialogue
+        ]
+        config = types.GenerateContentConfig(
+            **self.generation_kwargs,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            http_options=types.HttpOptions(timeout=int(self.timeout * 1000)),
+        )
+        stream = None
+        try:
+            stream = await self.client.aio.models.generate_content_stream(
+                model=self.model_name, contents=contents, config=config)
+            async for chunk in stream:
+                if not chunk.candidates:
+                    continue
+                content = chunk.candidates[0].content
+                for part in content.parts if content and content.parts else ():
+                    if getattr(part, "function_call", None):
+                        raise ValueError("Text-only stream returned a tool call")
+                    if getattr(part, "text", None):
+                        yield part.text
+        finally:
+            if stream is not None and hasattr(stream, "aclose"):
+                await asyncio.wait_for(stream.aclose(), timeout=3)
 
     def response_with_functions(
         self,

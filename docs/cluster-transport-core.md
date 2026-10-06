@@ -128,3 +128,7 @@ with a changed VIP owner and unavailable preferred core to exercise fallback.
 Malformed/oversize input and invalid authentication must be rejected. Confirm
 provider requests report unavailable rather than producing a fake response.
 Physical display, robot audio and failure recovery require operator validation.
+
+The optional text-only LLM RPC source and its separate worker/configuration
+requirements are documented in [Standalone text LLM RPC](cluster-worker-llm.md).
+Its presence does not enable the robot conversation runtime or deploy providers.

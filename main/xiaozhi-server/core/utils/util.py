@@ -12,6 +12,7 @@ from io import BytesIO
 from core.utils import p3
 from pydub import AudioSegment
 from typing import Callable, Any
+from core.providers.llm.model_key import check_model_key
 
 TAG = __name__
 
@@ -94,10 +95,6 @@ def matches_wakeup_word(text, configured_wake_words):
     return bool(normalized_variants(text) & configured_variants)
 
 
-def check_model_key(modelType, modelKey):
-    if "你" in modelKey:
-        return f"配置错误: {modelType} 的 API key 未设置,当前值为: {modelKey}"
-    return None
 
 
 def parse_string_to_list(value, separator=";"):

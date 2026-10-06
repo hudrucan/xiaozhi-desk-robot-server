@@ -1,8 +1,4 @@
 from abc import ABC, abstractmethod
-from config.logger import setup_logging
-
-TAG = __name__
-logger = setup_logging()
 
 class LLMProviderBase(ABC):
     @abstractmethod
@@ -31,4 +27,3 @@ class LLMProviderBase(ABC):
         # For providers that don't support functions, just return regular response
         for token in self.response(session_id, dialogue):
             yield token, None
-

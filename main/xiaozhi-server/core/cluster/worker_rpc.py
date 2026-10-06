@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import time
+import uuid
 
 from .nats_config import NatsConnectionConfig, validate_worker_id
 from .protocol import MAX_REPLY_BYTES, PING_SUBJECT, targeted_ping_subject
@@ -142,6 +144,53 @@ class WorkerRPC:
             raise WorkerRpcError("worker_rpc_failed") from None
         finally:
             self.calls.discard(task)
+
+    async def generate(self, revision, messages, seconds=30):
+        from . import llm_protocol as protocol
+        if type(revision) is not int or revision < 1 or type(seconds) is not int or not 1 <= seconds <= protocol.MAX_SECONDS:
+            raise ValueError("Invalid LLM revision or deadline")
+        protocol.dialogue(messages)
+        if self.stopping or not self.client.is_connected:
+            raise WorkerRpcError("worker_rpc_unavailable")
+        if len(self.calls) >= MAX_INFLIGHT:
+            raise WorkerRpcError("worker_rpc_busy")
+        request_id, token = uuid.uuid4().hex, uuid.uuid4().hex
+        payload = protocol.encode({"protocol": protocol.PROTOCOL, "request_id": request_id,
+            "cancel_token": token, "core_id": self.core_id, "revision": revision,
+            "deadline_ms": int(time.time() * 1000) + seconds * 1000, "dialogue": messages}, protocol.MAX_REQUEST_BYTES)
+        cancellation = protocol.encode({"protocol": protocol.PROTOCOL,
+            "request_id": request_id, "cancel_token": token}, 512)
+        task = asyncio.current_task()
+        self.calls.add(task)
+        try:
+            result = await asyncio.wait_for(self.client.request(protocol.SUBJECT, payload, timeout=seconds),
+                                            timeout=seconds + 0.25)
+            try:
+                value = protocol.reply(result.data, request_id, revision)
+            except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
+                raise WorkerRpcError("worker_rpc_invalid_reply") from None
+            if self.stopping:
+                raise WorkerRpcError("worker_rpc_unavailable")
+            self.completed += 1
+            return value
+        except asyncio.CancelledError:
+            raise
+        except WorkerRpcError:
+            self.failed += 1
+            raise
+        except Exception:
+            self.failed += 1
+            raise WorkerRpcError("worker_rpc_failed") from None
+        finally:
+            # Best-effort broadcast, never buffered through reconnect. The token
+            # prevents an unrelated core request from cancelling this job.
+            try:
+                if self.client.is_connected:
+                    await asyncio.wait_for(self.client.publish(protocol.CANCEL_SUBJECT, cancellation), timeout=1)
+            except Exception:
+                LOGGER.warning("LLM cancellation unavailable; core_id=%s", self.core_id)
+            finally:
+                self.calls.discard(task)
 
     async def close(self):
         if self.stopping:
