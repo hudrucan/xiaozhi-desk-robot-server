@@ -49,6 +49,11 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None):
         web.post("/api/settings/migrate-cluster", handler.handle_migration),
         web.get("/api/cluster", handler.handle_cluster), web.get("/healthz", handler.handle_health),
     ])
+    if config.bootstrap is not None:
+        from core.cluster.mqtt_bootstrap import MqttBootstrap
+        bootstrap = MqttBootstrap(reconciliation, config.bootstrap)
+        app.router.add_get("/xiaozhi/ota/", bootstrap.handle)
+        app.router.add_post("/xiaozhi/ota/", bootstrap.handle)
 
     async def startup(app):
         await reconciliation.start()

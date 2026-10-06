@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from core.cluster.nats_config import NatsConnectionConfig
 from core.cluster.secret_transport import SecretProvisionConfig
+from core.cluster.mqtt_bootstrap import MqttBootstrapConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +18,7 @@ class ControlPlaneConfig:
     allow_remote: bool = False
     reconcile_interval: float = 45
     secrets: SecretProvisionConfig | None = None
+    bootstrap: MqttBootstrapConfig | None = None
 
     @classmethod
     def from_env(cls):
@@ -32,4 +34,5 @@ class ControlPlaneConfig:
                 raise ValueError
         except ValueError:
             raise ValueError("Invalid control-plane host, port, access policy or reconciliation interval") from None
-        return cls(nats, host, port, remote == "true", interval, SecretProvisionConfig.from_env(port))
+        return cls(nats, host, port, remote == "true", interval, SecretProvisionConfig.from_env(port),
+                   MqttBootstrapConfig.from_env())

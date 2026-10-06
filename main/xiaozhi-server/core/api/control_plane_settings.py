@@ -27,6 +27,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
     def capabilities(self):
         capabilities = copy.deepcopy(CAPABILITIES)
         capabilities["secret_provisioning"] = self.secrets is not None
+        capabilities["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
         return {"protocol": CONTROL_PROTOCOL, "capability_version": 1,
                 "mode": "standalone", "capabilities": capabilities}
 
@@ -110,6 +111,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         self._require_access(request)
         payload = self.reconciliation.status()
         payload["capabilities"]["secret_provisioning"] = self.secrets is not None
+        payload["capabilities"]["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
         return self._disable_cache(web.json_response(payload))
 
     def _require_secret_access(self, request):
