@@ -29,8 +29,9 @@ The key is not put into the ordinary Config patch, URLs, browser storage or publ
 responses. The UI cannot retrieve a stored value. Blank input does not remove an
 existing key. Current scope supports selected-provider `api_key` fields for ASR,
 LLM, VLLM, TTS, Memory and Intent; deletion and arbitrary secrets are not exposed.
-If node exceptions mask the shared field, the operation fails before staging keys
-and requires an explicit configuration correction.
+This explicit all-node action rotates only the named credential on each deployed
+member. Other node overrides and inactive Cloud assignments are preserved exactly;
+the shared layers are unchanged.
 
 Browser access retains the existing trusted-LAN HTTP Settings contract. It is
 not HTTPS/public-network key management. Same-origin and an explicit custom JSON
@@ -47,7 +48,8 @@ A rotation creates a fresh immutable reference, stages the key in each member's
 existing private LocalSecretStore, and verifies durable read-back. The encrypted
 acknowledgement proves the expected value, not merely HTTP success. Only after
 all three acknowledge does the existing Cloud CAS-last publication save the new
-reference. Cloud Config contains a reference, never the value. NATS carries only
+reference in the three deployed node overrides. Shared layers and inactive
+assignments remain unchanged. Cloud Config contains a reference, never the value. NATS carries only
 the existing version/revision hint, never a key, reference name or ciphertext.
 
 If a node is unavailable or an acknowledgement is invalid, no Config publication

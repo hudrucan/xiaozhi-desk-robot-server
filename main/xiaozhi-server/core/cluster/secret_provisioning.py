@@ -61,7 +61,7 @@ class SecretProvisioning:
         validate_target(group, provider, field)
         snapshot = self.store._desired_view()
         obj = snapshot['payload']['object']
-        if not shared_cluster(obj) or set(obj['layers']['nodes']) != set(dict(self.config.nodes)):
+        if not shared_cluster(obj) or not set(dict(self.config.nodes)) <= set(obj['layers']['nodes']):
             raise ValueError('Provisioning requires matching shared V2 membership')
         defaults = self.store._repo_defaults()
         effective = merge_configs(*resolve_layers(obj, self.node, defaults))
@@ -73,12 +73,12 @@ class SecretProvisioning:
         with self.store.locked():
             self.store.prepare_commit_unlocked(revision)
             obj, defaults = self._target(group, provider, field)
-            patch = {group: {provider: {field: '${secret:' + name + '}'}}}
-            updated = merge_configs(self.store.settings_overrides_unlocked(), patch)
-            candidate = self.store.prepare_settings_candidate_unlocked(updated, patch)
+            reference = '${secret:' + name + '}'
+            candidate = self.store.prepare_secret_candidate_unlocked(group, provider, field, reference,
+                tuple(node for node, _ in self.config.nodes))
             for node, _ in self.config.nodes:
                 effective = merge_configs(*resolve_layers(candidate.cloud_object, node, defaults))
-                if effective.get(group, {}).get(provider, {}).get(field) != patch[group][provider][field]:
+                if effective.get(group, {}).get(provider, {}).get(field) != reference:
                     raise ValueError('Node credential exceptions must be resolved before shared rotation')
             return candidate
 

@@ -160,7 +160,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
                 "error": "Secret save could not be confirmed. Sync Settings before retrying."}, status=503))
         except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, asyncio.TimeoutError):
             return self._disable_cache(web.json_response({"committed": False, "code": "invalid_secret_request",
-                "error": "Select a supported provider API key, resolve node exceptions, and supply a valid value and current revision."}, status=400))
+                "error": "Select a supported provider API key and supply a valid value and current revision for all deployed members."}, status=400))
         # Cloud CAS already succeeded. A failed response refresh cannot turn the
         # committed key change into an apparent failed Save.
         try:

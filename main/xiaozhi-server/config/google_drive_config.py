@@ -12,7 +12,7 @@ from pathlib import Path
 import portalocker
 
 from config.config_loader import get_project_dir, load_default_config, merge_configs
-from config.cloud_secrets import LocalSecretStore, validate_blank_secret_preservation, validate_cloud_secrets
+from config.cloud_secrets import REFERENCE, LocalSecretStore, validate_blank_secret_preservation, validate_cloud_secrets
 from config.cloud_soundbank import CloudSoundbankAssets
 from config.cloud_memory import CloudMemoryStore, explicit_memory_config, memory_path
 from config.memory_reconciliation import require_memory_match
@@ -262,6 +262,30 @@ class GoogleDriveConfigStore(ConfigStore):
 
     def prepare_settings_candidate_unlocked(self, config, patch):
         return self.prepare_candidate_unlocked(config, settings_patch=patch)
+
+    def prepare_secret_candidate_unlocked(self, group, provider, field, reference, nodes):
+        """Explicit key rotation owns only the named field on deployed members."""
+        obj = copy.deepcopy(self._desired_view()["payload"]["object"])
+        if (not shared_cluster(obj) or not isinstance(reference, str) or not REFERENCE.fullmatch(reference)
+                or group not in {"ASR", "LLM", "VLLM", "TTS", "Memory", "Intent"}
+                or field != "api_key" or not isinstance(provider, str)
+                or not isinstance(nodes, (tuple, list)) or len(nodes) != 3 or len(set(nodes)) != 3
+                or not set(nodes) <= set(obj["layers"]["nodes"])):
+            raise ValueError("Secret rotation requires three assigned deployed members")
+        repo_defaults = self._repo_defaults()
+        for node_id in nodes:
+            effective = merge_configs(*resolve_layers(obj, node_id, repo_defaults))
+            if field not in effective.get(group, {}).get(provider, {}):
+                raise ValueError("Provider credential is not configured for a deployed member")
+            overrides = obj["layers"]["nodes"][node_id]["overrides"]
+            updated = merge_configs(overrides, {group: {provider: {field: reference}}})
+            obj["layers"]["nodes"][node_id]["overrides"] = updated
+        # Preserve all other overrides, shared layers and inactive assignments.
+        # Metadata validation never materializes/publishes Soundbank source bytes.
+        validate_layers(obj, self.validator, repo_defaults)
+        effective = merge_configs(*self._resolve(obj, repo_defaults))
+        self.validator(effective)
+        return PreparedCloudConfig(copy.deepcopy(obj["layers"]["cluster"]), effective, self, obj)
 
     def prepare_candidate_unlocked(self, config, *, settings_patch=None):
         current_obj = self._desired_view()["payload"]["object"]

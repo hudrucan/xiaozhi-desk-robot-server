@@ -93,7 +93,7 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
 
     def reference(self):
         obj=json.loads(self.fixture.drive.files[self.fixture.drive.manifest['config']['file_id']])
-        value=obj['layers']['cluster']['LLM']['Test']['api_key']
+        value=obj['layers']['nodes']['node-a']['overrides'].get('LLM',{}).get('Test',{}).get('api_key') or obj['layers']['cluster']['LLM']['Test']['api_key']
         return REFERENCE.fullmatch(value)[1]
 
     async def save(self,service=None,revision=1,value=VALUE):
@@ -103,7 +103,7 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         before=copy.deepcopy(self.fixture.drive.manifest)
         def require_all_before_cas():
             obj=json.loads(self.fixture.drive.files[f'upload-{self.fixture.drive.uploads}'])
-            name=REFERENCE.fullmatch(obj['layers']['cluster']['LLM']['Test']['api_key'])[1]
+            name=REFERENCE.fullmatch(obj['layers']['nodes']['node-a']['overrides']['LLM']['Test']['api_key'])[1]
             for store in self.stores.values():self.assertEqual(store.secrets.get(name),VALUE)
         self.fixture.drive.before_commit=require_all_before_cas
         with patch.object(self.stores['node-a'].soundbank_assets,'publish_layers',side_effect=AssertionError('Unexpected local Soundbank publication')):
@@ -137,6 +137,19 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(VALUE,str(error.exception))
         self.assertEqual(self.nats['node-a'].messages,[])
 
+    async def test_extra_inactive_cloud_assignment_and_shared_layers_are_preserved_exactly(self):
+        obj=json.loads(self.fixture.drive.files[self.fixture.drive.manifest['config']['file_id']])
+        obj['layers']['nodes']['legacy-node']={'environment':None,'role':None,'overrides':{'prompt':'Legacy prompt'}}
+        self.fixture.drive.publish_object(obj,2)
+        original=copy.deepcopy(obj)
+        await self.save(revision=2)
+        updated=json.loads(self.fixture.drive.files[self.fixture.drive.manifest['config']['file_id']])
+        self.assertEqual(updated['layers']['nodes']['legacy-node'],original['layers']['nodes']['legacy-node'])
+        for layer in ('global','environments','roles','cluster'):
+            self.assertEqual(updated['layers'][layer],original['layers'][layer])
+        for node,_ in NODES:
+            self.assertEqual(updated['layers']['nodes'][node]['overrides']['LLM']['Test']['api_key'],'${secret:'+self.reference()+'}')
+
     async def test_forged_ack_does_not_publish_cloud(self):
         self.tamper=True
         with self.assertRaises(ProvisionIncomplete):await self.save()
@@ -159,15 +172,20 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(obj['layers']['cluster']['LLM']['Test']['api_key'],original)
         self.assertEqual(obj['layers']['cluster']['prompt'],'Concurrent edit')
 
-    async def test_stale_base_revision_and_node_override_stop_before_provisioning(self):
+    async def test_stale_base_stops_and_explicit_key_rotation_preserves_other_node_overrides(self):
         count=len(self.stores['node-a'].secrets.export_dataset()['values'])
         with self.assertRaises(ConfigConflict):await self.save(revision=9)
         obj=json.loads(self.fixture.drive.files[self.fixture.drive.manifest['config']['file_id']])
-        obj['layers']['nodes']['node-c']['overrides']={'LLM':{'Test':{'api_key':'${secret:NODE_OVERRIDE}'}}}
+        obj['layers']['nodes']['node-c']['overrides']={'LLM':{'Test':{'api_key':'${secret:NODE_OVERRIDE}','temperature':0.3}},'prompt':'Node-specific prompt'}
         self.fixture.drive.publish_object(obj,2)
-        with self.assertRaises(ValueError):await self.save(revision=2)
-        self.assertEqual(len(self.stores['node-a'].secrets.export_dataset()['values']),count)
-        self.assertEqual(self.fixture.drive.manifest['revision'],2)
+        await self.save(revision=2)
+        self.assertEqual(len(self.stores['node-a'].secrets.export_dataset()['values']),count+1)
+        obj=json.loads(self.fixture.drive.files[self.fixture.drive.manifest['config']['file_id']])
+        overrides=obj['layers']['nodes']['node-c']['overrides']
+        self.assertEqual(overrides['prompt'],'Node-specific prompt')
+        self.assertEqual(overrides['LLM']['Test']['temperature'],0.3)
+        self.assertEqual(overrides['LLM']['Test']['api_key'],'${secret:'+self.reference()+'}')
+        self.assertEqual(self.fixture.drive.manifest['revision'],3)
 
     async def test_missing_key_status_and_symmetric_save_after_serving_node_changes(self):
         # The currently configured reference is present initially on all nodes.
