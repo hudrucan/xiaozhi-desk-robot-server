@@ -6,26 +6,38 @@ export function initializeSecrets(reload) {
   reloadSettings = reload;
 }
 
-export function clusterSecretField(group, provider, field, label, path) {
+export function clusterSecretField(group, provider, field) {
   const enabled = Boolean(state.secretCapabilities);
-  return `<article class="field-card wide" data-cluster-secret
+  const id = `cluster-key-${group}-${provider}`;
+  return `<article class="field-card secret-card" data-cluster-secret
       data-group="${escapeHtml(group)}" data-provider="${escapeHtml(provider)}" data-field="${escapeHtml(field)}">
-    <label>${escapeHtml(label)} <small>${escapeHtml(path)}</small>
-      <input type="password" data-secret-value autocomplete="new-password" spellcheck="false"
-        placeholder="Enter a new key; stored keys are never displayed" ${enabled && !state.secretProvisioning ? "" : "disabled"} />
-    </label>
-    <button type="button" data-provision-secret ${enabled && !state.secretProvisioning ? "" : "disabled"}>Save key on all 3 nodes</button>
-    <p class="field-help" data-secret-status>${enabled
-      ? "Checking node readiness…"
-      : "Cluster key provisioning is not enabled on this deployment."}</p>
-    <p class="field-help">Use this trusted LAN Settings connection. Save ordinary edits first. A key change takes effect in desired configuration only after every node confirms storage.</p>
+    <label for="${escapeHtml(id)}">API key <span class="secret-scope">Shared · 3 nodes</span></label>
+    <div class="secret-entry">
+      <input id="${escapeHtml(id)}" type="password" data-secret-value autocomplete="new-password" spellcheck="false"
+        placeholder="Enter API key" ${enabled && !state.secretProvisioning ? "" : "disabled"} />
+      <button class="button primary" type="button" data-provision-secret ${enabled && !state.secretProvisioning ? "" : "disabled"}>Save to 3 nodes</button>
+    </div>
+    <div class="secret-nodes" data-secret-status role="status" aria-live="polite">${enabled
+      ? '<span class="secret-note">Checking nodes…</span>'
+      : '<span class="secret-note">Key provisioning unavailable</span>'}</div>
+    <p class="field-help secret-help">Stored privately on each node. Saved keys stay hidden.</p>
   </article>`;
 }
 
-function nodeSummary(payload) {
-  const labels = { ready: "ready", stored: "stored", missing: "missing key",
-    not_configured: "not configured", unconfirmed: "not confirmed" };
-  return (payload.nodes || []).map((node) => `${node.node_id}: ${labels[node.state] || "unavailable"}`).join(" · ");
+function renderNodes(card, payload) {
+  if (!card.isConnected) return;
+  const labels = { ready: "Saved", stored: "Saved", missing: "No key",
+    not_configured: "No key", unconfirmed: "Unavailable" };
+  card.querySelector("[data-secret-status]").innerHTML = (payload.nodes || []).map((node) => {
+    const ready = node.state === "ready" || node.state === "stored";
+    const unavailable = node.state === "unconfirmed";
+    return `<span class="secret-node ${ready ? "ready" : unavailable ? "unavailable" : "missing"}">
+      <span class="secret-dot" aria-hidden="true"></span><strong>${escapeHtml(node.node_id)}</strong>
+      <span>${escapeHtml(labels[node.state] || "Unavailable")}</span></span>`;
+  }).join("");
+  if (payload.ready && !payload.consistent) {
+    card.querySelector("[data-secret-status]").insertAdjacentHTML("beforeend", '<span class="secret-note">Node credentials differ</span>');
+  }
 }
 
 function target(card) {
@@ -37,8 +49,7 @@ async function checkReadiness(card) {
     const response = await fetch(`/api/settings/secrets?${new URLSearchParams(target(card))}`, { cache: "no-store" });
     const payload = await response.json();
     if (!response.ok) throw new Error("Key status unavailable");
-    if (card.isConnected) card.querySelector("[data-secret-status]").textContent = nodeSummary(payload)
-      + (payload.ready && !payload.consistent ? " · Node credential exceptions differ" : "");
+    renderNodes(card, payload);
   } catch {
     if (card.isConnected) card.querySelector("[data-secret-status]").textContent = "Key status unavailable. Sync Settings and check node availability.";
   }
@@ -72,7 +83,8 @@ async function provision(card) {
     input.value = "";
     const payload = await response.json();
     if (!response.ok) {
-      if (card.isConnected) card.querySelector("[data-secret-status]").textContent = nodeSummary(payload) || "Save not confirmed; sync before retrying.";
+      if (payload.nodes?.length) renderNodes(card, payload);
+      else if (card.isConnected) card.querySelector("[data-secret-status]").textContent = "Save not confirmed. Sync before retrying.";
       throw new Error(payload.error || "Key save was not confirmed");
     }
     if (!payload.committed) throw new Error("Key save was not confirmed. Sync before retrying.");

@@ -361,6 +361,24 @@ main { grid-column: 2; min-width: 0; }
 .settings-group > .form-grid { padding: 15px; }
 .settings-group .field-card, .provider-workspace .field-card { border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16); }
 .field-card { padding: 19px; }
+/* Cluster API key input follows the provider field grid and button palette. */
+.provider-fields .secret-card { grid-column: span 2; padding: 16px 19px; }
+.secret-card > label { margin-bottom: 10px; }
+.secret-scope { color: var(--faint); font-size: 10px; font-weight: 500; white-space: nowrap; }
+.secret-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.secret-entry input { min-width: 0; }
+.secret-entry .button { min-height: 42px; white-space: nowrap; }
+.secret-nodes { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; min-height: 24px; align-items: center; }
+.secret-node { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: rgba(9, 7, 5, 0.2); font-size: 10px; line-height: 1.3; }
+.secret-node strong { color: var(--text); font-size: 10px; font-weight: 600; }
+.secret-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.secret-node.ready { border-color: rgba(131, 173, 130, 0.35); }
+.secret-node.ready .secret-dot { background: var(--green); }
+.secret-node.unavailable .secret-dot { background: var(--red); }
+.secret-note { color: var(--muted); font-size: 11px; }
+.secret-card .secret-help { margin: 7px 0 0; font-size: 10px; }
+@media (max-width: 1100px) { .provider-fields .secret-card { grid-column: 1 / -1; order: -1; } }
+@media (max-width: 520px) { .secret-entry { grid-template-columns: minmax(0, 1fr) auto; } .secret-entry .button { min-height: 42px; padding: 0 10px; font-size: 11px; } .secret-scope { font-size: 9px; } }
 .field-card.wide { grid-column: 1 / -1; }
 .field-card label, .field-label { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: var(--text); font-size: 12px; font-weight: 600; }
 .field-card label small, .field-label small { color: var(--faint); font-weight: 400; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1; }

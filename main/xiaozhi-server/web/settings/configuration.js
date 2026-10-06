@@ -43,7 +43,7 @@ function pathHint(path) {
 function field(path, label, options = {}) {
   if (state.controlPlane && path.split(".").length === 3 && path.endsWith(".api_key")) {
     const [group, provider, key] = path.split(".");
-    return clusterSecretField(group, provider, key, label, path);
+    return clusterSecretField(group, provider, key);
   }
   const value = getPath(state.config, path, options.defaultValue ?? "");
   const wide = options.wide ? " wide" : "";
