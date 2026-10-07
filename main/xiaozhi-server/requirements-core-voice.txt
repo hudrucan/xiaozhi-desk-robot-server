@@ -1,0 +1,3 @@
+# Opt-in ordered PCM -> Opus output; no provider/model runtime on core.
+-r requirements-core.txt
+opuslib_next==1.1.5

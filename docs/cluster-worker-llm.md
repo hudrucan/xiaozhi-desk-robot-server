@@ -1,5 +1,9 @@
 # Standalone text LLM RPC
 
+The separate [parallel segment TTS opt-in](cluster-worker-tts.md) consumes this
+stream from the voice core. The standalone LLM RPC/stream contracts below remain
+text-only and unchanged by that composition.
+
 This opt-in phase proves bounded `core -> NATS -> text LLM worker -> core` RPC.
 It does not enable robot conversations, ASR/VAD/TTS/VLM, memory, intent, MCP or
 provider scheduling. `app.py` and the original ping-only `worker.py` remain

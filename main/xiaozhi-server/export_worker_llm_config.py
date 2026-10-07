@@ -41,13 +41,13 @@ def build_bundle(store, expected_revision=None):
     return validate_bundle(value, store.bootstrap['node_id'])
 
 
-def write_private(path, value):
+def write_private(path, value, *, max_bytes=None):
     from core.cluster.llm_protocol import encode
     from core.cluster.llm_config import MAX_CONFIG_BYTES
     path = Path(path)
     if not path.is_absolute() or path.is_symlink() or not path.parent.is_dir():
         raise ValueError('Export requires an existing private destination directory')
-    content = encode(value, MAX_CONFIG_BYTES)
+    content = encode(value, MAX_CONFIG_BYTES if max_bytes is None else max_bytes)
     if path.exists():
         metadata = path.stat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o027:

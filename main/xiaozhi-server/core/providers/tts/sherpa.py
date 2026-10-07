@@ -2,19 +2,16 @@ import asyncio
 import audioop
 import io
 import math
-import os
 import re
-import tempfile
 import threading
 import time
 import wave
-from collections import Counter
 from pathlib import Path
-
-import numpy as np
 
 from config.logger import setup_logging
 from core.providers.tts.base import TTSProviderBase
+from core.providers.tts.sherpa_samples import SherpaSampleProcessing
+from core.providers.tts.sherpa_native_logs import generate_without_native_log_spam
 from core.providers.tts.dto.dto import SentenceType
 from core.providers.tts.vietnamese_normalizer import VietnameseTTSNormalizer
 from core.utils.tts import MarkdownCleaner
@@ -24,48 +21,13 @@ TAG = __name__
 logger = setup_logging()
 _ENGINE_CACHE = {}
 _ENGINE_CACHE_LOCK = threading.Lock()
-_NATIVE_STDERR_LOCK = threading.Lock()
-_UNKNOWN_PHONEME_LOG = re.compile(
-    rb".*piper-phonemize-lexicon\.cc:PiperPhonemesToIdsVits:\d+ "
-    rb"Skip unknown phonemes\. Unicode codepoint: \\U\+([0-9A-Fa-f]+)\."
-)
 
 
 def _generate_without_native_log_spam(generate):
-    """Run Sherpa while retaining every native error except known log spam."""
-    with _NATIVE_STDERR_LOCK:
-        original_stderr = os.dup(2)
-        skipped = Counter()
-        with tempfile.TemporaryFile() as captured:
-            try:
-                os.dup2(captured.fileno(), 2)
-                result = generate()
-            finally:
-                os.dup2(original_stderr, 2)
-                captured.seek(0)
-                retained = []
-                for line in captured.readlines():
-                    match = _UNKNOWN_PHONEME_LOG.fullmatch(line.strip())
-                    if match:
-                        skipped[match.group(1).decode("ascii").upper()] += 1
-                    elif line.strip():
-                        retained.append(line)
-                if retained:
-                    os.write(original_stderr, b"".join(retained))
-                os.close(original_stderr)
-
-        if skipped:
-            summary = ", ".join(
-                f"U+{codepoint} x{count}"
-                for codepoint, count in sorted(skipped.items())
-            )
-            logger.bind(tag=TAG).debug(
-                f"Sherpa skipped unsupported phonemes: {summary}"
-            )
-        return result
+    return generate_without_native_log_spam(generate, logger.bind(tag=TAG).debug)
 
 
-class TTSProvider(TTSProviderBase):
+class TTSProvider(SherpaSampleProcessing, TTSProviderBase):
     _INTEGER_PATTERN = re.compile(r"(?<![\w.])[0-9]+(?![\w.])")
 
     def __init__(self, config, delete_audio_file):
@@ -205,52 +167,6 @@ class TTSProvider(TTSProviderBase):
         if self.buffer_full_response:
             return None
         return super()._get_segment_text()
-
-    def _normalize_numbers(self, text: str) -> str:
-        if self._num2words is None:
-            return text
-        return self._INTEGER_PATTERN.sub(
-            lambda match: self._num2words(
-                int(match.group(0)), lang=self.number_language
-            ),
-            text,
-        )
-
-    @staticmethod
-    def _dbfs_to_amplitude(dbfs: float) -> float:
-        return 10.0 ** (dbfs / 20.0)
-
-    def _master_samples(self, samples: np.ndarray) -> np.ndarray:
-        samples = np.asarray(samples, dtype=np.float32)
-        if not self.mastering:
-            return np.clip(samples * self.volume_gain, -1.0, 1.0)
-
-        samples = np.nan_to_num(samples, nan=0.0, posinf=1.0, neginf=-1.0)
-        active = np.abs(samples) >= self._dbfs_to_amplitude(-50.0)
-        if np.any(active):
-            active_rms = float(
-                np.sqrt(np.mean(np.square(samples[active], dtype=np.float64)))
-            )
-            if active_rms > 0:
-                target_rms = self._dbfs_to_amplitude(
-                    self.target_active_rms_dbfs
-                )
-                samples = samples * (target_rms / active_rms)
-
-        samples = samples * self.volume_gain
-        ceiling = self._dbfs_to_amplitude(self.peak_ceiling_dbfs)
-        if ceiling == 0.0:
-            return np.zeros_like(samples)
-        knee = ceiling * self._dbfs_to_amplitude(-6.0)
-        magnitude = np.abs(samples)
-        above_knee = magnitude > knee
-        if np.any(above_knee):
-            span = ceiling - knee
-            magnitude[above_knee] = knee + span * np.tanh(
-                (magnitude[above_knee] - knee) / span
-            )
-            samples = np.copysign(magnitude, samples)
-        return np.clip(samples, -ceiling, ceiling)
 
     def _generate_pcm(self, text: str) -> tuple[bytes, int]:
         started_at = time.monotonic()

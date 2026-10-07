@@ -1,5 +1,9 @@
 # Distributed streaming ASR and text LLM
 
+This page describes the base text-only composition. The separate explicit
+[parallel segment TTS opt-in](cluster-worker-tts.md) extends it with audio output;
+without that opt-in, the behavior documented below remains text-only.
+
 This explicit opt-in adds worker-local Opus decode, Silero VAD and transcription
 to the existing Core NATS worker. Each speech turn is admitted by one queue
 subscriber and stays on that worker until it finishes or fails. LLM runs as a

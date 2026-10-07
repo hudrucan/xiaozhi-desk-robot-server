@@ -1,4 +1,4 @@
-"""Standalone cluster transport core; provider execution is not enabled yet."""
+"""Standalone transport core with explicit remote ASR/LLM/segment TTS opt-ins."""
 
 import asyncio
 import logging
@@ -25,7 +25,12 @@ async def main():
     revision = os.environ.get('XIAOZHI_CORE_ASR_REVISION')
     if revision is not None and (not revision.isascii() or not revision.isdigit() or int(revision) < 1):
         raise ValueError('Invalid voice configuration revision')
-    core = TransportCore(config, rpc, int(revision) if revision is not None else None)
+    tts_bundle = None
+    tts_path = os.environ.get('XIAOZHI_CORE_TTS_CONFIG')
+    if tts_path is not None:
+        from core.cluster.tts_config import load_bundle
+        tts_bundle = load_bundle(tts_path, config.node_id)
+    core = TransportCore(config, rpc, int(revision) if revision is not None else None, tts_bundle)
     try:
         await core.start()
         await stop.wait()

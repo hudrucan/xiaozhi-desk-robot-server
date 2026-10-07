@@ -1,0 +1,143 @@
+# Parallel segment TTS within a voice turn
+
+This opt-in extends the standalone `core_server.py` and `worker_asr.py` path.
+Streamed LLM chunks feed the existing first-sentence/punctuation splitter on the
+core. Up to three segments **of the same response** synthesize concurrently on
+different available workers. Audio is played in segment order, regardless of
+completion order. The normal `app.py`, Soundbank authoring and provider paths
+remain available; this does not enable MCP, VLM or conversation history.
+
+## Admission and audio ownership
+
+Each worker has one warm native Sherpa synthesis slot. The core probes the
+explicit bundle membership, excludes incompatible revision/voice fingerprints
+and busy workers, then performs authoritative targeted admission. Among idle
+workers it prefers its least recently selected node, with randomized ties;
+node number and VIP ownership do not define TTS preference. Selection history
+is local to each core; competing cores still share the worker's one-slot guard.
+An already active ASR turn prevents TTS admission. ASR may start after admission,
+so this is not an exclusive CPU scheduler or a latency guarantee.
+
+The protocol is `xiaozhi-tts-segment-v1`, using
+`xiaozhi.v1.tts.<worker_id>.segment` without a queue group. Requests carry only
+bounded text and core/job/token/index/revision/fingerprint/deadline metadata.
+`status`, `admit`, `poll`, `cancel` and `done` have exact validated envelopes.
+PCM16 mono is pulled in at most 32 KiB chunks, correlated and SHA256 checked
+before any of that segment reaches playback. No credentials, model paths or
+provider configuration are transmitted over NATS.
+
+At most three jobs/results are ahead of playback per turn, including the segment
+currently playing. A segment is bounded to 512 Unicode characters / 2 KiB UTF-8,
+30 seconds of audio and 3 MiB PCM; admission plus synthesis/pulls has a 45-second
+deadline. Whole-turn text is at most 64 KiB / 512 segments, with a 120-second TTS
+turn budget. Oversized segments fail explicitly rather than changing existing
+split rules or accumulating unbounded audio. The lookahead bounds buffered
+results to at most 9 MiB PCM per turn, with bounded temporary copies during pull
+and encoding; native inference allocations and resident models are additional.
+
+The core owns one response-wide resampler and Opus encoder, preserving state
+across segments. Output is mono 16kHz / 60ms Opus with the existing 16-byte gateway
+header and paced delivery. There is one TTS start/stop lifecycle, original segment
+subtitles, and one final frame-padding flush. Native model, voice, normalization,
+word correction, volume/mastering and first-segment settings come from the bundle.
+
+Only an unplayed, fully buffered segment can be reassigned after failure. Every
+attempt has new ownership; partially transmitted audio is never replayed. Abort
+or disconnect cancels all lookahead work. A lost cancellation expires via the
+four-second poll lease. Native inference cannot be forcibly interrupted: a worker
+keeps its slot and activity icon until the native call has joined, even if the
+turn deadline has passed. A NATS disconnect permanently invalidates that core
+turn, including already buffered results; reconnect serves new turns only.
+No JetStream, durable job records or exactly-once synthesis are claimed.
+
+## Explicit provisioning
+
+Use Python 3.11 and system libopus. Workers extend their existing local ASR/LLM
+environment with `requirements-worker-voice.txt`; cores use
+`requirements-core-voice.txt`. The original minimal worker, ASR and core
+requirement files remain unchanged. Provider/model dependencies stay on workers.
+
+`export_worker_tts_config.py` reads only the existing validated shared V2 Cloud
+desired cache and requires an explicit expected revision. It neither contacts
+Drive nor changes desired/active state. It hashes the selected existing model,
+tokens, optional model metadata and complete espeak-ng data tree. A canonical
+fingerprint excludes node ID and installation root, so byte-identical assets and
+settings match across nodes regardless of filesystem enumeration order.
+Missing/mismatched assets fail startup; nothing is downloaded automatically.
+
+Run export in the existing control-plane environment after provisioning assets:
+
+```bash
+cd main/xiaozhi-server
+/path/to/control-plane/venv/bin/python export_worker_tts_config.py \
+  --source-root /opt/xiaozhi-control-plane/repo/main/xiaozhi-server \
+  --expected-revision "$DESIRED_REVISION" \
+  --workers deskb1x,deskb2x,deskb3x \
+  --output /private/provisioning/worker-tts.json
+```
+
+The destination directory must already be private. Export is atomic mode 0600;
+provision service ownership/group and mode 0640 if needed. Each worker reads its
+node-specific bundle via `XIAOZHI_WORKER_TTS_CONFIG`. Each core reads its matching
+node-specific bundle via `XIAOZHI_CORE_TTS_CONFIG`; the core does not load model
+bytes. TTS, ASR and LLM revisions must match `XIAOZHI_CORE_ASR_REVISION`. NATS
+credentials retain the existing private environment configuration.
+
+Distributed Soundbank playback is not provisioned by this implementation.
+Export explicitly refuses an enabled `static_soundbank`; it must not silently
+synthesize cached phrases or remove pointers. Normal `app.py` Soundbank behavior
+is preserved. Full-response buffering, cold-model mode and native debug logging
+are also rejected for this segment worker.
+
+These variables are opt-in. Without them, the deployed ASR/LLM text-only behavior
+remains unchanged. Opted-in core hello/status add `voice_tts` alongside
+`voice_text`; `conversation_runtime` remains false because the full app runtime
+and tools are still absent. Text-only errors/completion remain compatible with
+existing firmware. The cluster repository provides separate `worker-tts.yml` and
+`core-tts.yml` opt-ins, with explicit reviewed source pins and private vars. They
+have not been activated by this implementation work. The worker playbook stages
+and checksums missing model trees before atomic publication; existing trees are
+verified without overwriting them. Check mode performs read-only preflight only.
+Rollout must deploy the updated panel reader first, then matching models/bundles
+and workers, and enable cores only after direct synthesis acceptance.
+
+Worker activity adds an optional `tts` counter to the existing fresh local v1
+snapshot. Updated panels accept both old and new schemas. Play stays lit during
+native TTS, LLM blinks Play, ASR lights Clock, and a fresh idle worker lights Pause.
+Role glyphs `nt/Co/iP`, node numbers and colon-off behavior do not change.
+
+## User-owned verification and measurement
+
+Offline fixtures cover simultaneous admission on three nodes, ASR/revision
+exclusion, out-of-order completion with ordered playback, bounded lookahead,
+unplayed failover, corrupt PCM, cancellation before/after native start, permanent
+disconnect invalidation, canonical fingerprints, response-wide resampling and
+the voice TTS lifecycle. They use fake models/transports. Run from an existing
+development environment with the repository requirements already available:
+
+```bash
+cd main/xiaozhi-server
+python -m unittest discover -s tests -p 'test_worker_tts_segments.py'
+python -m unittest discover -s tests -p 'test_worker_llm_stream.py'
+python -m unittest discover -s tests -p 'test_voice_transport.py'
+```
+
+After explicit deployment, `probe_worker_tts_segments.py` compares the same
+user-provided JSON array of segments with concurrency 1 and 3. It synthesizes
+only, does not play audio or print text, and uses privately supplied NATS env:
+
+```bash
+python probe_worker_tts_segments.py --node-id deskb1x \
+  --bundle /private/provisioning/worker-tts.json \
+  --segments-file /private/provisioning/segments.json --concurrency 1
+python probe_worker_tts_segments.py --node-id deskb1x \
+  --bundle /private/provisioning/worker-tts.json \
+  --segments-file /private/provisioning/segments.json --concurrency 3
+```
+
+Compare wall time divided by total generated audio duration (effective synthesis
+RTF), native segment RTF, and participating worker IDs. This benchmark excludes
+LLM token timing and playback. Then verify one real robot turn, ordered subtitles
+and sound, abort, reconnect and node loss. Core logs report bounded synthesis
+timings and playback underrun gaps without transcripts. Measure speech-end to
+first audible audio and gaps on target; static review proves no RTF improvement.

@@ -1,0 +1,4 @@
+# Explicit local ASR/LLM + warm Sherpa segment TTS opt-in.
+-r requirements-worker-asr-local.txt
+vietnormalizer==0.2.3
+num2words==0.5.14

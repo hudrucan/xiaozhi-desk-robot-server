@@ -1,4 +1,4 @@
-"""Explicit combined ASR/LLM worker with immutable node-local bundles."""
+"""ASR/LLM worker and optional segment TTS with immutable node-local bundles."""
 import asyncio
 import logging
 import os
@@ -9,7 +9,7 @@ from core.cluster.llm_config import load_bundle as load_llm
 from core.cluster.nats_config import NatsConfig
 
 
-async def run(config, asr, llm):
+async def run(config, asr, llm, tts=None):
     from functools import partial
     from core.cluster.activity import Activity
     from core.cluster.asr_pipeline import ASRPipeline, SileroEngine
@@ -29,6 +29,11 @@ async def run(config, asr, llm):
         asr_engine = await asyncio.to_thread(SherpaEngine, asr['provider'])
         stream_factory = partial(SherpaStream, engine=asr_engine)
     activity = Activity(os.environ.get('XIAOZHI_WORKER_ACTIVITY_PATH', ''), config.worker_id)
+    tts_engine = None
+    if tts is not None:
+        from core.providers.tts.sherpa_worker import SherpaSegmentEngine
+        tts_engine = await asyncio.to_thread(SherpaSegmentEngine, tts)
+        activity.counts['tts'] = 0
 
     class Combined(LLMWorker):
         async def _start(self):
@@ -36,20 +41,31 @@ async def run(config, asr, llm):
             self.asr = ASRService(self.client, config.worker_id, asr,
                 partial(ASRPipeline, engine=engine, stream_factory=stream_factory), activity)
             await self.asr.start()
+            if tts is not None:
+                from core.cluster.tts_worker import TTSService
+                self.tts = TTSService(self.client, config.worker_id, tts, tts_engine, activity)
+                await self.tts.start()
 
         async def _disconnected(self):
-            if hasattr(self, 'asr'):
-                await self.asr.stop()
+            # Invalidate LLM streams before waiting for uninterruptible native
+            # inference. Core reconnect must never revive an old text stream.
             await super()._disconnected()
+            await asyncio.gather(*(getattr(self, name).stop()
+                for name in ('asr', 'tts') if hasattr(self, name)))
 
         async def _reconnected(self):
+            if hasattr(self, 'tts'):
+                self.tts.stopping = False
             if hasattr(self, 'asr'):
                 self.asr.stopping = False
             await super()._reconnected()
 
         async def _shutdown(self):
-            if hasattr(self, 'asr'):
-                await self.asr.stop()
+            self.stopping = True
+            for _, task in tuple(self.jobs.values()):
+                task.cancel()
+            await asyncio.gather(*(getattr(self, name).stop()
+                for name in ('asr', 'tts') if hasattr(self, name)))
             await super()._shutdown()
 
     worker = Combined(config, stop, llm, provider)
@@ -77,12 +93,20 @@ def main():
         llm = load_llm(os.environ.get('XIAOZHI_WORKER_LLM_CONFIG', ''), config.worker_id)
         if asr['revision'] != llm['revision']:
             raise ValueError('Worker ASR/LLM revisions differ')
-        asyncio.run(run(config, asr, llm))
+        tts = None
+        if 'XIAOZHI_WORKER_TTS_CONFIG' in os.environ:
+            from core.cluster.tts_config import load_bundle
+            tts = load_bundle(os.environ['XIAOZHI_WORKER_TTS_CONFIG'], config.worker_id)
+            if config.worker_id not in tts['workers']:
+                raise ValueError('Worker is absent from TTS membership')
+            if tts['revision'] != llm['revision']:
+                raise ValueError('Worker TTS/ASR/LLM revisions differ')
+        asyncio.run(run(config, asr, llm, tts))
         return 0
     except KeyboardInterrupt:
         return 0
     except Exception:
-        logging.error('ASR worker unavailable; validate private bundles, dependencies and local VAD model')
+        logging.error('Voice worker unavailable; validate enabled private bundles, dependencies and local models')
         return 1
 
 

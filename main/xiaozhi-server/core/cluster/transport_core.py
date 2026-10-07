@@ -108,12 +108,18 @@ def decode_message(data):
 
 
 class TransportCore:
-    def __init__(self, config, worker_rpc=None, voice_revision=None):
+    def __init__(self, config, worker_rpc=None, voice_revision=None, tts_bundle=None):
         self.config = config
         self.worker_rpc = worker_rpc
         if voice_revision is not None and (type(voice_revision) is not int or voice_revision < 1 or worker_rpc is None):
             raise ValueError('Voice runtime requires an explicit revision and worker RPC')
         self.voice_revision = voice_revision
+        self.tts_pool = None
+        if tts_bundle is not None:
+            if voice_revision is None or tts_bundle['revision'] != voice_revision:
+                raise ValueError('TTS requires matching opt-in voice revision')
+            from .tts_client import TTSPool
+            self.tts_pool = TTSPool(worker_rpc, tts_bundle)
         self.sockets = set()
         self.sessions = set()
         self.received_audio_frames = 0
@@ -165,7 +171,8 @@ class TransportCore:
             "status": "stopping" if self.stopping else "ready",
             "active_sessions": len(self.sessions), "local_vip_owner": self.vip_owner,
             "received_audio_frames": self.received_audio_frames,
-            "capabilities": ['voice_text'] if self.voice_revision is not None else [], "conversation_runtime": False,
+            "capabilities": (['voice_text', 'voice_tts'] if self.tts_pool else ['voice_text']) if self.voice_revision is not None else [], "conversation_runtime": False,
+            "tts": self.tts_pool.status() if self.tts_pool else {'enabled': False},
             "worker_rpc": self.worker_rpc.status() if self.worker_rpc else {"state": "disabled"}})
 
     async def worker_probe(self, request):
@@ -245,10 +252,11 @@ class TransportCore:
             session = uuid.uuid4().hex
             if self.voice_revision is not None:
                 from .voice_turn import VoiceTurn
-                voice = VoiceTurn(self.worker_rpc, self.voice_revision, audio, session, ws.send_json)
+                voice = VoiceTurn(self.worker_rpc, self.voice_revision, audio, session, ws.send_json,
+                    self.tts_pool, ws.send_bytes if self.tts_pool else None)
             await ws.send_json({"type": "hello", "version": 2, "transport": "websocket",
                 "session_id": session, "audio_params": audio, "core_id": self.config.node_id,
-                "capabilities": ['voice_text'] if voice else [], "conversation_runtime": False})
+                "capabilities": (['voice_text', 'voice_tts'] if self.tts_pool else ['voice_text']) if voice else [], "conversation_runtime": False})
             self.sessions.add(session)
             LOGGER.info("core_id=%s session opened active=%d", self.config.node_id, len(self.sessions))
             async for frame in ws:
@@ -317,7 +325,8 @@ class TransportCore:
         self.vip_task = asyncio.create_task(self.refresh_vip())
         if self.worker_rpc:
             self.worker_rpc.start()
-        LOGGER.info("core_id=%s transport ready; provider execution disabled", self.config.node_id)
+        LOGGER.info("core_id=%s transport ready; voice_mode=%s", self.config.node_id,
+            'voice_tts' if self.tts_pool else 'voice_text' if self.voice_revision is not None else 'disabled')
 
     async def close(self):
         self.stopping = True

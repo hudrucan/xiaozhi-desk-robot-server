@@ -232,6 +232,8 @@ class WorkerRPC:
             return
         self.stopping = True
         self.state = "stopping"
+        for stream in tuple(self.streams):
+            stream.fail()
         pending = list(self.calls)
         if self.startup is not None:
             pending.append(self.startup)

@@ -17,6 +17,7 @@ import tempfile
 import unicodedata
 import wave
 
+from core.utils.soundbank_text import normalize_soundbank_text
 from config.config_loader import get_project_dir
 from core.utils import p3, text_utils
 from core.utils.config_secrets import is_credential_name, normalize_config_name
@@ -88,16 +89,6 @@ class SoundbankError(Exception):
     def __init__(self, message, status=400):
         super().__init__(message)
         self.status = status
-
-
-def normalize_soundbank_text(text):
-    """Normalize stable segment-edge and whitespace differences."""
-    if not isinstance(text, str):
-        return ""
-    normalized = unicodedata.normalize("NFC", text)
-    normalized = text_utils.strip_edge_separators(normalized)
-    normalized = " ".join(normalized.split()).strip()
-    return normalized.casefold()
 
 
 def soundbank_entry_filename(entry):
