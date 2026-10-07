@@ -128,11 +128,13 @@ and performs no Drive I/O. Without that topology it explicitly reports
 or old-version peers are unconfirmed, never counted as ready. The Cluster page
 shows each node and the ready count. Unsaved edits are preserved during polling.
 
-This adds **cache synchronization**, not distributed Soundbank playback or a
-Soundbank authoring UI. Standalone authoring/preview controls remain unavailable;
-normal `app.py` publication remains compatible and its Cloud edits are discovered
-periodically. The TTS worker exporter still rejects enabled Soundbank until its
-playback integration is implemented. Health remains the cheap Settings/config
+This adds **desired cache synchronization**. Standalone authoring/preview controls
+remain unavailable; normal `app.py` publication remains compatible and its Cloud
+edits are discovered periodically. The separate opt-in
+[segment TTS rollout](cluster-worker-tts.md) verifies and copies a complete pinned
+audio generation into each core's assets-only private cache before enabling
+playback. Desired sync never hot-applies that active runtime generation.
+Health remains the cheap Settings/config
 policy below: a pending audio cache does not remove a usable Settings backend.
 
 ## Health and status

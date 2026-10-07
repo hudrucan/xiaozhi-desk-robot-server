@@ -35,8 +35,9 @@ split rules or accumulating unbounded audio. The lookahead bounds buffered
 results to at most 9 MiB PCM per turn, with bounded temporary copies during pull
 and encoding; native inference allocations and resident models are additional.
 
-The core owns one response-wide resampler and Opus encoder, preserving state
-across segments. Output is mono 16kHz / 60ms Opus with the existing 16-byte gateway
+The core owns one response-wide Opus encoder and output PCM buffer. Resampler
+state is preserved for consecutive segments with the same source rate and reset
+when cached/native source rates differ. Output is mono 16kHz / 60ms Opus with the existing 16-byte gateway
 header and paced delivery. There is one TTS start/stop lifecycle, original segment
 subtitles, and one final frame-padding flush. Native model, voice, normalization,
 word correction, volume/mastering and first-segment settings come from the bundle.
@@ -52,7 +53,8 @@ No JetStream, durable job records or exactly-once synthesis are claimed.
 
 ## Explicit provisioning
 
-Use Python 3.11 and system libopus. Workers extend their existing local ASR/LLM
+Use Python 3.11 and system libopus. Core MP3 Soundbank fallback also requires
+system FFmpeg; WAV and P3 decoding do not initialize provider runtimes. Workers extend their existing local ASR/LLM
 environment with `requirements-worker-voice.txt`; cores use
 `requirements-core-voice.txt`. The original minimal worker, ASR and core
 requirement files remain unchanged. Provider/model dependencies stay on workers.
@@ -83,11 +85,51 @@ node-specific bundle via `XIAOZHI_CORE_TTS_CONFIG`; the core does not load model
 bytes. TTS, ASR and LLM revisions must match `XIAOZHI_CORE_ASR_REVISION`. NATS
 credentials retain the existing private environment configuration.
 
-Distributed Soundbank playback is not provisioned by this implementation.
-Export explicitly refuses an enabled `static_soundbank`; it must not silently
-synthesize cached phrases or remove pointers. Normal `app.py` Soundbank behavior
-is preserved. Full-response buffering, cold-model mode and native debug logging
-are also rejected for this segment worker.
+For enabled Soundbank, export requires the complete local control-plane
+`cloud-soundbank/ready.json` to match the selected node, desired revision and
+effective Soundbank/audio metadata. Every content-addressed blob is rechecked.
+The optional `soundbank` bundle contains only ordered phrase/transcript entries,
+hash/size/format contracts and a local cache root. It contains no Drive IDs,
+secret references or credentials. Its separate fingerprint includes entry order
+(normalized duplicates resolve first-wins), excluding installation root. Worker
+voice fingerprints and the segment RPC contract stay unchanged; workers never
+read control-plane Soundbank bytes.
+
+Before enabling a core, `provision_core_soundbank.py` copies the frozen bundle's
+verified blobs into a private immutable generation under
+`/etc/xiaozhi-core-tts/soundbank/<fingerprint>`. Ansible stages/checks/renames the
+complete generation, rewrites only the core bundle's audio root, and verifies
+decode access as the unprivileged core user before activation. Existing
+generations are verified without overwrite and retained. The core receives no
+membership in the control-plane credential group. Provisioning uses local bytes
+only, never Drive I/O, asset regeneration or provider initialization.
+
+The core matches each segment with the same normalized text and first-segment
+cached-prefix policy as the existing app. Hits use compatible mono/60ms optimized
+P3 at 16kHz, otherwise canonical P3/WAV/MP3. Existing recorded `text` is the
+subtitle when present. Audio is decoded to bounded mono PCM and fed through the
+same ordered turn playback/Opus encoder as native results. P3 is re-encoded in
+this composition, rather than transmitted byte-for-byte; gain/mastering is not
+applied again. A cache hit consumes no native worker slot. A matching missing or
+corrupt pinned asset fails with a fixed error before handoff; it is never silently
+replaced with synthesis. Cache misses still use parallel worker segments.
+Cancellation joins owned decode/subprocess work; NATS reconnect cannot revive
+an old turn or late cached result.
+
+Audio remains bounded to 30 seconds per segment, with private blobs limited to
+32 MiB each / 256 MiB per bank and 4096 references. Decoding temporarily reads a
+bounded compressed blob in addition to buffered PCM. Unsupported/overlong selected
+audio fails provisioning before activation. Older bundles without Soundbank
+remain readable. Normal `app.py` authoring/generate/optimize/cleanup behavior
+is unchanged. Full-response buffering, cold-model mode and native debug logging
+remain rejected for this segment worker.
+
+Control-plane Save automatically syncs desired cache bytes on all three nodes.
+Active cores keep their pinned generation until an explicit matching runtime
+rollout; desired sync does not hot-apply providers or advance active revision.
+This avoids changing recordings beneath an in-progress turn. Newer desired audio
+and previous active audio can coexist; automatic cache garbage collection is
+not implemented.
 
 These variables are opt-in. Without them, the deployed ASR/LLM text-only behavior
 remains unchanged. Opted-in core hello/status add `voice_tts` alongside
@@ -118,9 +160,16 @@ development environment with the repository requirements already available:
 ```bash
 cd main/xiaozhi-server
 python -m unittest discover -s tests -p 'test_worker_tts_segments.py'
+python -m unittest discover -s tests -p 'test_worker_tts_soundbank.py'
 python -m unittest discover -s tests -p 'test_worker_llm_stream.py'
 python -m unittest discover -s tests -p 'test_voice_transport.py'
 ```
+
+Soundbank fixtures use disposable caches and codec-only audio; they cover
+ready-index/config/hash gating, private immutable copies, normalized cache hits
+without RPC, optimized/canonical selection, mixed ordering, rate transitions,
+first-segment protection and owned cancellation/disconnect behavior. No live
+Cloud, NATS, model or robot is used.
 
 After explicit deployment, `probe_worker_tts_segments.py` compares the same
 user-provided JSON array of segments with concurrency 1 and 3. It synthesizes
@@ -135,7 +184,9 @@ python probe_worker_tts_segments.py --node-id deskb1x \
   --segments-file /private/provisioning/segments.json --concurrency 3
 ```
 
-Compare wall time divided by total generated audio duration (effective synthesis
+Choose benchmark text that does not match Soundbank entries: the probe rejects
+recorded phrases before connecting, because cache hits do not measure native
+synthesis RTF. Compare wall time divided by total generated audio duration (effective synthesis
 RTF), native segment RTF, and participating worker IDs. This benchmark excludes
 LLM token timing and playback. Then verify one real robot turn, ordered subtitles
 and sound, abort, reconnect and node loss. Core logs report bounded synthesis

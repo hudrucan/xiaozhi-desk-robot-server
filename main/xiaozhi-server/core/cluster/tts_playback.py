@@ -19,7 +19,9 @@ class PCMEncoder:
 
     def encode(self, pcm, rate, final=False):
         if self.source_rate is not None and rate != self.source_rate:
-            raise ValueError('TTS source sample rate changed within turn')
+            # Cached 16k audio and native Sherpa audio may alternate between
+            # segments. Keep output PCM/Opus state, reset only the input filter.
+            self.resample = None
         self.source_rate = rate
         if rate != 16000:
             pcm, self.resample = self.audioop.ratecv(pcm, 2, 1, rate, 16000, self.resample)
@@ -82,8 +84,8 @@ class TTSPlayback:
                 result.pcm[offset:offset + 32768], result.sample_rate)
             for packet in packets:
                 await self.packet(packet)
-        LOGGER.info('TTS segment sent; index=%d worker_id=%s synth_ms=%d audio_ms=%d',
-            result.index, result.worker_id, result.synth_ms, len(result.pcm) * 500 // result.sample_rate)
+        LOGGER.info('TTS segment sent; index=%d source=%s node_id=%s synth_ms=%d audio_ms=%d',
+            result.index, result.source, result.worker_id, result.synth_ms, len(result.pcm) * 500 // result.sample_rate)
 
     async def finish(self):
         if self.encoder:

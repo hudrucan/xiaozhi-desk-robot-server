@@ -12,7 +12,9 @@ MAX_TURN_SECONDS = 120
 
 class TTSTurn:
     def __init__(self, pool, emit, send_audio, *, playback_factory=TTSPlayback):
-        self.pool, self.buffer = pool, SegmentBuffer(pool.bundle['options'])
+        soundbank = getattr(pool, 'soundbank', None)
+        self.pool, self.buffer = pool, SegmentBuffer(pool.bundle['options'],
+                                                    getattr(soundbank, 'entries', None))
         self.playback = playback_factory(emit, send_audio)
         self.changed = asyncio.Event()
         self.slots = asyncio.Semaphore(MAX_LOOKAHEAD)

@@ -4,10 +4,58 @@ import copy
 import hashlib
 import json
 import logging
+import os
+import stat
 from pathlib import Path
 
 from core.cluster.tts_config import DEFAULTS, MAX_BUNDLE, PROTOCOL, fingerprint, relative_path, validate_bundle
 from export_worker_llm_config import write_private
+
+
+def export_soundbank(store, config, revision):
+    from config.config_store import canonical_bytes, checksum
+    from core.soundbank import (soundbank_entry_filename, soundbank_entry_optimized,
+                               soundbank_entry_text, soundbank_p3_sample_rate,
+                               validate_soundbank_cloud_metadata)
+    from core.cluster.tts_soundbank import PROTOCOL as CACHE_PROTOCOL, fingerprint as cache_fingerprint, read_asset, validate
+    subset = {'static_soundbank': copy.deepcopy(config.get('static_soundbank', {})),
+              'xiaozhi': {'audio_params': copy.deepcopy(config.get('xiaozhi', {}).get('audio_params', {}))}}
+    validate_soundbank_cloud_metadata(config)
+    if getattr(store, 'soundbank_assets', None) is None:
+        raise ValueError('Soundbank requires a complete verified local cache')
+    cache = Path(store.soundbank_assets.cache_dir)
+    descriptor = os.open(cache.parent / 'ready.json', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o027 or info.st_size > 2 * 1024 * 1024:
+            raise ValueError('Soundbank requires a private bounded ready index')
+        index = json.loads(stream.read(2 * 1024 * 1024 + 1))
+    if (index.get('protocol') != 'xiaozhi-soundbank-cache-v1'
+            or index.get('node_id') != store.bootstrap['node_id']
+            or type(index.get('revision')) is not int or index['revision'] != revision
+            or index.get('configuration') != subset
+            or index.get('fingerprint') != checksum(canonical_bytes(subset))):
+        raise ValueError('Soundbank cache is not ready for the selected desired revision')
+
+    def asset(metadata, optimized):
+        pointer = metadata['cloud']  # Enabled V2 entries must be published.
+        suffix = Path(soundbank_entry_filename(metadata)).suffix.lower()
+        return {'name': pointer['sha256'] + suffix, 'sha256': pointer['sha256'],
+                'size': pointer['size'], 'sample_rate': soundbank_p3_sample_rate(
+                    config, metadata if optimized else None) if suffix == '.p3' else None}
+
+    entries = []
+    for phrase, entry in subset['static_soundbank'].get('entries', {}).items():
+        optimized = soundbank_entry_optimized(entry)
+        entries.append({'phrase': phrase, 'text': soundbank_entry_text(entry),
+                        'canonical': asset(entry, False),
+                        'optimized': asset(optimized, True) if optimized is not None else None})
+    value = validate({'protocol': CACHE_PROTOCOL, 'revision': revision, 'root': str(cache),
+                      'entries': entries, 'fingerprint': cache_fingerprint(entries)}, revision)
+    from core.cluster.tts_soundbank import assets
+    for item in assets(value):
+        read_asset(cache, item)
+    return value
 
 
 def build_bundle(store, source_root, expected_revision, workers):
@@ -21,8 +69,7 @@ def build_bundle(store, source_root, expected_revision, workers):
     source = config.get('TTS', {}).get(config.get('selected_module', {}).get('TTS'), {})
     if source.get('type') != 'sherpa':
         raise ValueError('Segment worker requires the selected Sherpa TTS provider')
-    if config.get('static_soundbank', {}).get('enabled'):
-        raise ValueError('Distributed Soundbank playback is not provisioned; do not silently synthesize cached phrases')
+    soundbank = export_soundbank(store, config, revision) if config.get('static_soundbank', {}).get('enabled') else None
     options = {key: copy.deepcopy(source.get(key, default)) for key, default in DEFAULTS.items()}
     for key in ('model', 'tokens', 'data_dir'):
         relative_path(options[key])
@@ -46,9 +93,12 @@ def build_bundle(store, source_root, expected_revision, workers):
         with path.open('rb') as stream:
             files[path.relative_to(directory).as_posix()] = hashlib.file_digest(stream, 'sha256').hexdigest()
     node = store.bootstrap['node_id']
-    return validate_bundle({'protocol': PROTOCOL, 'worker_id': node, 'revision': revision,
+    value = {'protocol': PROTOCOL, 'worker_id': node, 'revision': revision,
         'workers': workers, 'model_root': str(directory), 'options': options,
-        'files': files, 'fingerprint': fingerprint(options, files)}, node)
+        'files': files, 'fingerprint': fingerprint(options, files)}
+    if soundbank is not None:
+        value['soundbank'] = soundbank
+    return validate_bundle(value, node)
 
 
 def main():

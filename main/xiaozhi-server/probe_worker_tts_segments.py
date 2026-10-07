@@ -9,7 +9,16 @@ from pathlib import Path
 from core.cluster.nats_config import NatsConnectionConfig, validate_worker_id
 from core.cluster.tts_config import load_bundle
 from core.cluster.tts_client import TTSPool
+from core.cluster.tts_soundbank import SoundbankPlayback
 from core.cluster.worker_rpc import WorkerRPC
+
+
+def require_native_segments(segments, bundle):
+    if not isinstance(segments, list) or not 1 <= len(segments) <= 12:
+        raise ValueError('Supply one to twelve explicit text segments')
+    bank = SoundbankPlayback(bundle.get('soundbank'))
+    if any(bank.lookup(text) is not None for text in segments):
+        raise ValueError('Native synthesis benchmark cannot include recorded Soundbank phrases')
 
 
 async def probe(args):
@@ -19,8 +28,7 @@ async def probe(args):
     if len(raw) > 32768:
         raise ValueError('Oversized benchmark input')
     segments = json.loads(raw)
-    if not isinstance(segments, list) or not 1 <= len(segments) <= 12:
-        raise ValueError('Supply one to twelve explicit text segments')
+    require_native_segments(segments, bundle)
     rpc = WorkerRPC(NatsConnectionConfig.from_env(), node)
     tasks = []
     try:
@@ -64,7 +72,7 @@ def main():
         asyncio.run(probe(args))
         return 0
     except Exception:
-        print('TTS segment benchmark unavailable; check bundles, workers and private NATS environment')
+        print('TTS segment benchmark unavailable; use non-Soundbank text and check bundles, workers and private NATS environment')
         return 1
 
 

@@ -5,7 +5,7 @@ from .llm_protocol import MAX_TEXT_BYTES
 
 
 class SegmentBuffer(SegmentBoundaryPolicy):
-    def __init__(self, options):
+    def __init__(self, options, soundbank_entries=None):
         self.tts_text_buff = []
         self.processed_chars = self.bytes = 0
         self.is_first_sentence = True
@@ -14,8 +14,8 @@ class SegmentBuffer(SegmentBoundaryPolicy):
         self.split_on_all_punctuations = options['split_on_all_punctuations']
         self.punctuations = ('。', '.', '？', '?', '！', '!', '；', ';', '：')
         self.first_sentence_punctuations = ('，', '~', '、', ',', *self.punctuations)
-        self._static_soundbank_enabled = False
-        self._static_soundbank_entries = {}
+        self._static_soundbank_entries = soundbank_entries or {}
+        self._static_soundbank_enabled = bool(self._static_soundbank_entries)
 
     def append(self, text):
         if self.finished or not isinstance(text, str):

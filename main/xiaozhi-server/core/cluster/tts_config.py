@@ -41,8 +41,8 @@ def fingerprint(options, files):
 
 
 def validate_bundle(value, node_id):
-    if (not isinstance(value, dict) or set(value) != {'protocol', 'worker_id', 'revision',
-            'workers', 'model_root', 'options', 'files', 'fingerprint'}
+    keys = {'protocol', 'worker_id', 'revision', 'workers', 'model_root', 'options', 'files', 'fingerprint'}
+    if (not isinstance(value, dict) or set(value) not in (keys, keys | {'soundbank'})
             or value['protocol'] != PROTOCOL or value['worker_id'] != node_id
             or type(value['revision']) is not int or value['revision'] < 1):
         raise ValueError('Invalid TTS bundle identity')
@@ -94,6 +94,9 @@ def validate_bundle(value, node_id):
             or not any(name.startswith(options['data_dir'] + '/') for name in files)
             or value['fingerprint'] != fingerprint(options, files)):
         raise ValueError('TTS voice/asset identity differs')
+    if 'soundbank' in value:
+        from .tts_soundbank import validate
+        validate(value['soundbank'], value['revision'])
     encode(value, MAX_BUNDLE)
     return value
 

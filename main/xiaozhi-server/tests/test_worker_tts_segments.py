@@ -298,8 +298,13 @@ class EncoderTests(unittest.TestCase):
         expected += bytes((-len(expected)) % 1920)
         self.assertEqual(b''.join(encoder.encoder.frames), expected)
         self.assertFalse(encoder.buffer)
-        with self.assertRaises(ValueError):
-            encoder.encode(bytes(1920), 24000)
+        encoder.encode(bytes(1920), 16000)
+        encoder.encode(bytes(2400), 24000)
+        encoder.encode(b'', 24000, final=True)
+        converted, _ = audioop.ratecv(bytes(2400), 2, 1, 24000, 16000, None)
+        tail = bytes(1920) + converted
+        tail += bytes((-len(tail)) % 1920)
+        self.assertEqual(b''.join(encoder.encoder.frames), expected + tail)
 
 
 class ExportTests(unittest.TestCase):

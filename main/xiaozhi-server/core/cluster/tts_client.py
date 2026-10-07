@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from . import tts_protocol as wire
 from .llm_protocol import encode
 from .worker_rpc import MAX_INFLIGHT, WorkerRpcError
+from .tts_soundbank import SoundbankPlayback, OUTPUT_RATE
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class SegmentResult:
     sample_rate: int
     worker_id: str
     synth_ms: int
+    source: str = 'worker'
 
 
 class ConnectionGuard:
@@ -110,10 +112,14 @@ class TTSPool:
         self.reserved, self.order = set(), {}
         self.lock = asyncio.Lock()
         self.counter = self.completed = self.failed = 0
+        self.soundbank_hits = 0
+        self.soundbank = SoundbankPlayback(bundle.get('soundbank'))
+        self.soundbank.verify()
 
     def status(self):
         return {'protocol': wire.PROTOCOL, 'revision': self.bundle['revision'],
-            'inflight': len(self.reserved), 'completed': self.completed, 'failed': self.failed}
+            'inflight': len(self.reserved), 'completed': self.completed, 'failed': self.failed,
+            'soundbank_hits': self.soundbank_hits}
 
     async def idle(self, node):
         value = {'protocol': wire.PROTOCOL, 'op': 'status', 'core_id': self.rpc.core_id,
@@ -185,6 +191,21 @@ class TTSPool:
         deadline = int(time.time() * 1000) + wire.MAX_SECONDS * 1000
         excluded = set()
         try:
+            entry = self.soundbank.lookup(text)
+            if entry is not None:
+                try:
+                    pcm = await self.soundbank.generate(entry)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # A published cache hit must never silently synthesize a
+                    # replacement voice when its pinned bytes become corrupt.
+                    raise WorkerRpcError('tts_invalid_result') from None
+                guard.require_live()
+                self.completed += 1
+                self.soundbank_hits += 1
+                return SegmentResult(index, entry['text'] or text, pcm, OUTPUT_RATE,
+                                     self.rpc.core_id, 0, source='soundbank')
             while True:
                 guard.require_live()
                 owned = await self.reserve(index, text, deadline, excluded, guard)
