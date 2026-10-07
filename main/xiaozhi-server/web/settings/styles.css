@@ -282,7 +282,7 @@ main { grid-column: 2; min-width: 0; }
 .empty-state strong { display: block; color: var(--muted); font-size: 13px; }
 .empty-state p { margin: 4px 0 0; font-size: 11px; }
 
-.log-panel { padding: 0; overflow: hidden; }
+.panel.log-panel { padding: 0; overflow: hidden; }
 .log-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding: 16px 18px; border-bottom: 1px solid rgba(94, 75, 49, 0.36); background: rgba(213, 168, 94, 0.025); }
 .log-filters { min-width: 0; flex: 1; display: grid; grid-template-columns: 180px 150px minmax(220px, 1fr); gap: 10px; }
 .log-filters label { min-width: 0; display: grid; gap: 6px; }

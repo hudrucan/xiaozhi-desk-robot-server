@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=44" />
+    <link rel="stylesheet" href="/settings/styles.css?v=45" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -87,9 +87,9 @@
         <div class="content">
           <article class="panel hidden" data-control-plane>
             <h3>Standalone control plane</h3>
-            <p>Edits update desired configuration. Conversation status, logs, Push TTS,
-              active Memory, soundbank generation/preview and rolling restart are unavailable here.
-              The configured VIP is desired state; assignment and failover are not deployed.</p>
+            <p>Edits update shared desired configuration. Logs shows cluster voice diagnostics.
+              Push TTS, active Memory, soundbank generation/preview and rolling restart are unavailable here.
+              Ingress services manage VIP assignment and failover.</p>
           </article>
           <section id="cluster" class="page-section hidden" data-control-plane>
             <div class="section-heading">
