@@ -527,6 +527,7 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
 .hidden { display: none !important; }
 
 body[data-settings-mode="control-plane"] .content { padding-top: 32px; }
+body[data-settings-mode="control-plane"] [data-runtime-only] { display: none !important; }
 body[data-settings-mode="control-plane"] .content > .panel p { margin: 10px 0 0; }
 body[data-settings-mode="control-plane"] .page-section { padding-top: 32px; }
 body[data-settings-mode="control-plane"] #overview .section-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 24px; }

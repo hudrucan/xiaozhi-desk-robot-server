@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=45" />
+    <link rel="stylesheet" href="/settings/styles.css?v=46" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -78,7 +78,7 @@
           </div>
           <div class="topbar-actions">
             <span class="save-state" id="saveState">No unsaved changes</span>
-            <button class="button secondary" id="restartNowButton">Restart</button>
+            <button class="button secondary" id="restartNowButton" data-runtime-only>Restart</button>
             <button class="button secondary" id="discardButton" disabled>Discard</button>
             <button class="button primary" id="saveButton" disabled>Save changes</button>
           </div>
@@ -87,9 +87,8 @@
         <div class="content">
           <article class="panel hidden" data-control-plane>
             <h3>Standalone control plane</h3>
-            <p>Edits update shared desired configuration. Logs shows cluster voice diagnostics.
-              Push TTS, active Memory, soundbank generation/preview and rolling restart are unavailable here.
-              Ingress services manage VIP assignment and failover.</p>
+            <p>Edits update shared desired configuration. Runtime changes require a separate deployment.
+              Logs shows voice diagnostics from the cluster cores.</p>
           </article>
           <section id="cluster" class="page-section hidden" data-control-plane>
             <div class="section-heading">
@@ -124,7 +123,7 @@
               <p class="resource-note" id="resourceNote">CPU and memory include the server and its managed child processes.</p>
             </article>
 
-            <article class="panel restart-panel hidden" id="restartPanel">
+            <article class="panel restart-panel hidden" id="restartPanel" data-runtime-only>
               <div class="panel-icon">↻</div>
               <div>
                 <h3>Restart required</h3>
@@ -172,7 +171,7 @@
               <p class="section-copy" id="sourceSemantics"></p>
               <button class="button secondary" id="syncSourceButton">Sync desired configuration</button>
             </article>
-            <article class="panel config-source-panel">
+            <article class="panel config-source-panel" data-runtime-only>
               <h3>Switch configuration source</h3>
               <p class="section-copy">Google Drive must already contain a valid configuration and be configured in local data/bootstrap.yaml. Switching preserves each source independently and takes effect after restart.</p>
               <div class="config-source-field">
