@@ -274,11 +274,16 @@ function renderIntegrations() {
       field("context_providers", "Context providers", { wide: true, help: "JSON list of optional HTTP context sources. Configured authorization values remain masked." }),
       field("plugins", "Server plugins", { wide: true, help: "JSON configuration for optional server-side tools." }),
     ]),
+    state.controlPlane && ["tavily", "metaso"].includes(getPath(state.config, "plugins.web_search.provider", ""))
+      ? settingsGroup("Web Search key", "Save the search API key privately on all nodes, then apply runtime.", [
+        field("plugins.web_search.api_key", "Web Search API key"),
+      ]) : "",
     settingsGroup("Recognition", "Optional speaker recognition configuration.", [
       field("voiceprint", "Voiceprint", { wide: true, help: "Leave the URL empty to keep voiceprint recognition disabled." }),
     ]),
   ].join("");
   attachFieldListeners($("#integrationFields"));
+  bindClusterSecretFields($("#integrationFields"));
 }
 
 function renderAdvanced() {
