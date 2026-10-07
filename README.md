@@ -131,7 +131,8 @@ normally requires a restart; Memory edits apply to the next turn immediately.
 Opt-in distributed stages are documented separately:
 [ASR/LLM](docs/cluster-worker-asr.md), [LLM streaming](docs/cluster-worker-llm.md)
 [parallel segment TTS](docs/cluster-worker-tts.md) and
-[device MCP tool continuation](docs/cluster-device-mcp.md).
+[device MCP tool continuation](docs/cluster-device-mcp.md) and
+[distributed camera/VLM analysis](docs/cluster-vision.md).
 
 [`worker.py`](main/xiaozhi-server/worker.py) is a separate, stateless process for
 queue-group RPC probes against the three-node Core NATS cluster. Normal `app.py`

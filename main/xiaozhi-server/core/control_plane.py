@@ -65,6 +65,11 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None, runt
         bootstrap = MqttBootstrap(reconciliation, config.bootstrap)
         app.router.add_get("/xiaozhi/ota/", bootstrap.handle)
         app.router.add_post("/xiaozhi/ota/", bootstrap.handle)
+        # Upload routing only. Vision providers live exclusively on workers.
+        from core.cluster.vision_http import relay
+        async def vision(request):
+            return await relay(request, config)
+        app.router.add_post('/mcp/vision/explain', vision)
 
     async def startup(app):
         await reconciliation.start()

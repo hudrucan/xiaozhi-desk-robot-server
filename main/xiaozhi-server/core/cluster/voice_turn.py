@@ -48,6 +48,8 @@ class VoiceTurn:
     async def abort(self):
         previous_generation = self.generation
         self.generation += 1
+        if self.mcp is not None:
+            await self.mcp.cancel_vision()
         self.waking = False
         tts = self.current_tts
         task, self.task = self.task, None

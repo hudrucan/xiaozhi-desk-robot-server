@@ -45,15 +45,22 @@ async def run(config, asr, llm, tts=None):
                 from core.cluster.tts_worker import TTSService
                 self.tts = TTSService(self.client, config.worker_id, tts, tts_engine, activity)
                 await self.tts.start()
+            if 'vision' in llm:
+                from core.cluster.vision_worker import VisionService
+                from core.cluster.vision_config import GeminiVision
+                self.vision = VisionService(self.client, config.worker_id, llm['revision'], GeminiVision(llm['vision']), activity)
+                await self.vision.start()
 
         async def _disconnected(self):
             # Invalidate LLM streams before waiting for uninterruptible native
             # inference. Core reconnect must never revive an old text stream.
             await super()._disconnected()
             await asyncio.gather(*(getattr(self, name).stop()
-                for name in ('asr', 'tts') if hasattr(self, name)))
+                for name in ('asr', 'tts', 'vision') if hasattr(self, name)))
 
         async def _reconnected(self):
+            if hasattr(self, 'vision'):
+                self.vision.stopping = False
             if hasattr(self, 'tts'):
                 self.tts.stopping = False
             if hasattr(self, 'asr'):
@@ -65,7 +72,9 @@ async def run(config, asr, llm, tts=None):
             for _, task in tuple(self.jobs.values()):
                 task.cancel()
             await asyncio.gather(*(getattr(self, name).stop()
-                for name in ('asr', 'tts') if hasattr(self, name)))
+                for name in ('asr', 'tts', 'vision') if hasattr(self, name)))
+            if hasattr(self, 'vision'):
+                await self.vision.close()
             await super()._shutdown()
 
     worker = Combined(config, stop, llm, provider)

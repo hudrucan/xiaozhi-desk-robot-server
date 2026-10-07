@@ -132,6 +132,29 @@ class TransportCore:
         self.runner = None
         self.vip_task = None
 
+    async def vision_capability(self, session):
+        if self.tts_pool is None or not self.tts_pool.bundle.get('vision_enabled', False):
+            return None
+        try:
+            def read():
+                with open(self.config.ingress_state_file, 'rb') as stream:
+                    raw = stream.read(MAX_JSON + 1)
+                if len(raw) > MAX_JSON:
+                    raise ValueError('Invalid ingress snapshot')
+                vip = ipaddress.IPv4Address(json.loads(raw)['vip'])
+                if not vip.is_private or vip.is_unspecified or vip.is_multicast or vip.is_loopback:
+                    raise ValueError('Invalid ingress VIP')
+                return str(vip)
+            vip = await asyncio.to_thread(read)
+            return {'url':f'http://{vip}/mcp/vision/explain',
+                    'token':f'{self.config.node_id}.{session}.{uuid.uuid4().hex}'}
+        except (OSError, ValueError, TypeError, KeyError):
+            return None
+
+    async def vision_upload(self, request):
+        from .vision_http import upload
+        return await upload(request, self)
+
     async def refresh_vip(self):
         while True:
             owner = None
@@ -177,6 +200,7 @@ class TransportCore:
             "received_audio_frames": self.received_audio_frames,
             "capabilities": (['voice_text', 'voice_tts'] if self.tts_pool else ['voice_text']) if self.voice_revision is not None else [], "conversation_runtime": False,
             "tts": self.tts_pool.status() if self.tts_pool else {'enabled': False},
+            "vision": {'enabled': bool(self.tts_pool and self.tts_pool.bundle.get('vision_enabled', False))},
             "worker_rpc": self.worker_rpc.status() if self.worker_rpc else {"state": "disabled"}})
 
     async def voice_diagnostics(self, request):
@@ -269,7 +293,10 @@ class TransportCore:
                 from .voice_turn import VoiceTurn
                 if greeting.get('features', {}).get('mcp') is True:
                     from .device_mcp import DeviceMCP
-                    mcp = DeviceMCP(ws.send_json, lambda event, **fields: self.diagnostics.record(event, session, **fields))
+                    mcp = DeviceMCP(ws.send_json, lambda event, **fields: self.diagnostics.record(event, session, **fields),
+                        vision=await self.vision_capability(session),
+                        device_id=request.headers.get('device-id', '').lower(),
+                        client_id=request.headers.get('client-id', 'default-client-id'))
                     self.mcps[session] = mcp
                 voice = VoiceTurn(self.worker_rpc, self.voice_revision, audio, session, ws.send_json,
                     self.tts_pool, ws.send_bytes if self.tts_pool else None, self.diagnostics, mcp)
@@ -352,8 +379,10 @@ class TransportCore:
         return ws
 
     async def start(self):
-        app = web.Application(client_max_size=MAX_JSON)
+        from .vision_http import MAX_BODY
+        app = web.Application(client_max_size=MAX_BODY)
         app.router.add_get("/xiaozhi/v1/", self.websocket)
+        app.router.add_post('/mcp/vision/explain', self.vision_upload)
         app.router.add_get("/status", self.status)
         app.router.add_get("/diagnostics", self.voice_diagnostics)
         app.router.add_get("/readyz", self.ready)

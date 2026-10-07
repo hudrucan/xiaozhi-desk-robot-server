@@ -40,6 +40,10 @@ def build_bundle(store, expected_revision=None):
              'prompt': config.get('prompt', ''), 'provider': provider}
     from core.cluster.server_tools import export_config
     value['server_tools'] = export_config(config, store.secrets)
+    from core.cluster.vision_config import export_config as export_vision
+    vision = export_vision(config, store.secrets)
+    if vision is not None:
+        value['vision'] = vision
     return validate_bundle(value, store.bootstrap['node_id'])
 
 

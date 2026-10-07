@@ -100,6 +100,8 @@ def build_bundle(store, source_root, expected_revision, workers):
     value['system_error_response'] = config.get('system_error_response', DEFAULT_ERROR_RESPONSE)
     from core.cluster.session_config import export_config
     value['session'] = export_config(config)
+    from core.cluster.vision_config import export_config as export_vision
+    value['vision_enabled'] = export_vision(config, store.secrets) is not None
     if soundbank is not None:
         value['soundbank'] = soundbank
     return validate_bundle(value, node)

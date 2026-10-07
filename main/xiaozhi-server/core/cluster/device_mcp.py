@@ -12,7 +12,7 @@ MAX_INVENTORY = wire.MAX_REQUEST_BYTES - 32768
 
 
 class DeviceMCP:
-    def __init__(self, send, record):
+    def __init__(self, send, record, *, vision=None, device_id='', client_id=''):
         self.send, self.record = send, record
         # Separate sessions and the gateway's prefetch IDs (starting at 10000).
         self.next_id = secrets.randbelow(1000000000) + 1000000
@@ -23,6 +23,19 @@ class DeviceMCP:
         self.closed = False
         self.discovery = None
         self.valid = False
+        self.vision, self.device_id, self.client_id = vision, device_id, client_id
+        self.camera_active = self.camera_upload = False
+        self.camera_consumed = False
+        self.camera_question = None
+        self.vision_tasks = set()
+
+    async def cancel_vision(self):
+        self.camera_active = False
+        self.camera_question = None
+        tasks = tuple(self.vision_tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def start(self):
         self.discovery = asyncio.create_task(self.discover())
@@ -62,11 +75,10 @@ class DeviceMCP:
         try:
             async with asyncio.timeout(10):
                 initialized = await self.request('initialize', {
-                    'protocolVersion':'2024-11-05', 'capabilities':{},
+                    'protocolVersion':'2024-11-05', 'capabilities':{'vision':self.vision} if self.vision else {},
                     'clientInfo':{'name':'xiaozhi-cluster-core','version':'1.0.0'}})
                 if not isinstance(initialized, dict) or initialized.get('protocolVersion') != '2024-11-05':
                     raise ValueError('Invalid initialization')
-                # No vision capability is advertised: this core has no vision endpoint yet.
                 await asyncio.wait_for(self.send({'type':'mcp', 'payload':{
                     'jsonrpc':'2.0', 'method':'notifications/initialized'}}), 2)
                 cursor, seen, raw = None, set(), []
@@ -91,6 +103,8 @@ class DeviceMCP:
                     original = item.get('name')
                     if not isinstance(original, str) or not re.fullmatch('[A-Za-z_][A-Za-z0-9_.-]{0,63}', original):
                         raise ValueError('Invalid device tool name')
+                    if original == 'self.camera.take_photo' and self.vision is None:
+                        continue
                     name = re.sub('[^A-Za-z0-9_-]', '_', original)
                     if name in names:
                         raise ValueError('Ambiguous device tool alias')
@@ -124,7 +138,15 @@ class DeviceMCP:
         if self.closed or not self.valid or call['name'] not in self.names:
             return {'id':call['id'], 'result':{'isError':True,'error':'Tool is not available in this device session'}}
         self.record('mcp_call_started')
+        camera = self.names[call['name']] == 'self.camera.take_photo'
         try:
+            if camera:
+                question = call['arguments'].get('question')
+                if (self.vision is None or self.camera_active or not isinstance(question, str)
+                        or not question.strip() or len(question.encode()) > 2048):
+                    raise ValueError('Camera capability is unavailable')
+                self.camera_active, self.camera_question = True, question
+                self.camera_consumed = False
             result = await self.request('tools/call', {'name':self.names[call['name']], 'arguments':call['arguments']})
             if not isinstance(result, dict) or not isinstance(result.get('content'), list):
                 raise ValueError('Invalid tool result')
@@ -143,6 +165,9 @@ class DeviceMCP:
             self.record('mcp_call_failed', code='llm_tools_unavailable')
             # Do not retry a timed-out actuator call: it may already have run.
             return {'id':call['id'], 'result':{'isError':True,'error':'Device tool failed or timed out; execution was not retried'}}
+        finally:
+            if camera:
+                await self.cancel_vision()
 
     async def execute(self, calls):
         wire.calls(calls)
@@ -154,6 +179,7 @@ class DeviceMCP:
 
     async def close(self):
         self.closed = True
+        await self.cancel_vision()
         if self.discovery is not None:
             self.discovery.cancel()
         for pending in tuple(self.pending.values()):

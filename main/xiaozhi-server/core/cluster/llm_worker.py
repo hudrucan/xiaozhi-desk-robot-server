@@ -113,7 +113,7 @@ class LLMWorker(Worker):
             error = 'llm_expired'
         elif value['revision'] != self.bundle['revision']:
             error = 'llm_revision_mismatch'
-        elif len(self.jobs) >= MAX_JOBS:
+        elif len(self.jobs) >= MAX_JOBS or (self.activity and self.activity.counts['llm'] >= MAX_JOBS):
             error = 'llm_busy'
         if error:
             if streamed:

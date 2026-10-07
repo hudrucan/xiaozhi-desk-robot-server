@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 PROTOCOL = 'xiaozhi-voice-diagnostics-v1'
 MAX_EVENTS = 64
-EVENTS = {'session_opened', 'session_closed', 'asr_started', 'asr_admitted', 'asr_restarting', 'asr_final',
+EVENTS = {'vision_admitted', 'vision_complete', 'vision_failed', 'session_opened', 'session_closed', 'asr_started', 'asr_admitted', 'asr_restarting', 'asr_final',
           'mcp_ready', 'mcp_unavailable', 'mcp_call_started', 'mcp_call_complete', 'mcp_call_failed', 'llm_started', 'llm_first_chunk', 'llm_complete', 'tts_started',
           'tts_complete', 'turn_failed', 'turn_complete', 'turn_aborted'}
 STATES = {'idle', 'asr', 'asr_restarting', 'llm', 'tts', 'done', 'error', 'aborted'}
@@ -27,7 +27,7 @@ class VoiceDiagnostics:
                 safe[key] = value
             elif key == 'worker_id' and isinstance(value, str) and re.fullmatch('[A-Za-z0-9_-]{1,192}', value):
                 safe[key] = value
-            elif key == 'code' and isinstance(value, str) and re.fullmatch('(asr|llm|tts|worker_rpc|voice)_[a-z_]{1,48}', value):
+            elif key == 'code' and isinstance(value, str) and re.fullmatch('(asr|llm|tts|vision|worker_rpc|voice)_[a-z_]{1,48}', value):
                 safe[key] = value
         self.sequence += 1
         self.events.append({'seq': self.sequence, 'at': datetime.now(timezone.utc).isoformat(),
