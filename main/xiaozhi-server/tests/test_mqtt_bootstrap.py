@@ -46,7 +46,7 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mqtt['password'],expected)
         self.assertEqual(mqtt['publish_topic'],'device-server')
         self.assertEqual(mqtt['subscribe_topic'],'devices/p2p/02_11_22_33_44_55')
-        self.assertEqual(mqtt['keepalive'],240)
+        self.assertEqual(mqtt['keepalive'],30)
         self.assertEqual(value['server_time']['timezone_offset'],420)
         self.assertIs(type(value['server_time']['timestamp']),int)
         self.assertEqual(value['firmware'],{'version':'1.2.3','url':''})

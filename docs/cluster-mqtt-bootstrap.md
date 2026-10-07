@@ -31,7 +31,12 @@ an inert firmware object with an empty download URL, and MQTT configuration:
 - password: existing gateway-compatible base64 HMAC-SHA256 over client ID + `|` + username;
 - publish topic: `device-server`;
 - subscribe topic: `devices/p2p/<MAC_with_underscores>`;
-- keepalive: 240 seconds.
+- keepalive: 30 seconds. A silent connection after a power loss/reset expires
+  after about 45 seconds (1.5 times the negotiated keepalive, plus gateway/panel
+  polling). A graceful MQTT disconnect clears immediately; ending a conversation
+  keeps its MQTT connection alive. Existing clients retain their negotiated value
+  until reconnecting with the updated bootstrap; reboot the firmware after this
+  server update to refresh the persisted setting. No firmware flash is needed.
 
 Credentials are per device/client identity. The gateway signing key itself is never
 returned, logged or stored in Cloud Config. Response caching is disabled. The

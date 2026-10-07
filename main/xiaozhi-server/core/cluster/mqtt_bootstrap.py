@@ -148,5 +148,5 @@ class MqttBootstrap:
             'firmware': {'version': version, 'url': ''},
             'mqtt': {'endpoint': f'{vip}:{self.config.port}', 'client_id': client_id,
                      'username': username, 'password': password, 'publish_topic': 'device-server',
-                     'subscribe_topic': f'devices/p2p/{mac_safe}', 'keepalive': 240},
+                     'subscribe_topic': f'devices/p2p/{mac_safe}', 'keepalive': 30},
         })
