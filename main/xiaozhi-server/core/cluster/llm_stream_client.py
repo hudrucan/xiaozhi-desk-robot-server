@@ -11,13 +11,20 @@ from .worker_rpc import WorkerRpcError
 
 
 class LLMStreamClient:
-    def __init__(self, client, core_id, revision, messages, seconds, on_chunk):
+    def __init__(self, client, core_id, revision, messages, seconds, on_chunk, *, tools=None, on_tools=None):
         self.client, self.on_chunk = client, on_chunk
-        self.value = {'protocol': wire.PROTOCOL, 'request_id': uuid.uuid4().hex,
+        self.wire = wire
+        self.on_tools = on_tools
+        if tools is not None:
+            from . import tool_stream_protocol
+            self.wire = tool_stream_protocol
+        self.value = {'protocol': self.wire.PROTOCOL, 'request_id': uuid.uuid4().hex,
             'cancel_token': uuid.uuid4().hex, 'core_id': core_id, 'revision': revision,
             'deadline_ms': int(time.time() * 1000) + seconds * 1000, 'dialogue': messages}
-        self.payload = rpc.encode(self.value, rpc.MAX_REQUEST_BYTES)
-        wire.request(self.payload)
+        if tools is not None:
+            self.value['tools'] = tools
+        self.payload = rpc.encode(self.value, getattr(self.wire, 'MAX_REQUEST_BYTES', rpc.MAX_REQUEST_BYTES))
+        self.wire.request(self.payload)
         self.seconds = seconds
         self.queue = asyncio.Queue(2)
         self.failure = asyncio.get_running_loop().create_future()
@@ -41,7 +48,7 @@ class LLMStreamClient:
             if (getattr(message, 'headers', None) or {}).get('Status') == '503':
                 self.fail()
                 return
-            value = wire.parse_event(message.data, self.value['request_id'], self.value['revision'])
+            value = self.wire.parse_event(message.data, self.value['request_id'], self.value['revision'])
             if (value['kind'] != 'error' or message.reply) and (
                     not valid_reply_subject(message.reply) or not message.reply.startswith('_INBOX.')):
                 raise ValueError('Invalid stream ACK subject')
@@ -68,10 +75,10 @@ class LLMStreamClient:
         try:
             async with asyncio.timeout(self.seconds):
                 self.subscription = await self.client.subscribe(inbox, cb=self.receive,
-                    pending_msgs_limit=4, pending_bytes_limit=4 * wire.MAX_EVENT_BYTES)
+                    pending_msgs_limit=4, pending_bytes_limit=4 * self.wire.MAX_EVENT_BYTES)
                 await self.client.flush()
                 self.require_live()
-                await self.client.publish(wire.SUBJECT, self.payload, reply=inbox)
+                await self.client.publish(self.wire.SUBJECT, self.payload, reply=inbox)
                 while True:
                     message, value = await self.next_event()
                     self.require_live()
@@ -82,7 +89,7 @@ class LLMStreamClient:
                         # Admission errors may precede started; execution errors
                         # use the next sequence number of the admitted worker.
                         if message.reply:
-                            await self.client.publish(message.reply, wire.ack(value))
+                            await self.client.publish(message.reply, self.wire.ack(value))
                         raise WorkerRpcError(value['error'])
                     if seq == 0:
                         if kind != 'started':
@@ -95,19 +102,25 @@ class LLMStreamClient:
                             raise WorkerRpcError('llm_output_too_large')
                         # Consumer owns partial text; it must propagate abort or
                         # downstream backpressure rather than enqueue forever.
-                        await asyncio.wait_for(self.on_chunk(value['text'], seq - 1), wire.ACK_SECONDS)
+                        await asyncio.wait_for(self.on_chunk(value['text'], seq - 1), self.wire.ACK_SECONDS)
                         digest.update(encoded)
                         parts.append(value['text'])
+                    elif kind == 'tools':
+                        results = await self.on_tools(value['calls'])
+                        self.require_live()
+                        await self.client.publish(message.reply, self.wire.tool_reply(value, results))
+                        seq += 1
+                        continue
                     elif kind == 'complete':
                         if total != value['text_bytes'] or digest.hexdigest() != value['sha256']:
                             raise WorkerRpcError('worker_rpc_invalid_reply')
                     else:
                         raise WorkerRpcError('worker_rpc_invalid_reply')
                     self.require_live()
-                    await self.client.publish(message.reply, wire.ack(value))
+                    await self.client.publish(message.reply, self.wire.ack(value))
                     self.require_live()
                     if kind == 'complete':
-                        return {'protocol': wire.PROTOCOL, 'request_id': self.value['request_id'],
+                        return {'protocol': self.wire.PROTOCOL, 'request_id': self.value['request_id'],
                             'worker_id': worker_id, 'revision': self.value['revision'],
                             'status': 'ok', 'text': ''.join(parts)}
                     seq += 1

@@ -163,7 +163,9 @@ elapsed milliseconds since turn start. Each core retains its last 64 events in
 memory; restarting that core clears its history. Stage counts refer to sessions
 coordinated by that core, not provider utilization on that physical node.
 An unavailable peer is explicitly unconfirmed; it is never presented as idle.
-MCP is reported unavailable until distributed tool execution is implemented.
+MCP readiness and safe call lifecycle events now come from the session-owned
+[device MCP coordinator](cluster-device-mcp.md). External/server MCP and Vision
+execution are still outside the cluster runtime.
 
 The control plane reads deployment-owned hosts from the existing private peer
 membership, using `XIAOZHI_DIAGNOSTIC_CORE_PORT` (default 8000). Without configured

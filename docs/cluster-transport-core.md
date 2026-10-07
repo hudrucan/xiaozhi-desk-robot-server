@@ -3,7 +3,9 @@
 `main/xiaozhi-server/core_server.py` is an isolated transport core for the first
 cluster MQTT acceptance phase. It does not import `app.py`, `ConnectionHandler`,
 the existing WebSocket/HTTP server, setup UI, provider initialization, Cloud
-configuration loading, or MCP execution. Normal `app.py` remains unchanged.
+configuration loading. Its default transport-only mode does not execute MCP.
+The opt-in voice runtime now supports [device MCP](cluster-device-mcp.md).
+Normal `app.py` remains unchanged.
 
 Each node can run this process. A session belongs to exactly one core until its
 gateway WebSocket closes. The gateway selects a core other than itself and the

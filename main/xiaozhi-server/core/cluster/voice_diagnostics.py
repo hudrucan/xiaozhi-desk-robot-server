@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 PROTOCOL = 'xiaozhi-voice-diagnostics-v1'
 MAX_EVENTS = 64
 EVENTS = {'session_opened', 'session_closed', 'asr_started', 'asr_admitted', 'asr_restarting', 'asr_final',
-          'llm_started', 'llm_first_chunk', 'llm_complete', 'tts_started',
+          'mcp_ready', 'mcp_unavailable', 'mcp_call_started', 'mcp_call_complete', 'mcp_call_failed', 'llm_started', 'llm_first_chunk', 'llm_complete', 'tts_started',
           'tts_complete', 'turn_failed', 'turn_complete', 'turn_aborted'}
 STATES = {'idle', 'asr', 'asr_restarting', 'llm', 'tts', 'done', 'error', 'aborted'}
 
@@ -40,7 +40,7 @@ class VoiceDiagnostics:
 def safe_snapshot(value, node):
     """Verify a configured peer's exact safe schema before returning it to UI."""
     if (not isinstance(value, dict) or set(value) != {'protocol', 'node_id', 'sessions', 'events', 'mcp'}
-            or value['protocol'] != PROTOCOL or value['node_id'] != node or value['mcp'] is not False
+            or value['protocol'] != PROTOCOL or value['node_id'] != node or type(value['mcp']) is not bool
             or not isinstance(value['sessions'], dict) or set(value['sessions']) != STATES
             or any(type(n) is not int or not 0 <= n <= 128 for n in value['sessions'].values())
             or not isinstance(value['events'], list) or len(value['events']) > MAX_EVENTS):

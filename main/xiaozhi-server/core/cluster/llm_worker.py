@@ -7,6 +7,7 @@ from collections import OrderedDict
 
 from . import llm_protocol as protocol
 from . import llm_stream_protocol as streaming
+from . import tool_stream_protocol as tooling
 from .protocol import valid_reply_subject
 from .worker import Worker
 
@@ -31,6 +32,8 @@ class LLMWorker(Worker):
                                     pending_msgs_limit=16, pending_bytes_limit=16 * protocol.MAX_REQUEST_BYTES)
         await self.client.subscribe(streaming.SUBJECT, queue=streaming.QUEUE_GROUP, cb=self._receive_stream,
                                     pending_msgs_limit=16, pending_bytes_limit=16 * protocol.MAX_REQUEST_BYTES)
+        await self.client.subscribe(tooling.SUBJECT, queue=tooling.QUEUE_GROUP, cb=self._receive_tools,
+                                    pending_msgs_limit=4, pending_bytes_limit=4 * tooling.MAX_REQUEST_BYTES)
         # All workers see cancellation, including if it races queue delivery.
         await self.client.subscribe(protocol.CANCEL_SUBJECT, cb=self._cancel,
                                     pending_msgs_limit=128, pending_bytes_limit=128 * 512)
@@ -49,7 +52,7 @@ class LLMWorker(Worker):
             return
         self._prune_cancelled()
         key = (value['request_id'], value['cancel_token'])
-        self.cancelled[key] = time.monotonic() + protocol.MAX_SECONDS + 2
+        self.cancelled[key] = time.monotonic() + tooling.MAX_SECONDS + 2
         self.cancelled.move_to_end(key)
         while len(self.cancelled) > MAX_TOMBSTONES:
             self.cancelled.popitem(last=False)
@@ -72,11 +75,15 @@ class LLMWorker(Worker):
     async def _receive_stream(self, message):
         await self._admit(message, streamed=True)
 
-    async def _admit(self, message, *, streamed):
+    async def _receive_tools(self, message):
+        await self._admit(message, streamed=True, tools=True)
+
+    async def _admit(self, message, *, streamed, tools=False):
+        wire = tooling if tools else streaming
         if self.stopping or not valid_reply_subject(message.reply) or not message.reply.startswith('_INBOX.'):
             return
         try:
-            value = streaming.request(message.data) if streamed else protocol.request(message.data)
+            value = wire.request(message.data) if streamed else protocol.request(message.data)
         except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
             return
         self._prune_cancelled()
@@ -99,7 +106,7 @@ class LLMWorker(Worker):
                 try:
                     if self.client.is_connected:
                         await asyncio.wait_for(self.client.publish(message.reply,
-                            streaming.event(value, self.config.worker_id, 'error', 0, error=error)), timeout=2)
+                            wire.event(value, self.config.worker_id, 'error', 0, error=error)), timeout=2)
                 except Exception:
                     LOGGER.warning('LLM admission reply unavailable; worker_id=%s', self.config.worker_id)
             else:
@@ -136,12 +143,17 @@ class LLMWorker(Worker):
     async def _stream_event(self, subject, value, kind, seq, **fields):
         if not self.client.is_connected:
             raise ConnectionError('LLM stream unavailable')
-        data = streaming.event(value, self.config.worker_id, kind, seq, **fields)
+        wire = tooling if value['protocol'] == tooling.PROTOCOL else streaming
+        data = wire.event(value, self.config.worker_id, kind, seq, **fields)
         try:
+            seconds = min(max(.01, (value['deadline_ms'] - time.time()*1000)/1000),
+                wire.TOOL_SECONDS * len(fields['calls']) + 2) if kind == 'tools' else wire.ACK_SECONDS
             reply = await asyncio.wait_for(self.client.request(subject, data,
-                timeout=streaming.ACK_SECONDS), timeout=streaming.ACK_SECONDS + .25)
-            streaming.validate_ack(reply.data,
-                streaming.parse_event(data, value['request_id'], value['revision']))
+                timeout=seconds), timeout=seconds + .25)
+            event = wire.parse_event(data, value['request_id'], value['revision'])
+            if kind == 'tools':
+                return wire.parse_tool_reply(reply.data, event)
+            wire.validate_ack(reply.data, event)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -149,16 +161,40 @@ class LLMWorker(Worker):
 
     async def _execute_stream(self, reply_subject, value):
         stream, seq = None, 0
+        wire = tooling if value['protocol'] == tooling.PROTOCOL else streaming
         try:
             seconds = max(0, (value['deadline_ms'] - time.time() * 1000) / 1000)
-            async with asyncio.timeout(min(seconds, protocol.MAX_SECONDS)):
+            async with asyncio.timeout(min(seconds, tooling.MAX_SECONDS if wire is tooling else protocol.MAX_SECONDS)):
                 await self._stream_event(reply_subject, value, 'started', seq)
                 seq += 1
                 messages = ([{'role': 'system', 'content': self.bundle['prompt']}]
                     if self.bundle['prompt'] else []) + value['dialogue']
                 total, digest = 0, hashlib.sha256()
-                stream = self.provider.response_text_async(messages)
-                async for part in stream:
+                stream = (self.provider.response_tools_async(messages, value['tools']) if wire is tooling
+                          else self.provider.response_text_async(messages))
+                next_results = None
+                tool_rounds, tool_count = 0, 0
+                while True:
+                    try:
+                        part = await stream.asend(next_results)
+                    except StopAsyncIteration:
+                        break
+                    next_results = None
+                    if isinstance(part, dict) and wire is tooling:
+                        if set(part) != {'calls'}:
+                            raise ValueError('Invalid provider tool event')
+                        tooling.calls(part['calls'])
+                        tool_rounds += 1
+                        tool_count += len(part['calls'])
+                        if tool_rounds > tooling.MAX_ROUNDS or tool_count > tooling.MAX_CALLS:
+                            await self._stream_event(reply_subject, value, 'error', seq, error='llm_tool_limit')
+                            return
+                        known = {tool['function']['name'] for tool in value['tools']}
+                        if any(call['name'] not in known for call in part['calls']):
+                            raise ValueError('Unadvertised provider tool')
+                        next_results = await self._stream_event(reply_subject, value, 'tools', seq, calls=part['calls'])
+                        seq += 1
+                        continue
                     if not isinstance(part, str):
                         raise ValueError('Invalid provider chunk')
                     encoded = part.encode('utf-8')

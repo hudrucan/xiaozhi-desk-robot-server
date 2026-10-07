@@ -13,7 +13,7 @@ RECOVERY_AUDIO_FRAMES = 10
 
 
 class VoiceTurn:
-    def __init__(self, rpc, revision, audio, session_id, send, tts_pool=None, send_audio=None, diagnostics=None):
+    def __init__(self, rpc, revision, audio, session_id, send, tts_pool=None, send_audio=None, diagnostics=None, mcp=None):
         self.rpc, self.revision, self.audio = rpc, revision, audio
         self.session_id, self.send = session_id, send
         self.task = self.queue = None
@@ -22,6 +22,7 @@ class VoiceTurn:
         self.tts_pool, self.send_audio = tts_pool, send_audio
         self.current_tts = None
         self.state, self.diagnostics = 'idle', diagnostics
+        self.mcp = mcp
         if tts_pool is not None and (send_audio is None or tts_pool.bundle['revision'] != revision):
             raise ValueError('TTS requires matching voice revision and audio sender')
 
@@ -60,6 +61,14 @@ class VoiceTurn:
         self.state = 'asr'
         self.record('asr_started')
         self.task = asyncio.create_task(self.run(self.generation, self.queue, mode))
+        self.task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+
+    async def start_text(self, text):
+        if not isinstance(text, str) or not text.strip() or len(text) > 512:
+            raise ValueError('Invalid typed text')
+        await self.abort()
+        self.state, self.ending = 'llm', True
+        self.task = asyncio.create_task(self.run(self.generation, None, None, text=text))
         self.task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
 
     async def audio_frame(self, data):
@@ -126,12 +135,14 @@ class VoiceTurn:
             attempts += 1
         raise asyncio.CancelledError
 
-    async def run(self, generation, queue, mode):
+    async def run(self, generation, queue, mode, text=None):
         tts = None
         failed = False
         started = time.monotonic()
         try:
-            text, stream = await self.transcribe(generation, queue, mode, started)
+            stream = None
+            if text is None:
+                text, stream = await self.transcribe(generation, queue, mode, started)
             if generation != self.generation:
                 return
             if self.diagnostics is not None and stream is not None:
@@ -171,7 +182,13 @@ class VoiceTurn:
                     # the unchanged full final text and text-only completion.
                     await self.emit({'type': 'llm', 'state': 'partial', 'seq': seq, 'text': value})
                 # The same immutable revision is required by both worker stages.
-                call = self.rpc.generate_stream(self.revision, [{'role': 'user', 'content': text}], chunk)
+                options = {}
+                if self.mcp is not None:
+                    tools = await self.mcp.tools()
+                    if generation != self.generation:
+                        raise asyncio.CancelledError
+                    options = {'tools':tools, 'on_tools':self.mcp.execute, 'seconds':120}
+                call = self.rpc.generate_stream(self.revision, [{'role': 'user', 'content': text}], chunk, **options)
                 result = await tts.wait_llm(call) if tts else await call
                 if result['status'] != 'ok':
                     raise WorkerRpcError(result['error'])

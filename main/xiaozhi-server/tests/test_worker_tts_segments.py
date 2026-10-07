@@ -83,6 +83,9 @@ class DistributionTests(unittest.IsolatedAsyncioTestCase):
     async def test_three_segments_of_one_turn_reserve_three_distinct_slots(self):
         tasks = [asyncio.create_task(self.pool.generate(index, 'Segment,')) for index in range(3)]
         await until(lambda: all(engine.entered.is_set() for engine in self.engines))
+        # Native synthesis starts before the final admission ACK reaches the
+        # core. Wait for both sides of that handshake, not thread timing.
+        await until(lambda: len(self.pool.reserved) == 3)
         self.assertEqual(len(self.pool.reserved), 3)
         self.assertTrue(all(engine.peak == 1 for engine in self.engines))
         for engine in self.engines:

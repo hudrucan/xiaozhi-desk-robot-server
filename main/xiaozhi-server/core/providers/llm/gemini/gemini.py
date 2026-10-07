@@ -207,6 +207,72 @@ class LLMProvider(LLMProviderBase):
             if stream is not None and hasattr(stream, "aclose"):
                 await asyncio.wait_for(stream.aclose(), timeout=3)
 
+    async def response_tools_async(self, dialogue, functions):
+        """One cancellable worker tool loop; exact signed context stays local."""
+        from core.cluster import tool_stream_protocol as wire
+        wire.tools(functions)
+        tools, has_custom_tools = self.tooling.build_tools(functions)
+        contents = [types.Content(role="model" if m["role"] == "assistant" else "user",
+                                 parts=[types.Part(text=m["content"])])
+                    for m in dialogue if m["role"] != "system"]
+        system = "\n".join(m["content"] for m in dialogue if m["role"] == "system")
+        config = types.GenerateContentConfig(
+            **self.generation_kwargs, tools=tools, system_instruction=system or None,
+            tool_config=(types.ToolConfig(function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.VALIDATED)) if has_custom_tools else None),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            http_options=types.HttpOptions(timeout=int(self.timeout * 1000)))
+        for round_index in range(wire.MAX_ROUNDS + 1):
+            stream, parts, calls = None, [], []
+            context_bytes = 0
+            try:
+                stream = await self.client.aio.models.generate_content_stream(
+                    model=self.model_name, contents=contents, config=config)
+                async for chunk in stream:
+                    if not chunk.candidates:
+                        continue
+                    content = chunk.candidates[0].content
+                    for part in content.parts if content and content.parts else ():
+                        # Preserve every Part, including signature-only chunks and
+                        # thought signatures on text preceding a function call.
+                        original = part.model_copy(deep=True)
+                        context_bytes += len(json.dumps(original.model_dump(mode="json", exclude_none=True)).encode())
+                        if context_bytes > wire.MAX_REQUEST_BYTES:
+                            raise ValueError("Provider tool context exceeds bound")
+                        parts.append(original)
+                        if getattr(part, "function_call", None):
+                            fc = part.function_call
+                            calls.append({'id':uuid.uuid4().hex, 'name':fc.name,
+                                          'arguments':dict(fc.args or {})})
+                            wire.calls(calls)
+                        elif getattr(part, "text", None) and not getattr(part, "thought", False):
+                            yield part.text
+            finally:
+                if stream is not None and hasattr(stream, "aclose"):
+                    await asyncio.wait_for(stream.aclose(), 3)
+            if not calls:
+                return
+            if round_index == wire.MAX_ROUNDS:
+                # The worker rejects the extra round before any device execution.
+                yield {'calls':calls}
+                return
+            results = yield {'calls':calls}
+            if not isinstance(results, list) or len(results) != len(calls):
+                raise ValueError("Missing correlated device results")
+            # Do not rebuild the model response: signed Part boundaries are part
+            # of Gemini's continuation contract. No shared/global context cache.
+            contents.append(types.Content(role="model", parts=parts))
+            responses = []
+            function_parts = [part for part in parts if getattr(part, "function_call", None)]
+            for call, original, result in zip(calls, function_parts, results):
+                if result.get('id') != call['id']:
+                    raise ValueError("Invalid device result correlation")
+                response = {'name':call['name'], 'response':{'result':result['result']}}
+                if original.function_call.id:
+                    response['id'] = original.function_call.id
+                responses.append(types.Part(function_response=types.FunctionResponse(**response)))
+            contents.append(types.Content(role="user", parts=responses))
+
     def response_with_functions(
         self,
         session_id,

@@ -197,9 +197,14 @@ class WorkerRPC:
             finally:
                 self.calls.discard(task)
 
-    async def generate_stream(self, revision, messages, on_chunk, seconds=30):
+    async def generate_stream(self, revision, messages, on_chunk, seconds=30, *, tools=None, on_tools=None):
         from . import llm_protocol as protocol
         from .llm_stream_client import LLMStreamClient
+        if tools is not None:
+            from . import tool_stream_protocol as protocol
+            protocol.tools(tools)
+            if not callable(on_tools):
+                raise ValueError('Tool stream requires an owned executor')
         if (type(revision) is not int or revision < 1 or type(seconds) is not int
                 or not 1 <= seconds <= protocol.MAX_SECONDS or not callable(on_chunk)):
             raise ValueError('Invalid LLM stream parameters')
@@ -208,7 +213,7 @@ class WorkerRPC:
             raise WorkerRpcError('worker_rpc_unavailable')
         if len(self.calls) >= MAX_INFLIGHT:
             raise WorkerRpcError('worker_rpc_busy')
-        stream = LLMStreamClient(self.client, self.core_id, revision, messages, seconds, on_chunk)
+        stream = LLMStreamClient(self.client, self.core_id, revision, messages, seconds, on_chunk, tools=tools, on_tools=on_tools)
         task = asyncio.current_task()
         self.calls.add(task)
         self.streams.add(stream)

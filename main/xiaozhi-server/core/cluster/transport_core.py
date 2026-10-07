@@ -124,6 +124,7 @@ class TransportCore:
         self.sockets = set()
         self.sessions = set()
         self.voices = {}
+        self.mcps = {}
         self.diagnostics = VoiceDiagnostics()
         self.received_audio_frames = 0
         self.vip_owner = None
@@ -185,7 +186,7 @@ class TransportCore:
         for voice in self.voices.values():
             counts[voice.state] += 1
         return web.json_response({'protocol': DIAGNOSTIC_PROTOCOL, 'node_id': self.config.node_id,
-            'sessions': counts, 'events': self.diagnostics.snapshot(), 'mcp': False},
+            'sessions': counts, 'events': self.diagnostics.snapshot(), 'mcp': any(mcp.valid for mcp in self.mcps.values())},
             headers={'Cache-Control': 'no-store'})
 
     async def worker_probe(self, request):
@@ -253,24 +254,31 @@ class TransportCore:
         self.sockets.add(ws)
         session = None
         unavailable_sent = False
-        voice = None
+        voice = mcp = None
         try:
             await ws.prepare(request)
             first = await asyncio.wait_for(ws.receive(), timeout=3)
             if first.type != WSMsgType.TEXT:
                 raise ValueError("Hello required")
-            audio = hello_audio(decode_message(first.data))
+            greeting = decode_message(first.data)
+            audio = hello_audio(greeting)
             if self.voice_revision is not None and audio != {'format':'opus','sample_rate':16000,'channels':1,'frame_duration':60}:
                 raise ValueError('Voice worker requires 16kHz mono 60ms Opus')
             session = uuid.uuid4().hex
             if self.voice_revision is not None:
                 from .voice_turn import VoiceTurn
+                if greeting.get('features', {}).get('mcp') is True:
+                    from .device_mcp import DeviceMCP
+                    mcp = DeviceMCP(ws.send_json, lambda event, **fields: self.diagnostics.record(event, session, **fields))
+                    self.mcps[session] = mcp
                 voice = VoiceTurn(self.worker_rpc, self.voice_revision, audio, session, ws.send_json,
-                    self.tts_pool, ws.send_bytes if self.tts_pool else None, self.diagnostics)
+                    self.tts_pool, ws.send_bytes if self.tts_pool else None, self.diagnostics, mcp)
                 self.voices[session] = voice
             await ws.send_json({"type": "hello", "version": 2, "transport": "websocket",
                 "session_id": session, "audio_params": audio, "core_id": self.config.node_id,
                 "capabilities": (['voice_text', 'voice_tts'] if self.tts_pool else ['voice_text']) if voice else [], "conversation_runtime": False})
+            if mcp is not None:
+                mcp.start()
             self.sessions.add(session)
             self.diagnostics.record('session_opened', session)
             LOGGER.info("core_id=%s session opened active=%d", self.config.node_id, len(self.sessions))
@@ -296,11 +304,16 @@ class TransportCore:
                             await voice.abort()
                             await voice.emit({'type': 'stt', 'state': 'clear'})
                         unavailable_sent = False
+                    elif message['type'] == 'mcp':
+                        if mcp is not None:
+                            mcp.receive(message.get('payload'))
                     elif voice and message['type'] == 'listen':
                         if message.get('state') == 'start':
                             await voice.start(message.get('mode', 'auto'))
                         elif message.get('state') == 'stop':
                             await voice.stop()
+                        elif message.get('state') == 'detect' and (message.get('input_mode') == 'text' or message.get('text') == 'web_chat'):
+                            await voice.start_text(message.get('text'))
                         elif message.get('state') == 'detect' and message.get('input_mode') != 'text':
                             # Wake notification is not a user speech transcript.
                             pass
@@ -321,12 +334,17 @@ class TransportCore:
             # takes longer. Never advertise a disconnected session as active.
             if session is not None:
                 self.voices.pop(session, None)
+                self.mcps.pop(session, None)
                 self.sessions.discard(session)
                 self.diagnostics.record('session_closed', session)
                 LOGGER.info("core_id=%s session closed active=%d", self.config.node_id, len(self.sessions))
             try:
-                if voice:
-                    await voice.abort()
+                try:
+                    if voice:
+                        await voice.abort()
+                finally:
+                    if mcp:
+                        await mcp.close()
             finally:
                 # Retain the socket quota while its handler is cleaning up.
                 self.sockets.discard(ws)

@@ -47,9 +47,9 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         digest=hmac.new(b'fixture-key',f'{client}|{mac}|{stamp}'.encode(),hashlib.sha256).digest()
         return {'device-id':mac,'client-id':client,'authorization':'Bearer '+base64.urlsafe_b64encode(digest).decode().rstrip('=')+'.'+stamp}
 
-    async def connect(self, core=None):
+    async def connect(self, core=None, features=None):
         ws=await self.client.ws_connect('/xiaozhi/v1/?from=mqtt_gateway',headers=self.headers())
-        await ws.send_json({'type':'hello','version':2,'transport':'websocket','audio_params':AUDIO})
+        await ws.send_json({'type':'hello','version':2,'transport':'websocket','audio_params':AUDIO, 'features':features or {}})
         hello=await ws.receive_json(timeout=1)
         return ws,hello
 
@@ -86,6 +86,70 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         await ws.close()
         await asyncio.sleep(0)
         self.assertFalse(self.worker.turns)
+
+    async def test_device_mcp_is_discovered_and_called_without_blocking_audio_reader(self):
+        from test_cluster_mcp import RAW, CALL
+        calls = []
+        async def generate(revision, dialogue, on_chunk, *, tools, on_tools, seconds):
+            self.assertEqual(tools[0]['function']['name'],CALL['name'])
+            self.assertEqual(seconds,120)
+            calls.extend(await on_tools([CALL]))
+            await on_chunk('Device confirmed',0)
+            return {'status':'ok','text':'Device confirmed'}
+        self.rpc.generate_stream=generate
+        ws,hello=await self.connect(features={'mcp':True})
+        self.assertEqual(hello['type'],'hello')
+        await ws.send_json({'type':'listen','state':'detect','input_mode':'text','text':'Read robot state'})
+        methods=[];messages=[]
+        while True:
+            message=await ws.receive_json(timeout=2)
+            messages.append(message)
+            if message['type']=='mcp':
+                payload=message['payload'];method=payload['method'];methods.append(method)
+                if 'id' not in payload:continue
+                if method=='initialize':
+                    self.assertEqual(payload['params']['capabilities'],{})
+                    result={'protocolVersion':'2024-11-05'}
+                elif method=='tools/list':result={'tools':[RAW]}
+                else:
+                    self.assertEqual(payload['params']['name'],RAW['name'])
+                    result={'content':[{'type':'text','text':'Fixture device status'}]}
+                await ws.send_json({'type':'mcp','payload':{'jsonrpc':'2.0','id':payload['id'],'result':result}})
+            if message.get('state')=='complete':break
+        self.assertEqual(methods,['initialize','notifications/initialized','tools/list','tools/call'])
+        self.assertEqual(calls[0]['result']['content'][0]['text'],'Fixture device status')
+        self.assertTrue(any(m.get('text')=='Device confirmed' for m in messages))
+        diagnostics=await (await self.client.get('/diagnostics')).json()
+        self.assertTrue(diagnostics['mcp'])
+        self.assertNotIn('Fixture device status',str(diagnostics))
+        self.assertIn('mcp_call_complete',[event['event'] for event in diagnostics['events']])
+        await ws.close();await asyncio.sleep(.01)
+        self.assertFalse(self.core.mcps)
+        self.assertFalse(self.core.voices)
+
+    async def test_legacy_web_chat_trigger_uses_existing_consumption_tool(self):
+        from test_cluster_mcp import RAW
+        raw={**RAW,'name':'self.web_chat.consume_pending','description':'Consume original message'}
+        async def generate(revision, dialogue, on_chunk, *, tools, on_tools, seconds):
+            self.assertEqual(dialogue,[{'role':'user','content':'web_chat'}])
+            result=await on_tools([{'id':'consume','name':'self_web_chat_consume_pending','arguments':{}}])
+            self.assertEqual(result[0]['result']['content'][0]['text'],'Full original typed message')
+            await on_chunk('Typed reply',0)
+            return {'status':'ok','text':'Typed reply'}
+        self.rpc.generate_stream=generate
+        ws,_=await self.connect(features={'mcp':True})
+        await ws.send_json({'type':'listen','state':'detect','text':'web_chat'})
+        while True:
+            message=await ws.receive_json(timeout=2)
+            if message['type']=='mcp':
+                p=message['payload']
+                if 'id' not in p:continue
+                result=({'protocolVersion':'2024-11-05'} if p['method']=='initialize' else
+                        {'tools':[raw]} if p['method']=='tools/list' else
+                        {'content':[{'type':'text','text':'Full original typed message'}]})
+                await ws.send_json({'type':'mcp','payload':{'jsonrpc':'2.0','id':p['id'],'result':result}})
+            if message.get('state')=='complete':break
+        await ws.close()
 
     async def test_transport_only_default_preserves_empty_capabilities(self):
         self.core.voice_revision=None
