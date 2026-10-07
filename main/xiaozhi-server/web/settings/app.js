@@ -18,7 +18,7 @@ import {
 } from "./resources.js";
 import { $, clone, labelFor, state, toast, escapeHtml } from "./shared.js";
 import { initializeSecrets } from "./secrets.js";
-import { renderCluster, setClusterActive } from "./cluster.js";
+import { renderCluster, setClusterActive } from "./cluster.js?v=46";
 
 const PAGE_IDS = [
   "overview",
@@ -325,7 +325,7 @@ async function saveSettings() {
     state.configuredSecrets = new Set(payload.configured_secrets || []);
     state.restartRequired = Boolean(payload.restart_required);
     renderAll();
-    toast(state.controlPlane ? "Desired configuration saved. Cluster rolling restart is not implemented." : state.restartRequired
+    toast(state.controlPlane ? "Desired configuration saved. Check Cluster for Soundbank audio sync on every node; runtime apply is separate." : state.restartRequired
       ? "Configuration saved. Restart to apply it."
       : "Configuration saved and applied.");
     const cleanup = payload.soundbank_cleanup;

@@ -91,6 +91,50 @@ and reports it as the **last recorded conversation startup**, with
 `runtime_revision: null`. It cannot attest that another process is currently
 running. It never writes `active.json` or calls `mark_applied()`.
 
+## Soundbank audio synchronization
+
+Every shared V2 desired snapshot also schedules an independent background audio
+cache reconciliation on that node. The node that accepted a successful Settings
+CAS schedules its own sync directly, even if NATS publication fails. Other nodes
+refresh from Cloud on the revision hint, at startup, periodically (45 seconds by
+default), or on reconnect. Each downloads missing blobs directly from Drive;
+neither audio nor Cloud file IDs are sent over NATS. An offline node catches up
+after recovery. V1/legacy sources retain their previous behavior.
+
+SHA256, byte size and existing P3 audio contracts are verified before readiness.
+All enabled entries must have published Cloud pointers. Blobs live in the private
+content-addressed `data/cloud-soundbank/objects` cache. Only a complete verified
+generation can atomically replace `data/cloud-soundbank/ready.json`; failed or
+superseded transfers leave the previous complete index and blobs intact. Runtime
+Soundbank filenames and `active.json` are never overwritten. Background sync
+neither generates audio nor initializes providers. Downloads are bounded to
+32 MiB per asset / 256 MiB per snapshot and 4096 asset references. Old cache
+generations are retained; automatic garbage collection is not provided yet.
+
+Save success means the Cloud Config CAS committed, **not** that all three audio
+caches are ready. Node download failures never reverse or fail an already saved
+configuration. Sync failures retry automatically, including repair of a missing
+local cache blob without any new Cloud revision. During shutdown the owned
+download finishes (with the transport timeout), no further assets are fetched,
+and no incomplete index is published.
+
+`GET /api/cluster` includes a safe local `soundbank` status with desired/synced
+revisions, counts, timestamps and fixed errors. `GET /api/cluster/soundbank` reads
+the explicitly configured private control-plane peers concurrently and reports
+readiness for the serving node's current desired revision. It uses the existing
+three-node secret-provisioning topology, does not export its key or endpoints,
+and performs no Drive I/O. Without that topology it explicitly reports
+`local_only`, rather than claiming cluster readiness. Unreachable, incompatible
+or old-version peers are unconfirmed, never counted as ready. The Cluster page
+shows each node and the ready count. Unsaved edits are preserved during polling.
+
+This adds **cache synchronization**, not distributed Soundbank playback or a
+Soundbank authoring UI. Standalone authoring/preview controls remain unavailable;
+normal `app.py` publication remains compatible and its Cloud edits are discovered
+periodically. The TTS worker exporter still rejects enabled Soundbank until its
+playback integration is implemented. Health remains the cheap Settings/config
+policy below: a pending audio cache does not remove a usable Settings backend.
+
 ## Health and status
 
 `/healthz` is unauthenticated under the explicit HTTP access policy and returns

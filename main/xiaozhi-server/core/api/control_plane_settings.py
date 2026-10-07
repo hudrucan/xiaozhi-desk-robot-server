@@ -2,16 +2,18 @@
 
 import asyncio
 import copy
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 
 from config.config_loader import get_project_dir
 from config.config_store import ConfigConflict, ConfigUnavailable
 from core.api.settings_access import SettingsAccess
 from core.cluster.config_reconciliation import CAPABILITIES, CONTROL_PROTOCOL, safe_source
 from core.utils.config_editor import ConfigEditor
+from core.cluster.soundbank_reconciliation import safe_status
 
 
 class ControlPlaneSettingsHandler(SettingsAccess):
@@ -113,6 +115,44 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         payload["capabilities"]["secret_provisioning"] = self.secrets is not None
         payload["capabilities"]["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
         return self._disable_cache(web.json_response(payload))
+
+    async def handle_soundbank_cluster(self, request):
+        """Read only configured private peers; no Drive I/O or user-supplied URLs."""
+        self._require_access(request)
+        local = self.reconciliation.status()
+        peers = self.reconciliation.config.secrets
+        nodes = peers.nodes if peers is not None else ((local["node_id"], None),)
+        revision = local["configuration"].get("desired_revision")
+        async with ClientSession(trust_env=False, timeout=ClientTimeout(total=3)) as session:
+            async def one(node, endpoint):
+                try:
+                    if node == local["node_id"]:
+                        payload = local
+                    else:
+                        async with session.get(endpoint + "/api/cluster", allow_redirects=False) as response:
+                            if response.status != 200:
+                                raise ValueError
+                            data = bytearray()
+                            async for chunk in response.content.iter_chunked(4096):
+                                data.extend(chunk)
+                                if len(data) > 32768:
+                                    raise ValueError
+                            payload = json.loads(data)
+                    if payload.get("protocol") != CONTROL_PROTOCOL or payload.get("node_id") != node:
+                        raise ValueError
+                    result = safe_status(payload.get("soundbank"))
+                    ready = (revision is not None and result["state"] in {"ready", "disabled"}
+                             and result["desired_revision"] == result["synced_revision"] == revision
+                             and result["expected_assets"] == result["verified_assets"])
+                    return {"node_id": node, **result, "ready": ready}
+                except Exception:
+                    return {"node_id": node, "state": "unavailable", "ready": False}
+            results = await asyncio.gather(*(one(node, endpoint) for node, endpoint in nodes))
+        ready = sum(item["ready"] for item in results)
+        return self._disable_cache(web.json_response({"protocol": "xiaozhi-soundbank-cluster-v1",
+            "scope": "configured_peers" if peers is not None else "local_only",
+            "desired_revision": revision, "ready_nodes": ready, "expected_nodes": len(nodes),
+            "state": "ready" if ready == len(nodes) else "pending", "nodes": results}))
 
     def _require_secret_access(self, request):
         self._require_access(request)

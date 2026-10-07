@@ -48,6 +48,7 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None):
         web.post("/api/settings/sync", handler.handle_sync),
         web.post("/api/settings/migrate-cluster", handler.handle_migration),
         web.get("/api/cluster", handler.handle_cluster), web.get("/healthz", handler.handle_health),
+        web.get("/api/cluster/soundbank", handler.handle_soundbank_cluster),
     ])
     if config.bootstrap is not None:
         from core.cluster.mqtt_bootstrap import MqttBootstrap

@@ -234,6 +234,17 @@ class ControlPlaneApiTests(unittest.IsolatedAsyncioTestCase):
         await self.client.start_server()
         await until(lambda: self.service.nats_state == "connected")
 
+    async def test_disabled_bank_without_cloud_blobs_can_sync_on_a_fresh_node(self):
+        await until(lambda: self.service.soundbank.status["synced_revision"] == 1)
+        status = self.service.soundbank.status
+        self.assertEqual(status["state"], "disabled")
+        self.assertEqual(status["verified_assets"], 0)
+        self.assertIsNone(status["error_code"])
+        index = json.loads(self.service.soundbank.index.read_bytes())
+        self.assertEqual(index["revision"], 1)
+        self.assertEqual(index["assets"], 0)
+        self.assertFalse((self.store.cache_dir / "active.json").exists())
+
     async def test_health_is_cheap_structural_snapshot_policy_not_nats_or_runtime_readiness(self):
         with patch.object(self.fixture.drive, "read_manifest", side_effect=AssertionError("Health Drive I/O")), \
                 patch.object(self.store, "mark_applied", side_effect=AssertionError("Apply")):
@@ -294,6 +305,9 @@ class ControlPlaneApiTests(unittest.IsolatedAsyncioTestCase):
         }
         self.fixture.drive.publish_object(obj, 2)
         await self.service.reconcile()
+        # Background synchronization is separate from Save and keeps runtime
+        # filenames absent. Wait for it before asserting Save does no blob I/O.
+        await until(lambda: self.service.soundbank.status["synced_revision"] == 2)
         asset_path.unlink()
         asset_path.parent.rmdir()
         with patch.object(self.store.soundbank_assets, "publish_layers", side_effect=AssertionError("Asset publication")), \
@@ -365,6 +379,7 @@ class ControlPlaneApiTests(unittest.IsolatedAsyncioTestCase):
         await self.service.reconcile()
         response = await self.client.get("/api/settings")
         self.assertEqual((await response.json())["configuration_source"]["settings_scope"], "legacy_node")
+        self.assertEqual(self.service.soundbank.status["state"], "legacy")
         response = await self.client.put("/api/settings", json={"config": {"prompt": "Legacy node edit"}, "base_revision": 2})
         self.assertEqual(response.status, 200)
         self.assertFalse(self.nats.messages)

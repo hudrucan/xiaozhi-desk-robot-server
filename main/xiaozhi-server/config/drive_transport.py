@@ -77,6 +77,18 @@ class GoogleDriveTransport:
             "alt": "media", "supportsAllDrives": "true",
         }).content
 
+    def download_limited(self, file_id, max_bytes):
+        """Bound background Soundbank downloads independently of response headers."""
+        with self._request("GET", f"{self.API}/{self._id(file_id)}", params={
+            "alt": "media", "supportsAllDrives": "true",
+        }, stream=True) as response:
+            content = bytearray()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if len(content) + len(chunk) > max_bytes:
+                    raise ConfigUnavailable("Cloud asset exceeds the local sync limit")
+                content.extend(chunk)
+            return bytes(content)
+
     def read_manifest(self, file_id):
         before = self._metadata(file_id).get("etag")
         content = self.download(file_id)

@@ -22,10 +22,21 @@ export function renderCluster() {
     ["Last successful reconciliation", cluster.reconciliation?.last_success_at],
     ["Last reconciliation error", cluster.reconciliation?.last_error_at],
     ["Configured VIP", cluster.ingress?.configured_vip],
+    ["Local Soundbank cache", cluster.soundbank?.state],
+    ["Local Soundbank revision", cluster.soundbank?.synced_revision],
   ];
+  const soundbank = state.clusterSoundbank;
+  if (soundbank && soundbank.desired_revision === config.desired_revision) {
+    rows.push(["Soundbank audio sync", `${soundbank.ready_nodes}/${soundbank.expected_nodes} nodes ready for revision ${soundbank.desired_revision ?? "—"}`]);
+    if (soundbank.scope === "local_only") rows.push(["Soundbank membership", "Only this node is configured; cluster-wide sync is unconfirmed"]);
+    for (const node of soundbank.nodes || []) {
+      rows.push([`Soundbank · ${node.node_id}`, node.state === "unavailable" ? "Unavailable; sync unconfirmed"
+        : `${node.state} · revision ${node.synced_revision ?? "—"} · ${node.verified_assets}/${node.expected_assets} assets`]);
+    }
+  }
   $("#clusterSummary").innerHTML = rows.map(([label, value]) =>
     `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd></div>`).join("");
-  $("#clusterStatusNote").textContent = "Cloud is authoritative; NATS only hints at changes. Sync loads the latest desired configuration for editing. VIP assignment/failover and cluster rolling restart are not implemented.";
+  $("#clusterStatusNote").textContent = "Cloud is authoritative; NATS only hints at changes. A saved configuration does not mean every node has its audio yet. Soundbank caches sync in the background and retry automatically. Runtime playback and cluster rolling restart are separate from cache readiness.";
 }
 
 export function setClusterActive(active) {
@@ -46,8 +57,24 @@ export function setClusterActive(active) {
       if (current !== generation) return;
       state.cluster = payload;
       renderCluster();
+      try {
+        const assets = await fetch("/api/cluster/soundbank", { cache: "no-store", signal: request.signal });
+        if (!assets.ok) throw new Error("Soundbank status unavailable");
+        const status = await assets.json();
+        if (current !== generation) return;
+        state.clusterSoundbank = status;
+        renderCluster();
+      } catch (error) {
+        if (error.name !== "AbortError" && current === generation) {
+          state.clusterSoundbank = null;
+          renderCluster();
+          $("#clusterStatusNote").textContent = "Soundbank cluster sync is unconfirmed; retrying.";
+        }
+      }
     } catch (error) {
       if (error.name !== "AbortError" && current === generation) {
+        state.clusterSoundbank = null;
+        renderCluster();
         $("#clusterStatusNote").textContent = "Cluster status unavailable; retrying.";
       }
     } finally {

@@ -5,11 +5,13 @@ import copy
 import logging
 from datetime import datetime, timezone
 
-from config.cloud_layers import centralized
+from config.cloud_layers import centralized, shared_cluster
+from config.config_loader import merge_configs
 from config.config_store import ConfigUnavailable
 from .config_protocol import (
     CONFIG_CHANGED_SUBJECT, MAX_EVENT_BYTES, config_changed, parse_config_changed,
 )
+from .soundbank_reconciliation import SoundbankReconciliation
 
 LOGGER = logging.getLogger("xiaozhi.control_plane")
 CONTROL_PROTOCOL = "xiaozhi-control-plane-v1"
@@ -19,6 +21,7 @@ CAPABILITIES = {
     "restart": False, "rolling_restart": False, "source_switch": False,
     "push_tts": False, "memory": False, "soundbank_authoring": False,
     "soundbank_preview": False, "vip_assignment": False,
+    "soundbank_sync": True,
 }
 
 
@@ -73,6 +76,7 @@ class ConfigReconciliation:
         self._loop = None
         self._observer = self._committed
         self._previous_observer = None
+        self.soundbank = SoundbankReconciliation(store, config.reconcile_interval)
 
     def _capture(self):
         """Capture safe cached status off-loop; health/status requests do no I/O."""
@@ -89,6 +93,13 @@ class ConfigReconciliation:
                 self.vip = self.store.defaults_unlocked().get("cluster", {}).get("ingress", {}).get("vip")
                 overrides = self.store.read_unlocked().get("cluster", {}).get("ingress", {})
                 self.vip = overrides.get("vip", self.vip)
+                if self._loop is not None:
+                    if obj and shared_cluster(obj):
+                        effective = merge_configs(*self.store._resolve(obj))
+                        self._loop.call_soon_threadsafe(self.soundbank.request,
+                            snapshot["payload"]["manifest"]["revision"], effective)
+                    else:
+                        self._loop.call_soon_threadsafe(self.soundbank.legacy)
         except (OSError, ValueError, TypeError, KeyError):
             self.healthy = False
             self.vip = None
@@ -272,6 +283,7 @@ class ConfigReconciliation:
     async def start(self):
         self._loop = asyncio.get_running_loop()
         await self.reconcile()  # Live Cloud read before HTTP becomes operational.
+        self.soundbank.start()
         self._previous_observer = self.store.publication_observer
         self.store.publication_observer = self._observer
         self._tasks = [asyncio.create_task(function(), name=name) for function, name in (
@@ -282,6 +294,7 @@ class ConfigReconciliation:
     async def stop(self):
         self.http_operational = False
         self._stop.set()
+        self.soundbank.begin_stop()
         self._wake.set()
         if self.store.publication_observer is self._observer:
             self.store.publication_observer = self._previous_observer
@@ -294,6 +307,7 @@ class ConfigReconciliation:
         # Also wait for an HTTP operation already executing off-loop.
         async with self._operation_lock:
             pass
+        await self.soundbank.stop()
         self.nats_state = "closed"
 
     def status(self):
@@ -305,5 +319,6 @@ class ConfigReconciliation:
             "nats": {"state": self.nats_state},
             "reconciliation": copy.deepcopy(self.reconciliation),
             "hint_publication": copy.deepcopy(self.hint_publication),
+            "soundbank": copy.deepcopy(self.soundbank.status),
             "capabilities": copy.deepcopy(CAPABILITIES),
         }
