@@ -488,6 +488,9 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
 .memory-workspace > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 19px 22px; border-bottom: 1px solid rgba(94, 75, 49, 0.34); }
 .memory-workspace > header h3 { margin-top: 3px; }
 .memory-workspace > header .field-help { margin-top: 5px; }
+.memory-scope { display: grid; gap: 6px; padding: 18px 22px 0; }
+.memory-scope > span { color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.memory-scope input { width: 100%; max-width: 360px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .memory-compose { padding: 18px 22px; border-bottom: 1px solid rgba(94, 75, 49, 0.28); background: rgba(213, 168, 94, 0.025); }
 .memory-compose > label, .memory-filter > label { display: block; margin-bottom: 8px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
 .memory-compose textarea { min-height: 74px; resize: vertical; }
