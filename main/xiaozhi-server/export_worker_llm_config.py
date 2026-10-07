@@ -38,6 +38,8 @@ def build_bundle(store, expected_revision=None):
     value = {'protocol': 'xiaozhi-worker-llm-config-v1', 'worker_id': store.bootstrap['node_id'],
              'revision': snapshot['payload']['manifest']['revision'],
              'prompt': config.get('prompt', ''), 'provider': provider}
+    from core.cluster.server_tools import export_config
+    value['server_tools'] = export_config(config, store.secrets)
     return validate_bundle(value, store.bootstrap['node_id'])
 
 

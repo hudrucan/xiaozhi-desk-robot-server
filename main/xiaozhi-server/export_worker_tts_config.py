@@ -96,6 +96,10 @@ def build_bundle(store, source_root, expected_revision, workers):
     value = {'protocol': PROTOCOL, 'worker_id': node, 'revision': revision,
         'workers': workers, 'model_root': str(directory), 'options': options,
         'files': files, 'fingerprint': fingerprint(options, files)}
+    from core.cluster.tts_config import DEFAULT_ERROR_RESPONSE
+    value['system_error_response'] = config.get('system_error_response', DEFAULT_ERROR_RESPONSE)
+    from core.cluster.session_config import export_config
+    value['session'] = export_config(config)
     if soundbank is not None:
         value['soundbank'] = soundbank
     return validate_bundle(value, node)

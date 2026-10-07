@@ -76,6 +76,14 @@ class ExportAndProvisionTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.fixture = Fixture(Path(self.directory.name))
 
+    def test_export_carries_cloud_error_response_without_changing_voice_identity(self):
+        before = self.fixture.export()
+        self.fixture.config['system_error_response'] = 'Configured retry message.'
+        after = self.fixture.export()
+        self.assertEqual(after['system_error_response'], 'Configured retry message.')
+        self.assertEqual(before['fingerprint'], after['fingerprint'])
+        self.assertEqual(before['soundbank'], after['soundbank'])
+
     def test_export_requires_verified_ready_cache_and_strips_cloud_id(self):
         before = copy.deepcopy(self.fixture.config)
         value = self.fixture.export()

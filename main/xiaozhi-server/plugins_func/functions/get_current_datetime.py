@@ -8,23 +8,7 @@ if TYPE_CHECKING:
     from core.connection import ConnectionHandler
 
 
-GET_CURRENT_DATETIME_FUNCTION_DESC = {
-    "type": "function",
-    "function": {
-        "name": "get_current_datetime",
-        "description": (
-            "Get the server's authoritative current local date, weekday, time, "
-            "and UTC offset. Call this on every request for the current date, "
-            "day of the week, or time, even if an earlier turn contains a "
-            "previous result."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-}
+from plugins_func.tool_schemas import GET_CURRENT_DATETIME_FUNCTION_DESC
 
 
 @register_function(

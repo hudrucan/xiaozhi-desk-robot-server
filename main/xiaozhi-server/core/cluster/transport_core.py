@@ -315,8 +315,7 @@ class TransportCore:
                         elif message.get('state') == 'detect' and (message.get('input_mode') == 'text' or message.get('text') == 'web_chat'):
                             await voice.start_text(message.get('text'))
                         elif message.get('state') == 'detect' and message.get('input_mode') != 'text':
-                            # Wake notification is not a user speech transcript.
-                            pass
+                            await voice.start_text(message.get('text'), wake=True)
                         else:
                             raise ValueError('Unsupported voice request')
                     elif not unavailable_sent:

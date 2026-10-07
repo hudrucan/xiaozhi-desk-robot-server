@@ -13,12 +13,16 @@ FIELDS = {'type', 'model_name', 'api_key', 'max_output_tokens', 'thinking_level'
 
 def validate_bundle(value, worker_id):
     validate_worker_id(worker_id)
-    if (not isinstance(value, dict) or set(value) != {'protocol', 'worker_id', 'revision', 'prompt', 'provider'}
+    keys = {'protocol', 'worker_id', 'revision', 'prompt', 'provider'}
+    if (not isinstance(value, dict) or not keys <= set(value) or set(value) - keys - {'server_tools'}
             or value['protocol'] != 'xiaozhi-worker-llm-config-v1' or value['worker_id'] != worker_id
             or type(value['revision']) is not int or value['revision'] < 1
             or not isinstance(value['prompt'], str) or len(value['prompt'].encode('utf-8')) > 16384
             or not isinstance(value['provider'], dict) or set(value['provider']) - FIELDS):
         raise ValueError('Invalid local LLM configuration')
+    if 'server_tools' in value:
+        from .server_tools import validate_config
+        validate_config(value['server_tools'])
     provider = value['provider']
     # First implementation is Gemini. Other provider adapters may implement the
     # same cancellable text interface; Core/NATS never chooses a provider by name.

@@ -120,7 +120,7 @@ class ASRTests(unittest.IsolatedAsyncioTestCase):
         sent, calls = [], []
         async def send(value):
             sent.append(value)
-        async def generate(revision, dialogue, on_chunk):
+        async def generate(revision, dialogue, on_chunk, **options):
             calls.append(dialogue)
             return {'status': 'ok', 'text': 'answer'}
         rpc = SimpleNamespace(client=self.bus, core_id='deskb1x', generate_stream=generate)
@@ -326,7 +326,7 @@ class ASRTests(unittest.IsolatedAsyncioTestCase):
         sent = []
         async def send(value):
             sent.append(value)
-        async def generate_stream(revision, dialogue, on_chunk):
+        async def generate_stream(revision, dialogue, on_chunk, **options):
             self.assertEqual(revision, 8)
             self.assertEqual(dialogue, [{'role': 'user', 'content': 'transcript'}])
             return {'status': 'ok', 'text': 'answer'}

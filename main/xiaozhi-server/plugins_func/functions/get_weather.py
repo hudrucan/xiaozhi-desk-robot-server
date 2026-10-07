@@ -23,31 +23,7 @@ def _resolve_location_alias(location: str, aliases) -> str:
     return normalized_aliases.get(location.casefold(), location)
 
 
-GET_WEATHER_FUNCTION_DESC = {
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": (
-            "Get current conditions and a multi-day forecast for a location. "
-            "Call this on every request for current weather or a forecast, even "
-            "if context or an earlier turn contains a previous result."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "Optional city or location name.",
-                },
-                "lang": {
-                    "type": "string",
-                    "description": "Optional ISO 639-1 language code for place names.",
-                },
-            },
-            "required": [],
-        },
-    },
-}
+from plugins_func.tool_schemas import GET_WEATHER_FUNCTION_DESC
 
 
 @register_function("get_weather", GET_WEATHER_FUNCTION_DESC, ToolType.SYSTEM_CTL)

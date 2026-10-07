@@ -11,6 +11,7 @@ from .llm_protocol import decode, encode
 from .nats_config import validate_worker_id
 
 PROTOCOL = 'xiaozhi-worker-tts-config-v1'
+DEFAULT_ERROR_RESPONSE = 'Sorry, something went wrong. Please try again.'
 DEFAULTS = {'type': 'sherpa', 'model': 'model.onnx', 'tokens': 'tokens.txt',
     'data_dir': 'espeak-ng-data', 'provider': 'cpu', 'num_threads': 2,
     'max_num_sentences': 1, 'speaker_id': 0, 'speed': 1.0, 'silence_scale': .2,
@@ -42,10 +43,17 @@ def fingerprint(options, files):
 
 def validate_bundle(value, node_id):
     keys = {'protocol', 'worker_id', 'revision', 'workers', 'model_root', 'options', 'files', 'fingerprint'}
-    if (not isinstance(value, dict) or set(value) not in (keys, keys | {'soundbank'})
+    if (not isinstance(value, dict) or not keys <= set(value)
+            or set(value) - keys - {'soundbank', 'system_error_response', 'session'}
             or value['protocol'] != PROTOCOL or value['worker_id'] != node_id
             or type(value['revision']) is not int or value['revision'] < 1):
         raise ValueError('Invalid TTS bundle identity')
+    response = value.get('system_error_response', DEFAULT_ERROR_RESPONSE)
+    if not isinstance(response, str) or not response.strip() or len(response.encode('utf-8')) > 2048:
+        raise ValueError('Invalid configured system error response')
+    if 'session' in value:
+        from .session_config import validate
+        validate(value['session'])
     validate_worker_id(node_id)
     nodes, options, files = value['workers'], value['options'], value['files']
     if (not isinstance(nodes, list) or not 1 <= len(nodes) <= 3

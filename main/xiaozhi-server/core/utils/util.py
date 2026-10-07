@@ -1,3 +1,4 @@
+from core.utils.wakeup_match import matches_wakeup_word, remove_punctuation_and_length
 import re
 import os
 import json
@@ -35,64 +36,8 @@ def write_json_file(file_path, data):
         json.dump(data, file, ensure_ascii=False, indent=4)
 
 
-def remove_punctuation_and_length(text):
-    # 全角符号和半角符号的Unicode范围
-    full_width_punctuations = (
-        "！＂＃＄％＆＇（）＊＋，－。／：；＜＝＞？＠［＼］＾＿｀｛｜｝～"
-    )
-    half_width_punctuations = r'!"#$%&\'()*+,-./:;<=>?@[\]^_`{|}~'
-    space = " "  # 半角空格
-    full_width_space = "　"  # 全角空格
-
-    # 去除全角和半角符号以及空格
-    result = "".join(
-        [
-            char
-            for char in text
-            if char not in full_width_punctuations
-            and char not in half_width_punctuations
-            and char not in space
-            and char not in full_width_space
-        ]
-    )
-
-    if result == "Yeah":
-        return 0, ""
-    return len(result), result
 
 
-def matches_wakeup_word(text, configured_wake_words):
-    """Match firmware wake labels, including legacy `A or B` forms."""
-    if not isinstance(text, str):
-        return False
-
-    if isinstance(configured_wake_words, str):
-        configured_wake_words = [configured_wake_words]
-    if not isinstance(configured_wake_words, (list, tuple, set)):
-        return False
-
-    def normalized_variants(value):
-        if not isinstance(value, str):
-            return set()
-        variants = [value]
-        variants.extend(
-            re.split(r"\s+(?:or|hoặc)\s+", value, flags=re.IGNORECASE)
-        )
-        return {
-            normalized.casefold()
-            for _, normalized in (
-                remove_punctuation_and_length(variant.strip())
-                for variant in variants
-                if variant.strip()
-            )
-            if normalized
-        }
-
-    configured_variants = set()
-    for wake_word in configured_wake_words:
-        configured_variants.update(normalized_variants(wake_word))
-
-    return bool(normalized_variants(text) & configured_variants)
 
 
 

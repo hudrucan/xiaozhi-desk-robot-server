@@ -8,25 +8,7 @@ if TYPE_CHECKING:
 TAG = __name__
 logger = setup_logging()
 
-handle_exit_intent_function_desc = {
-    "type": "function",
-    "function": {
-        "name": "handle_exit_intent",
-        "description": (
-            "End the current conversation and close the connection after the "
-            "farewell. Always call this tool instead of replying normally when "
-            "the user explicitly says goodbye or farewell, asks to end or close "
-            "the conversation, disconnect, or tells the assistant or robot to "
-            "go to sleep. Do not call it when ending the conversation is only "
-            "mentioned rather than requested."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-}
+from plugins_func.tool_schemas import handle_exit_intent_function_desc
 
 
 @register_function(

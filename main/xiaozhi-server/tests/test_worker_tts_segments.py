@@ -376,7 +376,7 @@ class VoiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await super().finish()
         async def generate(index, text):
             return SegmentResult(index, text, bytes(3840), 16000, 'deskb2x', 1)
-        async def llm(revision, dialogue, on_chunk):
+        async def llm(revision, dialogue, on_chunk, **options):
             await on_chunk('Hello, ', 0)
             await on_chunk('world.', 1)
             return {'status': 'ok', 'text': 'Hello, world.'}

@@ -10,38 +10,7 @@ if TYPE_CHECKING:
 TAG = __name__
 logger = setup_logging()
 
-GET_AIR_QUALITY_FUNCTION_DESC = {
-    "type": "function",
-    "function": {
-        "name": "get_air_quality",
-        "description": (
-            "Get current air quality, particle pollution, UV index, and a short "
-            "forecast summary for a location. Call this on every request for "
-            "current air quality, even if an earlier turn contains a previous "
-            "result."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "Optional city or location name.",
-                },
-                "lang": {
-                    "type": "string",
-                    "description": "Optional ISO 639-1 language code for place names.",
-                },
-                "forecast_hours": {
-                    "type": "integer",
-                    "description": "Optional forecast window from 1 to 168 hours.",
-                    "minimum": 1,
-                    "maximum": 168,
-                },
-            },
-            "required": [],
-        },
-    },
-}
+from plugins_func.tool_schemas import GET_AIR_QUALITY_FUNCTION_DESC
 
 
 @register_function(

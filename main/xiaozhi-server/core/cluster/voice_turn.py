@@ -2,6 +2,11 @@
 import asyncio
 import logging
 import time
+import copy
+
+from core.utils.wakeup_match import matches_wakeup_word, remove_punctuation_and_length
+from plugins_func.tool_schemas import handle_exit_intent_function_desc
+from .session_config import DEFAULTS as SESSION_DEFAULTS
 
 from .asr_client import ASRClient
 from .asr_protocol import MAX_AUDIO
@@ -23,6 +28,13 @@ class VoiceTurn:
         self.current_tts = None
         self.state, self.diagnostics = 'idle', diagnostics
         self.mcp = mcp
+        self.session_config = copy.deepcopy(tts_pool.bundle.get('session', SESSION_DEFAULTS)
+                                            if tts_pool is not None else SESSION_DEFAULTS)
+        self.close_after_chat = False
+        self.waking = False
+        from .tts_config import DEFAULT_ERROR_RESPONSE
+        self.error_response = (tts_pool.bundle.get('system_error_response', DEFAULT_ERROR_RESPONSE)
+                               if tts_pool is not None else DEFAULT_ERROR_RESPONSE)
         if tts_pool is not None and (send_audio is None or tts_pool.bundle['revision'] != revision):
             raise ValueError('TTS requires matching voice revision and audio sender')
 
@@ -36,6 +48,7 @@ class VoiceTurn:
     async def abort(self):
         previous_generation = self.generation
         self.generation += 1
+        self.waking = False
         tts = self.current_tts
         task, self.task = self.task, None
         self.queue = None
@@ -55,7 +68,13 @@ class VoiceTurn:
     async def start(self, mode):
         if mode not in ('manual', 'auto'):
             raise ValueError('Unsupported listening mode')
+        if self.waking and self.task is not None and not self.task.done():
+            # Firmware sends detect followed immediately by listen/start.
+            # The acknowledgement owns playback first; its stop permits the
+            # subsequent listen/start to admit ASR normally.
+            return
         await self.abort()
+        self.close_after_chat = False
         await self.emit({'type': 'stt', 'state': 'clear'})
         self.queue, self.ending = asyncio.Queue(64), False
         self.state = 'asr'
@@ -63,13 +82,53 @@ class VoiceTurn:
         self.task = asyncio.create_task(self.run(self.generation, self.queue, mode))
         self.task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
 
-    async def start_text(self, text):
+    async def start_text(self, text, *, wake=False):
         if not isinstance(text, str) or not text.strip() or len(text) > 512:
             raise ValueError('Invalid typed text')
         await self.abort()
+        self.close_after_chat = False
+        self.waking = wake
+        if (wake and not self.session_config['enable_greeting']
+                and matches_wakeup_word(text, self.session_config['wakeup_words'])):
+            self.waking = False
+            await self.emit({'type':'stt', 'state':'final', 'text':text})
+            await self.emit({'type':'tts', 'state':'stop'})
+            return
         self.state, self.ending = 'llm', True
-        self.task = asyncio.create_task(self.run(self.generation, None, None, text=text))
+        self.task = asyncio.create_task(self.run(self.generation, None, None, text=text, wake=wake))
         self.task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+
+    async def tools(self):
+        inventory = []
+        if self.mcp is not None:
+            try:
+                inventory = await self.mcp.tools()
+            except (WorkerRpcError, asyncio.TimeoutError):
+                pass  # Server functions remain usable without a device inventory.
+        inventory.append(copy.deepcopy(handle_exit_intent_function_desc))
+        return inventory
+
+    async def execute_tools(self, calls):
+        from . import tool_stream_protocol as wire
+        wire.calls(calls)
+        results = []
+        for call in calls:
+            if self.close_after_chat:
+                result = {'isError':True, 'error':'Conversation is ending; tool was not executed'}
+            elif call['name'] == 'handle_exit_intent':
+                if call['arguments']:
+                    result = {'isError':True, 'error':'Exit tool accepts no arguments'}
+                else:
+                    self.close_after_chat = True
+                    result = {'isError':False, 'action':'end_conversation',
+                              'text':self.session_config['exit_farewell']}
+            elif self.mcp is not None:
+                results.extend(await self.mcp.execute([call]))
+                continue
+            else:
+                result = {'isError':True, 'error':'Tool is not available in this session'}
+            results.append({'id':call['id'], 'result':result})
+        return results
 
     async def audio_frame(self, data):
         if self.task is None or self.task.done() or self.ending:
@@ -135,14 +194,24 @@ class VoiceTurn:
             attempts += 1
         raise asyncio.CancelledError
 
-    async def run(self, generation, queue, mode, text=None):
+    async def run(self, generation, queue, mode, text=None, wake=False):
         tts = None
         failed = False
+        llm_running = False
+        failure_spoken = False
         started = time.monotonic()
         try:
             stream = None
             if text is None:
-                text, stream = await self.transcribe(generation, queue, mode, started)
+                while True:
+                    text, stream = await self.transcribe(generation, queue, mode, started)
+                    if (generation == self.generation and mode == 'auto'
+                            and self.session_config['enable_wakeup_words_response_cache']
+                            and not self.session_config['enable_greeting']
+                            and matches_wakeup_word(text, self.session_config['wakeup_words'])):
+                        await self.emit({'type':'stt', 'state':'clear'})
+                        continue
+                    break
             if generation != self.generation:
                 return
             if self.diagnostics is not None and stream is not None:
@@ -151,8 +220,24 @@ class VoiceTurn:
             self.ending = True
             await self.emit({'type': 'stt', 'state': 'final', 'text': text})
             if text:
+                fixed_response = None
+                normalized = remove_punctuation_and_length(text)[1].casefold()
+                if normalized and any(normalized == remove_punctuation_and_length(cmd)[1].casefold()
+                                      for cmd in self.session_config['exit_commands']):
+                    # Explicit exit commands end immediately, as in app.py.
+                    self.close_after_chat = True
+                    return
+                if (wake or (queue is not None and self.session_config['enable_wakeup_words_response_cache'])):
+                    if matches_wakeup_word(text, self.session_config['wakeup_words']):
+                        fixed_response = self.session_config['wakeup_greeting'] if self.session_config['enable_greeting'] else ''
+                if fixed_response == '':
+                    self.waking = False
+                    await self.emit({'type':'tts', 'state':'stop'})
+                    return
                 self.state = 'llm'
-                self.record('llm_started')
+                llm_running = fixed_response is None
+                if llm_running:
+                    self.record('llm_started')
                 first_chunk = True
                 if self.tts_pool is not None:
                     from .tts_turn import TTSTurn
@@ -162,6 +247,10 @@ class VoiceTurn:
                         if value.get('state') == 'start':
                             self.state = 'tts'
                             self.record('tts_started', elapsed_ms=round((time.monotonic() - started) * 1000))
+                        if value.get('state') == 'stop' and self.close_after_chat:
+                            value = {**value, 'end_conversation':True}
+                        if value.get('state') == 'stop':
+                            self.waking = False
                         await self.emit(value)
                     async def send_tts(data):
                         if generation != self.generation:
@@ -182,20 +271,24 @@ class VoiceTurn:
                     # the unchanged full final text and text-only completion.
                     await self.emit({'type': 'llm', 'state': 'partial', 'seq': seq, 'text': value})
                 # The same immutable revision is required by both worker stages.
-                options = {}
-                if self.mcp is not None:
-                    tools = await self.mcp.tools()
+                if fixed_response is not None:
+                    await chunk(fixed_response, 0)
+                    result = {'status':'ok', 'text':fixed_response}
+                else:
+                    tools = await self.tools()
                     if generation != self.generation:
                         raise asyncio.CancelledError
-                    options = {'tools':tools, 'on_tools':self.mcp.execute, 'seconds':120}
-                call = self.rpc.generate_stream(self.revision, [{'role': 'user', 'content': text}], chunk, **options)
-                result = await tts.wait_llm(call) if tts else await call
+                    options = {'tools':tools, 'on_tools':self.execute_tools, 'seconds':120}
+                    call = self.rpc.generate_stream(self.revision, [{'role': 'user', 'content': text}], chunk, **options)
+                    result = await tts.wait_llm(call) if tts else await call
                 if result['status'] != 'ok':
                     raise WorkerRpcError(result['error'])
+                llm_running = False
                 if generation != self.generation:
                     return
-                self.record('llm_complete', worker_id=result.get('worker_id'),
-                            elapsed_ms=round((time.monotonic() - started) * 1000))
+                if fixed_response is None:
+                    self.record('llm_complete', worker_id=result.get('worker_id'),
+                                elapsed_ms=round((time.monotonic() - started) * 1000))
                 await self.emit({'type': 'llm', 'state': 'final', 'text': result['text']})
                 if tts:
                     await tts.finish()
@@ -209,8 +302,7 @@ class VoiceTurn:
                 self.record('turn_failed', code=error.code)
                 LOGGER.warning('Voice turn failed; core_id=%s session_id=%s code=%s',
                                self.rpc.core_id, self.session_id, error.code)
-                await self.emit({'type': 'stt', 'state': 'clear'})
-                await self.emit({'type': 'error', 'code': error.code, 'message': 'Voice turn unavailable; please start a new turn'})
+                failure_spoken = await self.report_failure(generation, error.code, tts, llm_running, started)
         except Exception:
             if generation == self.generation:
                 failed = True
@@ -219,8 +311,7 @@ class VoiceTurn:
                 LOGGER.warning('Voice turn failed; core_id=%s session_id=%s code=voice_turn_failed',
                                self.rpc.core_id, self.session_id)
                 try:
-                    await self.emit({'type': 'stt', 'state': 'clear'})
-                    await self.emit({'type': 'error', 'code': 'voice_turn_failed', 'message': 'Voice turn unavailable; please start a new turn'})
+                    failure_spoken = await self.report_failure(generation, 'voice_turn_failed', tts, llm_running, started)
                 except Exception:
                     pass
         finally:
@@ -235,7 +326,10 @@ class VoiceTurn:
                     self.current_tts = None
             if generation == self.generation:
                 try:
-                    if failed and tts is not None and tts.playback.started:
+                    self.waking = False
+                    if self.close_after_chat and (tts is None or not tts.playback.packet_count):
+                        await self.emit({'type':'tts', 'state':'stop', 'end_conversation':True})
+                    if failed and not failure_spoken and tts is not None and tts.playback.started:
                         # Playback failures still need terminal cleanup. An ASR
                         # expiry is recovered inside the existing listening task.
                         await self.emit({'type': 'tts', 'state': 'stop', 'end_conversation': True})
@@ -244,5 +338,36 @@ class VoiceTurn:
                     if not failed:
                         self.state = 'done'
                         self.record('turn_complete', elapsed_ms=round((time.monotonic() - started) * 1000))
+                    if self.close_after_chat:
+                        await self.emit({'type':'goodbye', 'reason':'exit_intent'})
                 except Exception:
                     pass
+
+    async def report_failure(self, generation, code, tts, llm_running, started):
+        """Speak a fixed configured failure without retrying the LLM or device calls.
+
+        Normal TTS stop lets firmware re-enter listening and request its next
+        ASR turn. A protocol error alone does not have that lifecycle.
+        """
+        await self.emit({'type': 'stt', 'state': 'clear'})
+        if llm_running and tts is not None and not tts.failure.done():
+            try:
+                if generation != self.generation:
+                    raise asyncio.CancelledError
+                # Reuse the response's ordered stream, including any partial
+                # speech already queued, as the normal app.py failure path does.
+                tts.feed('\n' + self.error_response)
+                await self.emit({'type': 'llm', 'state': 'final', 'text': self.error_response})
+                await tts.finish()
+                if generation != self.generation:
+                    raise asyncio.CancelledError
+                self.state = 'error'
+                self.record('tts_complete', elapsed_ms=round((time.monotonic() - started) * 1000))
+                return True
+            except Exception:
+                LOGGER.warning('Voice error response unavailable; core_id=%s session_id=%s',
+                               self.rpc.core_id, self.session_id)
+        if generation == self.generation:
+            await self.emit({'type': 'error', 'code': code,
+                             'message': 'Voice turn unavailable; please start a new turn'})
+        return False

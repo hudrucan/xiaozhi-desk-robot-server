@@ -16,6 +16,20 @@ MAX_JOBS = 2
 MAX_TOMBSTONES = 128
 
 
+def safe_error_metadata(error):
+    """Fixed diagnostic categories only; never provider messages or URLs."""
+    name = type(error).__name__
+    if name not in {'TimeoutError', 'ReadTimeout', 'ConnectTimeout', 'WriteTimeout',
+                    'PoolTimeout', 'ClientError', 'ServerError', 'APIError',
+                    'ValueError', 'TypeError', 'RuntimeError', 'ConnectionError'}:
+        name = 'OtherError'
+    try:
+        status = getattr(error, 'code', None)
+    except Exception:
+        status = None
+    return name, status if type(status) is int and 100 <= status <= 599 else 0
+
+
 class LLMWorker(Worker):
     def __init__(self, config, stop, bundle, provider):
         super().__init__(config, stop)
@@ -25,6 +39,8 @@ class LLMWorker(Worker):
         self.stopping = False
         self.activity = None
         self.streaming_jobs = set()
+        from .server_tools import ServerTools
+        self.server_tools = ServerTools(bundle.get('server_tools'))
 
     async def _start(self):
         await super()._start()
@@ -161,6 +177,7 @@ class LLMWorker(Worker):
 
     async def _execute_stream(self, reply_subject, value):
         stream, seq = None, 0
+        tool_rounds = 0
         wire = tooling if value['protocol'] == tooling.PROTOCOL else streaming
         try:
             seconds = max(0, (value['deadline_ms'] - time.time() * 1000) / 1000)
@@ -170,11 +187,16 @@ class LLMWorker(Worker):
                 messages = ([{'role': 'system', 'content': self.bundle['prompt']}]
                     if self.bundle['prompt'] else []) + value['dialogue']
                 total, digest = 0, hashlib.sha256()
-                stream = (self.provider.response_tools_async(messages, value['tools']) if wire is tooling
+                inventory = value.get('tools', []) + (self.server_tools.tools() if wire is tooling else [])
+                if wire is tooling:
+                    tooling.tools(inventory)  # Reject collisions; never shadow device declarations.
+                local_names = {tool['function']['name'] for tool in self.server_tools.tools()}
+                stream = (self.provider.response_tools_async(messages, inventory) if wire is tooling
                           else self.provider.response_text_async(messages))
                 next_results = None
                 tool_rounds, tool_count = 0, 0
                 while True:
+                    terminal_response = False
                     try:
                         part = await stream.asend(next_results)
                     except StopAsyncIteration:
@@ -189,12 +211,37 @@ class LLMWorker(Worker):
                         if tool_rounds > tooling.MAX_ROUNDS or tool_count > tooling.MAX_CALLS:
                             await self._stream_event(reply_subject, value, 'error', seq, error='llm_tool_limit')
                             return
-                        known = {tool['function']['name'] for tool in value['tools']}
+                        known = {tool['function']['name'] for tool in inventory}
                         if any(call['name'] not in known for call in part['calls']):
                             raise ValueError('Unadvertised provider tool')
-                        next_results = await self._stream_event(reply_subject, value, 'tools', seq, calls=part['calls'])
-                        seq += 1
-                        continue
+                        next_results = []
+                        # Preserve mixed server/device call order. Never retry a
+                        # tool after uncertain delivery or a provider failure.
+                        for call in part['calls']:
+                            if terminal_response:
+                                result = {'id':call['id'], 'result':{'isError':True,
+                                    'error':'Conversation is ending; tool was not executed'}}
+                            elif call['name'] in local_names:
+                                LOGGER.info('Server tool started; worker_id=%s', self.config.worker_id)
+                                result = await self.server_tools.execute(call)
+                                LOGGER.info('Server tool complete; worker_id=%s success=%s',
+                                            self.config.worker_id, not result['result']['isError'])
+                            else:
+                                result = (await self._stream_event(reply_subject, value, 'tools', seq, calls=[call]))[0]
+                                seq += 1
+                            next_results.append(result)
+                            if (call['name'] == 'handle_exit_intent'
+                                    and result['result'].get('action') == 'end_conversation'
+                                    and result['result'].get('isError') is False):
+                                farewell = result['result'].get('text')
+                                if not isinstance(farewell, str) or not farewell.strip() or len(farewell.encode()) > 2048:
+                                    raise ValueError('Invalid exit response')
+                                terminal_response = True
+                        if not terminal_response:
+                            continue
+                        # Exit is an explicit direct-response tool contract,
+                        # matching app.py. Do not ask the model to reinterpret it.
+                        part = farewell
                     if not isinstance(part, str):
                         raise ValueError('Invalid provider chunk')
                     encoded = part.encode('utf-8')
@@ -209,6 +256,8 @@ class LLMWorker(Worker):
                             return
                         await self._stream_event(reply_subject, value, 'chunk', seq, text=text)
                         seq += 1
+                    if terminal_response:
+                        break
                 if not total:
                     await self._stream_event(reply_subject, value, 'error', seq, error='llm_empty_response')
                 else:
@@ -221,7 +270,9 @@ class LLMWorker(Worker):
             # partial output are never included in logs or terminal failures.
             code = ('llm_expired' if isinstance(error, asyncio.TimeoutError) else
                     'llm_stream_unavailable' if isinstance(error, ConnectionError) else 'llm_provider_failed')
-            LOGGER.warning('LLM stream failed; worker_id=%s code=%s', self.config.worker_id, code)
+            kind, status = safe_error_metadata(error)
+            LOGGER.warning('LLM stream failed; worker_id=%s code=%s exception_type=%s http_status=%d tool_rounds=%d',
+                           self.config.worker_id, code, kind, status, tool_rounds)
             try:
                 await self._stream_event(reply_subject, value, 'error', seq, error=code)
             except Exception:

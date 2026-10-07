@@ -23,7 +23,7 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         self.worker = ASRService(self.bus,'deskb2x',{'revision':8},Pipeline)
         await self.worker.start()
         self.generated = []
-        async def generate_stream(revision, dialogue, on_chunk):
+        async def generate_stream(revision, dialogue, on_chunk, **options):
             self.generated.append((revision,dialogue))
             await on_chunk('ans', 0)
             await on_chunk('wer', 1)
@@ -57,7 +57,6 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         ws,hello=await self.connect()
         self.assertEqual(hello['capabilities'],['voice_text'])
         self.assertFalse(hello['conversation_runtime'])
-        await ws.send_json({'type':'listen','state':'detect','text':'wake word'})
         await ws.send_json({'type':'listen','state':'start','mode':'manual'})
         payload=b'fixture-opus'
         await ws.send_bytes(bytes(12)+len(payload).to_bytes(4,'big')+payload)
@@ -167,6 +166,97 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.02)
         await ws.send_json({'type':'abort'})
         self.assertEqual((await ws.receive_json(timeout=1))['state'],'clear')
+        self.assertFalse(self.generated)
+        self.assertFalse(self.worker.turns)
+        await ws.close()
+
+    async def test_failed_llm_speaks_error_then_accepts_next_asr_on_same_socket(self):
+        from aiohttp import WSMsgType
+        from core.cluster.tts_client import SegmentResult
+        from core.cluster.tts_turn import TTSTurn
+        from core.cluster.worker_rpc import WorkerRpcError
+        from test_voice_error_recovery import Playback
+        from test_worker_tts_segments import bundle
+        async def generate(index, text):
+            return SegmentResult(index, text, bytes(3840), 16000, 'deskb2x', 1)
+        async def fail(*_, **options):
+            raise WorkerRpcError('llm_provider_failed')
+        self.rpc.generate_stream = fail
+        self.core.tts_pool = SimpleNamespace(bundle=bundle(), generate=generate)
+        with patch('core.cluster.tts_turn.TTSTurn', side_effect=
+                   lambda pool, emit, send: TTSTurn(pool, emit, send, playback_factory=Playback)):
+            ws, _ = await self.connect()
+            await ws.send_json({'type': 'listen', 'state': 'detect', 'input_mode': 'text', 'text': 'Fixture'})
+            messages, packets = [], []
+            while True:
+                frame = await ws.receive(timeout=2)
+                if frame.type == WSMsgType.BINARY:
+                    packets.append(frame.data)
+                    continue
+                message = frame.json()
+                messages.append(message)
+                if message.get('type') == 'tts' and message.get('state') == 'stop':
+                    # Same transition the firmware makes after spoken playback.
+                    await ws.send_json({'type': 'listen', 'state': 'start', 'mode': 'auto'})
+                    break
+            async with asyncio.timeout(2):
+                while not self.worker.turns:
+                    await asyncio.sleep(.01)
+            self.assertTrue(packets)
+            self.assertFalse(any(m.get('end_conversation') or m['type'] == 'error' for m in messages))
+            voice = next(iter(self.core.voices.values()))
+            self.assertEqual(voice.state, 'asr')
+            self.assertFalse(voice.task.done())
+            self.assertFalse(ws.closed)
+            await ws.close()
+
+
+    async def test_native_wake_detect_then_listen_keeps_ack_and_reopens_asr(self):
+        from aiohttp import WSMsgType
+        from core.cluster.tts_client import SegmentResult
+        from core.cluster.tts_turn import TTSTurn
+        from test_voice_error_recovery import Playback
+        from test_worker_tts_segments import bundle
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def generate(index, text):
+            entered.set()
+            await release.wait()
+            return SegmentResult(index, text, bytes(3840), 16000, 'deskb2x', 1)
+        self.core.tts_pool = SimpleNamespace(bundle=bundle(), generate=generate)
+        with patch('core.cluster.tts_turn.TTSTurn', side_effect=
+                   lambda pool, emit, send: TTSTurn(pool, emit, send, playback_factory=Playback)):
+            ws, _ = await self.connect()
+            await ws.send_json({'type':'listen', 'state':'detect', 'text':'Hello Xiaozhi'})
+            await asyncio.wait_for(entered.wait(), 1)
+            await ws.send_json({'type':'listen', 'state':'start', 'mode':'auto'})
+            await asyncio.sleep(.02)
+            self.assertFalse(self.worker.turns)
+            release.set()
+            while True:
+                frame = await ws.receive(timeout=2)
+                if frame.type == WSMsgType.BINARY:
+                    continue
+                message = frame.json()
+                if message.get('type') == 'tts' and message.get('state') == 'stop':
+                    self.assertFalse(message.get('end_conversation', False))
+                    break
+            await ws.send_json({'type':'listen', 'state':'start', 'mode':'auto'})
+            async with asyncio.timeout(1):
+                while not self.worker.turns:
+                    await asyncio.sleep(.01)
+            self.assertFalse(self.generated)
+            await ws.close()
+
+    async def test_direct_exit_sends_goodbye_without_provider_execution(self):
+        ws, _ = await self.connect()
+        await ws.send_json({'type':'listen', 'state':'detect', 'input_mode':'text', 'text':'Quit!'})
+        messages = []
+        while True:
+            message = await ws.receive_json(timeout=1)
+            messages.append(message)
+            if message['type'] == 'goodbye':
+                break
+        self.assertTrue(any(m.get('end_conversation') is True for m in messages))
         self.assertFalse(self.generated)
         self.assertFalse(self.worker.turns)
         await ws.close()
