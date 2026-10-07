@@ -17,8 +17,8 @@
   --green: #81c995;
   --red: #e17b6d;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
-  --radius: 18px;
-  --radius-small: 11px;
+  --radius: 24px;
+  --radius-small: 14px;
   --sidebar: 240px;
 }
 
@@ -100,7 +100,7 @@ button, select { cursor: pointer; }
   gap: 12px;
   padding: 11px 12px;
   border: 1px solid transparent;
-  border-radius: 11px;
+  border-radius: var(--radius-small);
   color: var(--muted);
   text-decoration: none;
   font-size: 14px;
@@ -370,7 +370,7 @@ main { grid-column: 2; min-width: 0; }
 .settings-group > header p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
 .settings-group > header > span { min-width: 27px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--faint); font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; }
 .settings-group > .form-grid { padding: 15px; }
-.settings-group .field-card, .provider-workspace .field-card { border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16); }
+.settings-group .field-card, .provider-workspace .field-card { border-radius: var(--radius-small); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16); }
 .field-card { padding: 19px; }
 /* Cluster API key input follows the provider field grid and button palette. */
 .provider-fields .secret-card { grid-column: span 2; padding: 16px 19px; }
@@ -455,7 +455,7 @@ main { grid-column: 2; min-width: 0; }
 input, select, textarea {
   width: 100%;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-small);
   outline: none;
   background: #100d09;
   color: var(--text);
@@ -511,7 +511,7 @@ input::placeholder, textarea::placeholder { color: #5d5549; }
 .memory-entry footer > div { display: flex; gap: 7px; }
 .memory-entry .button { min-height: 33px; padding: 0 11px; font-size: 10px; }
 
-.button { min-height: 40px; padding: 0 15px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface-raised); font-size: 12px; font-weight: 650; transition: 150ms ease; }
+.button { min-height: 40px; padding: 0 15px; border: 1px solid var(--border); border-radius: var(--radius-small); color: var(--text); background: var(--surface-raised); font-size: 12px; font-weight: 650; transition: 150ms ease; }
 .button:hover:not(:disabled) { transform: translateY(-1px); border-color: var(--border-bright); }
 .button:disabled { cursor: not-allowed; opacity: 0.38; }
 .button.primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
