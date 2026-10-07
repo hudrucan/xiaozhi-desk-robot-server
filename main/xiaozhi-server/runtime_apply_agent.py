@@ -125,13 +125,14 @@ class Installer:
     def store(self):
         from config.bootstrap import load_bootstrap
         from config.google_drive_config import GoogleDriveConfigStore
-        from config.cloud_secrets import LocalSecretStore
+        from core.cluster.runtime_apply_secrets import CacheSecrets
         bootstrap = load_bootstrap(self.source / 'data/bootstrap.yaml')
         if bootstrap['node_id'] != self.config['node_id']:
             raise ValueError('Local Cloud identity differs')
         return GoogleDriveConfigStore(bootstrap, transport=object(), default_path=str(self.source / 'config.yaml'),
             cache_dir=self.source / 'data/cloud-config',
-            secret_provider=LocalSecretStore(bootstrap['node_id'], self.source / 'data/node-secrets'))
+            secret_provider=CacheSecrets(bootstrap['node_id'], self.source / 'data/node-secrets',
+                pwd.getpwnam(self.config['control_plane_user']).pw_uid))
 
     def require_revision(self, revision):
         from config.cloud_layers import shared_cluster

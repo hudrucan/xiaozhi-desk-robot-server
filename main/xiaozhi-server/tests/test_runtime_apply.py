@@ -217,6 +217,42 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError): wire.safe_node({**node, 'key': 'private-fixture'}, NODES[0])
 
 
+class ReadOnlyKeyTests(unittest.TestCase):
+    def test_private_atomic_snapshot_resolves_selected_key_without_chmod_lock_or_write(self):
+        from core.cluster.runtime_apply_secrets import CacheSecrets
+        with tempfile.TemporaryDirectory() as directory:
+            reader = CacheSecrets(NODES[0], Path(directory).resolve(), os.getuid())
+            content = json.dumps({'node_id': NODES[0], 'values': {'LLM': 'fixture-private-value'}}).encode()
+            reader.path.write_bytes(content)
+            reader.path.chmod(0o600)
+            with patch('os.chmod', side_effect=AssertionError('Unexpected credential permission mutation')):
+                self.assertEqual(reader.resolve({'LLM': {'api_key': '${secret:LLM}'}}),
+                                 {'LLM': {'api_key': 'fixture-private-value'}})
+                with self.assertRaises(ValueError): reader.put_many({'NEW': 'fixture'})
+            self.assertEqual(reader.path.read_bytes(), content)
+            # Already prepared readers retain an immutable reference snapshot.
+            reader.path.write_bytes(b'invalid-new-file')
+            self.assertEqual(reader.get('LLM'), 'fixture-private-value')
+            with self.assertRaises(ValueError): reader.get('MISSING')
+
+    def test_identity_public_permissions_symlink_and_duplicate_fields_fail_closed(self):
+        from core.cluster.runtime_apply_secrets import CacheSecrets
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            reader = CacheSecrets(NODES[0], root, os.getuid())
+            reader.path.write_text(json.dumps({'node_id': NODES[1], 'values': {}}))
+            reader.path.chmod(0o600)
+            with self.assertRaises(ValueError): reader.get('LLM')
+            reader.path.write_text('{"node_id":"deskb1x","node_id":"deskb1x","values":{}}')
+            with self.assertRaises(ValueError): reader.get('LLM')
+            reader.path.write_text(json.dumps({'node_id': NODES[0], 'values': {'LLM': 'fixture'}}))
+            reader.path.chmod(0o644)
+            with self.assertRaises(ValueError): reader.get('LLM')
+            target = root / 'target'; reader.path.rename(target)
+            reader.path.symlink_to(target)
+            with self.assertRaises(ValueError): reader.get('LLM')
+
+
 class BootGuardTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
