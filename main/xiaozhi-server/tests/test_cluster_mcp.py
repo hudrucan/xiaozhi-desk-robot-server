@@ -162,6 +162,16 @@ class ToolStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.bus.entries),2)
         self.assertFalse(self.rpc.streams)
         self.assertFalse(self.worker.jobs)
+    async def test_duplicate_tool_event_never_repeats_device_execution(self):
+        publish=self.bus.publish
+        async def duplicate(subject,data,reply=''):
+            await publish(subject,data,reply)
+            if json.loads(data).get('kind')=='tools':
+                await publish(subject,data,reply)
+        self.bus.publish=duplicate
+        with self.assertRaises(WorkerRpcError):await self.call()
+        self.assertLessEqual(len(self.called),1)
+
     async def test_bad_result_owner_and_revision_fail_without_continuation(self):
         async def wrong(calls):return [{'id':'wrong','result':{}}]
         with self.assertRaises(WorkerRpcError):await self.call(on_tools=wrong)
