@@ -97,6 +97,10 @@ def validate_blank_secret_preservation(patch, before, after):
     walk(patch, before, after)
 
 
+class MissingSecret(ValueError):
+    """A validated local dataset lacks the requested optional credential."""
+
+
 class SecretProvider(ABC):
     """Settings supplies values; only references cross the cloud boundary."""
 
@@ -165,7 +169,7 @@ class LocalSecretStore(SecretProvider):
             values = self._read()
             if name not in values:
                 # Neither values nor reference names are included in errors.
-                raise ValueError("Required node-local secret is unavailable")
+                raise MissingSecret("Required node-local secret is unavailable")
             return values[name]
 
     def export_dataset(self):

@@ -136,3 +136,7 @@ Verify the configured wake acknowledgement, a date/time question, a configured
 weather/search request, and a natural-language goodbye. After an induced model
 failure, confirm the spoken error and the next ASR turn on the same connection.
 A direct `exit`/`quit` should return to idle without a model request.
+
+A missing node-local Web Search key leaves Web Search unadvertised; it does not block voice runtime activation or the other built-in functions. Invalid credential datasets still fail export. Store the configured search key on all nodes before enabling search.
+
+In standalone Settings, Web Search API key uses the same **Save to 3 nodes** operation as Gemini: encrypted peer storage acknowledgements precede Cloud CAS of the reference. Save ordinary configuration edits first, save the key, then apply runtime. Only the configured Tavily/Metaso `plugins.web_search.api_key` is supported; unrelated plugin credentials are not enabled.

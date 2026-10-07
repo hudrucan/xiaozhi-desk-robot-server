@@ -267,7 +267,8 @@ class GoogleDriveConfigStore(ConfigStore):
         """Explicit key rotation owns only the named field on deployed members."""
         obj = copy.deepcopy(self._desired_view()["payload"]["object"])
         if (not shared_cluster(obj) or not isinstance(reference, str) or not REFERENCE.fullmatch(reference)
-                or group not in {"ASR", "LLM", "VLLM", "TTS", "Memory", "Intent"}
+                or (group not in {"ASR", "LLM", "VLLM", "TTS", "Memory", "Intent"}
+                    and (group, provider) != ("plugins", "web_search"))
                 or field != "api_key" or not isinstance(provider, str)
                 or not isinstance(nodes, (tuple, list)) or len(nodes) != 3 or len(set(nodes)) != 3
                 or not set(nodes) <= set(obj["layers"]["nodes"])):
@@ -275,7 +276,8 @@ class GoogleDriveConfigStore(ConfigStore):
         repo_defaults = self._repo_defaults()
         for node_id in nodes:
             effective = merge_configs(*resolve_layers(obj, node_id, repo_defaults))
-            if field not in effective.get(group, {}).get(provider, {}):
+            if (field not in effective.get(group, {}).get(provider, {})
+                    or (group == "plugins" and effective["plugins"][provider].get("provider") not in {"tavily", "metaso"})):
                 raise ValueError("Provider credential is not configured for a deployed member")
             overrides = obj["layers"]["nodes"][node_id]["overrides"]
             updated = merge_configs(overrides, {group: {provider: {field: reference}}})

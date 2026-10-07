@@ -6,6 +6,7 @@ belong to the private immutable worker bundle, never request payloads.
 import asyncio
 import copy
 import json
+import logging
 import time
 from collections import OrderedDict
 from datetime import datetime
@@ -76,7 +77,15 @@ def export_config(config, secrets):
         if 'provider' in options:
             options['provider'] = options['provider'].strip().lower()
         if name == 'web_search' and options.get('api_key'):
-            options = secrets.resolve({'plugins': {name: options}})['plugins'][name]
+            from config.cloud_secrets import MissingSecret
+            try:
+                options = secrets.resolve({'plugins': {name: options}})['plugins'][name]
+            except MissingSecret:
+                # An optional search credential must not disable voice or
+                # unrelated tools. Invalid datasets still fail export.
+                logging.getLogger(__name__).warning(
+                    'Web search unavailable; optional credential is not stored locally')
+                continue
         plugins[name] = options
     return validate_config({'functions':list(plugins), 'plugins':plugins})
 

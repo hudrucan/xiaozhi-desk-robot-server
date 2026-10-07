@@ -17,7 +17,7 @@ GROUPS = {'ASR', 'LLM', 'VLLM', 'TTS', 'Memory', 'Intent'}
 
 
 def validate_target(group, provider, field):
-    if (group not in GROUPS or not isinstance(provider, str)
+    if ((group not in GROUPS and (group, provider) != ('plugins', 'web_search')) or not isinstance(provider, str)
             or not re.fullmatch('[A-Za-z0-9_-]{1,192}', provider) or field != 'api_key'):
         raise ValueError('Unsupported provider credential field')
 
@@ -65,7 +65,10 @@ class SecretProvisioning:
             raise ValueError('Provisioning requires matching shared V2 membership')
         defaults = self.store._repo_defaults()
         effective = merge_configs(*resolve_layers(obj, self.node, defaults))
-        if effective.get('selected_module', {}).get(group) != provider or field not in effective.get(group, {}).get(provider, {}):
+        selected = ((group, provider) == ('plugins', 'web_search')
+                    and effective.get('plugins', {}).get('web_search', {}).get('provider') in {'tavily', 'metaso'}
+                    if group == 'plugins' else effective.get('selected_module', {}).get(group) == provider)
+        if not selected or field not in effective.get(group, {}).get(provider, {}):
             raise ValueError('Credential must belong to the currently selected provider')
         return obj, defaults
 

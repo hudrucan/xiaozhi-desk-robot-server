@@ -100,6 +100,20 @@ class ServerFunctionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):validate_config({'functions':['web_search'], 'plugins':{
             'web_search':{'api_key':'${secret:key}'}}})
 
+    def test_missing_optional_search_secret_omits_search_without_hiding_invalid_dataset(self):
+        from config.cloud_secrets import MissingSecret
+        config = {'selected_module':{'Intent':'tools'},
+            'Intent':{'tools':{'type':'function_call','functions':['get_current_datetime','web_search']}},
+            'plugins':{'web_search':{'provider':'tavily','api_key':'${secret:fixture}'}}}
+        resolver = SimpleNamespace(resolve=lambda value: (_ for _ in ()).throw(MissingSecret('private fixture')))
+        with self.assertLogs('core.cluster.server_tools', level='WARNING') as logs:
+            value = export_config(config, resolver)
+        self.assertEqual(value['functions'], ['get_current_datetime'])
+        self.assertNotIn('private fixture', str(logs.output))
+        resolver.resolve = lambda value: (_ for _ in ()).throw(ValueError('Invalid dataset'))
+        with self.assertRaises(ValueError):
+            export_config(config, resolver)
+
     def test_shared_tool_modules_have_no_config_or_provider_import_side_effects(self):
         script = "import sys; import core.cluster.server_tools, core.utils.wakeup_match, plugins_func.tool_schemas; assert not any(n.startswith(('config.logger', 'core.providers', 'core.connection', 'google.genai')) for n in sys.modules)"
         result = subprocess.run([sys.executable,'-c',script],capture_output=True,text=True,timeout=5)

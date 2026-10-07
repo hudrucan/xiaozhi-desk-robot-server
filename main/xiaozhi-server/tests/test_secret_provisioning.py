@@ -124,6 +124,36 @@ class ProvisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(name,json.dumps(status));self.assertNotIn(VALUE,json.dumps(status))
         for content in self.fixture.drive.files.values():self.assertNotIn(VALUE.encode(),content)
 
+    async def test_search_key_uses_all_node_ack_cas_and_preserves_provider_keys(self):
+        obj=json.loads(self.fixture.drive.files[self.fixture.drive.manifest['config']['file_id']])
+        obj['layers']['cluster'].setdefault('plugins', {})['web_search']={
+            'provider':'tavily','api_key':'','max_results':3}
+        self.fixture.drive.publish_object(obj,2)
+        before=copy.deepcopy(obj)
+        result=await self.service.provision('plugins','web_search','api_key','fixture-search-key',2)
+        self.assertTrue(result['committed']);self.assertEqual(result['revision'],3)
+        updated=json.loads(self.fixture.drive.files[self.fixture.drive.manifest['config']['file_id']])
+        self.assertEqual(updated['layers']['cluster'],before['layers']['cluster'])
+        references=[]
+        for node,store in self.stores.items():
+            effective=merge_configs(*resolve_layers(updated,node,store._repo_defaults()))
+            reference=effective['plugins']['web_search']['api_key']
+            references.append(reference)
+            self.assertEqual(store.secrets.get(REFERENCE.fullmatch(reference)[1]),'fixture-search-key')
+            self.assertEqual(effective['plugins']['web_search']['max_results'],3)
+        self.assertEqual(len(set(references)),1)
+        await self.service.reconciliation.reconcile()
+        status=await self.service.status('plugins','web_search','api_key')
+        self.assertTrue(status['ready']);self.assertTrue(status['consistent'])
+        self.assertNotIn('fixture-search-key',json.dumps(status))
+        self.offline.add('node-c')
+        with self.assertRaises(ProvisionIncomplete):
+            await self.service.provision('plugins','web_search','api_key','fixture-rotated-search-key',3)
+        self.assertEqual(self.fixture.drive.manifest['revision'],3)
+        for group,provider,field in [('plugins','arbitrary','api_key'),('plugins','web_search','token')]:
+            with self.assertRaises(ValueError):
+                await self.service.provision(group,provider,field,'fixture-key',3)
+
     async def test_partial_node_failure_keeps_old_cloud_reference_and_all_active_values(self):
         before=copy.deepcopy(self.fixture.drive.manifest)
         existing={node:store.secrets.export_dataset()['values'] for node,store in self.stores.items()}

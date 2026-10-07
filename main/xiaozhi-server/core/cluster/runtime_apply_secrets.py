@@ -5,7 +5,7 @@ import os
 import stat
 from pathlib import Path
 
-from config.cloud_secrets import REFERENCE, SecretProvider
+from config.cloud_secrets import REFERENCE, SecretProvider, MissingSecret
 
 MAX_BYTES = 4 * 1024 * 1024
 
@@ -41,7 +41,7 @@ class CacheSecrets(SecretProvider):
             # reference. A single immutable read needs no write lock or chmod.
             self.values = value['values']
         if name not in self.values:
-            raise ValueError('Required node-local secret is unavailable')
+            raise MissingSecret('Required node-local secret is unavailable')
         return self.values[name]
 
     def put_many(self, values):
