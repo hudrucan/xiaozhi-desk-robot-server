@@ -138,6 +138,8 @@ class CoordinationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.member.job['state'], 'failed')
         actions = [action for _, action in self.events]
         self.assertNotIn('core', actions)
+        self.assertEqual(self.member.job['node_id'], NODES[1])
+        self.assertEqual(self.member.job['phase'], 'worker')
         self.assertLess(max(i for i, a in enumerate(actions) if a == 'old_worker'), actions.index('old_core'))
         for local in self.agents.values(): self.assertEqual((local.worker, local.core), (8, 8))
     async def test_cloud_drift_before_install_restores_without_new_activation(self):

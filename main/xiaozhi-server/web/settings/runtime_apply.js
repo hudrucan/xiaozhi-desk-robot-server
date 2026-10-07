@@ -34,7 +34,7 @@ function render() {
   let text = "Save changes first, then Apply runtime. Conversations pause while voice workers restart. Settings and MQTT stay available.";
   if (busy) text = `${phaseLabels[job?.phase] || "Applying runtime"}${job?.node_id ? ` · ${job.node_id}` : ""}. Keep all three nodes powered on.`;
   else if (status?.recovery_required) text = "An interrupted apply needs recovery. Recover runtime restores the previous bundles before another apply.";
-  else if (job?.state === "failed") text = "Apply did not complete. Previous runtime restored. Check configuration, local keys and installed models before retrying.";
+  else if (job?.state === "failed") text = `Apply did not complete${job.node_id ? ` on ${job.node_id}` : ""} (${phaseLabels[job.phase] || "verification"}). Previous runtime restored. Check configuration, local keys and installed models before retrying.`;
   else if (job?.state === "rolled_back") text = "Previous runtime restored. You can now apply the saved configuration.";
   else if (applied) text = "All three voice workers and conversation cores report the saved revision. New conversations use this configuration.";
   $("#runtimeApplyNote").textContent = text;

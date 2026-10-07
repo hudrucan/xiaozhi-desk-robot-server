@@ -227,6 +227,7 @@ class RuntimeApply:
                 raise ValueError('Final runtime revisions differ')
             self.job.update(state='complete', phase='verified', node_id=None, code=None)
         except Exception:
+            failed_phase, failed_node = self.job['phase'], self.job['node_id']
             # A lost prepare response may still have acquired a durable lock.
             # Discover only this operation; never release another caller's lock.
             for node in nodes:
@@ -238,10 +239,10 @@ class RuntimeApply:
                     pass
             try:
                 await self._rollback(prepared, operation, revision, prepared_only=not mutated)
-                self.job.update(state='failed', phase='rolled_back', node_id=None, code='runtime_apply_failed')
+                self.job.update(state='failed', phase=failed_phase, node_id=failed_node, code='runtime_apply_failed')
             except Exception:
                 self.job.update(state='recovery_required', code='runtime_recovery_required')
-            LOGGER.warning('Runtime apply did not complete; inspect safe per-node apply status')
+            LOGGER.warning('Runtime apply did not complete; node_id=%s phase=%s', failed_node, failed_phase)
 
     async def stop(self):
         self.stopping = True
