@@ -61,11 +61,14 @@ def calls(value):
 def request(data):
     v = rpc.decode(data, MAX_REQUEST_BYTES)
     expected = {'protocol','request_id','cancel_token','core_id','revision','deadline_ms','dialogue','tools'}
-    if (not isinstance(v, dict) or set(v) != expected or v['protocol'] != PROTOCOL
+    if (not isinstance(v, dict) or not expected <= set(v) or set(v) - expected - {'memory_context'} or v['protocol'] != PROTOCOL
             or type(v['revision']) is not int or v['revision'] < 1
             or type(v['deadline_ms']) is not int
             or v['deadline_ms'] > int(time.time()*1000) + (MAX_SECONDS+1)*1000):
         raise ValueError('Invalid tool stream request')
+    if 'memory_context' in v and (not isinstance(v['memory_context'], str)
+            or len(v['memory_context'].encode()) > 10000):
+        raise ValueError('Invalid Memory context')
     rpc.identity(v['request_id']); rpc.identity(v['cancel_token'])
     validate_worker_id(v['core_id']); rpc.dialogue(v['dialogue']); tools(v['tools'])
     return v

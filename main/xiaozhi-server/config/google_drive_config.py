@@ -492,7 +492,7 @@ class GoogleDriveConfigStore(ConfigStore):
                 memory_revision = None
             else:
                 payload = memory.preflight(source_memory=source_memory)
-                if payload["manifest"]["writer_node_id"] != self.bootstrap["node_id"]:
+                if payload["manifest"].get("writer_node_id") != self.bootstrap["node_id"]:
                     raise ConfigUnavailable("Cloud Memory writer differs; provisioning cannot claim readiness")
                 memory_revision = payload["manifest"]["revision"]
             return snapshot["payload"]["manifest"]["revision"], memory_revision, effective

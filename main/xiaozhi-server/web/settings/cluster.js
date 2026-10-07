@@ -24,6 +24,10 @@ export function renderCluster() {
     ["Configured VIP", cluster.ingress?.configured_vip],
     ["Local Soundbank cache", cluster.soundbank?.state],
     ["Local Soundbank revision", cluster.soundbank?.synced_revision],
+    ["Memory", cluster.memory?.state],
+    ["Memory revision", cluster.memory?.memory_revision],
+    ["Memory sync", cluster.memory?.sync_state],
+    ["Memory write mode", cluster.memory?.write_mode],
   ];
   const soundbank = state.clusterSoundbank;
   if (soundbank && soundbank.desired_revision === config.desired_revision) {

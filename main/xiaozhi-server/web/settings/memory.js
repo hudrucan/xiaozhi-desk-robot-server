@@ -1,5 +1,32 @@
 import { $, escapeHtml, state, toast } from "./shared.js";
 
+let clusterTimer = null;
+let clusterLoading = false;
+let clusterActive = false;
+
+async function loadMemoryCluster() {
+  if (!state.controlPlane || clusterLoading || !clusterActive) return;
+  clusterLoading = true;
+  try {
+    const response = await fetch("/api/cluster/memory", { cache: "no-store" });
+    if (!response.ok) throw new Error();
+    const payload = await response.json();
+    $("#memoryClusterState").textContent = `Shared Memory: ${payload.ready_nodes}/${payload.expected_nodes} nodes at revision ${payload.memory_revision ?? "—"} · ${payload.state}`;
+  } catch {
+    $("#memoryClusterState").textContent = "Memory cluster sync status unavailable.";
+  } finally { clusterLoading = false; }
+}
+
+export function setMemoryActive(active) {
+  clusterActive = active;
+  clearInterval(clusterTimer);
+  clusterTimer = null;
+  if (active && state.controlPlane) {
+    loadMemoryCluster();
+    clusterTimer = setInterval(loadMemoryCluster, 5000);
+  }
+}
+
 const DEFAULT_TYPES = [
   "fact",
   "preference",
@@ -127,8 +154,13 @@ export function renderMemory() {
   ["#memoryContent", "#memoryType", "#memoryProject", "#memoryImportance", "#memoryPinned", "#memoryCreateButton", "#memorySearch"].forEach((selector) => {
     $(selector).disabled = !ready || state.memoryLoading;
   });
+  if (state.controlPlane) {
+    $("#memoryScopes").innerHTML = (memory.scopes || []).map((scope) =>
+      `<option value="${escapeHtml(scope)}"></option>`).join("");
+    $("#memoryScope").disabled = state.memoryLoading;
+  }
   $("#memoryContext").textContent = ready
-    ? `${memory.scope_source === "storage" ? "Stored scope" : "Device scope"} ${memory.device_id || "active"} · recall ${memory.recall_enabled ? "on" : "off"} · ${memory.max_entries} max`
+    ? `${state.controlPlane ? `Shared Cloud · revision ${memory.memory_revision} · ${memory.sync_state} · ` : ""}${memory.scope_source === "storage" ? "Stored scope" : "Device scope"} ${memory.device_id || "active"} · recall ${memory.recall_enabled ? "on" : "off"} · ${memory.max_entries} max`
     : (memory.reason || "No unambiguous stored device scope is available.");
   $("#memorySearch").value = state.memorySearch;
   renderMemoryEntries();
@@ -139,9 +171,12 @@ export async function loadMemory() {
   state.memoryLoading = true;
   renderMemory();
   try {
-    const response = await fetch("/api/settings/memory", { cache: "no-store" });
+    const response = await fetch(memoryUrl("/api/settings/memory"), { cache: "no-store" });
     if (!response.ok) throw new Error(await response.text());
     state.memory = await response.json();
+    if (state.controlPlane && !$("#memoryScope").value.trim() && state.memory.device_id)
+      $("#memoryScope").value = state.memory.device_id;
+    loadMemoryCluster();
   } catch (error) {
     state.memory = { available: false, reason: error.message, entries: [] };
   } finally {
@@ -150,22 +185,34 @@ export async function loadMemory() {
   }
 }
 
+function memoryUrl(url) {
+  if (!state.controlPlane) return url;
+  const scope = $("#memoryScope").value.trim().toLowerCase();
+  return scope ? `${url}?device_id=${encodeURIComponent(scope)}` : url;
+}
+
 async function mutateMemory(method, url, body = null) {
   try {
+    if (state.memoryLoading || (state.controlPlane &&
+        state.memory?.device_id !== $("#memoryScope").value.trim().toLowerCase()))
+      throw new Error("Refresh the selected device scope before editing.");
     const options = { method, headers: { "Content-Type": "application/json" } };
+    if (state.controlPlane) body = { ...(body || {}), base_revision: state.memory?.memory_revision };
     if (body !== null) options.body = JSON.stringify(body);
-    const response = await fetch(url, options);
+    const response = await fetch(memoryUrl(url), options);
     if (!response.ok) throw new Error(await response.text());
     state.memory = await response.json();
     $("#memoryContent").value = "";
     renderMemory();
-    toast("Memory updated.");
+    loadMemoryCluster();
+    toast(state.controlPlane ? "Memory saved to Cloud. Other nodes sync automatically." : "Memory updated.");
   } catch (error) {
     toast(error.message || "Memory update failed", true);
   }
 }
 
 export function initializeMemory() {
+  $("#memoryScope").addEventListener("change", loadMemory);
   $("#memoryRefreshButton").addEventListener("click", loadMemory);
   $("#memorySearch").addEventListener("input", (event) => {
     state.memorySearch = event.target.value;

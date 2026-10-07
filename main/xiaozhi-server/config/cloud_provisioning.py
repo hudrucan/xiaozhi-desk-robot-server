@@ -177,7 +177,7 @@ class _Receipt:
 def _existing_memory(bootstrap, transport, cache_dir, provider, snapshot):
     backend = CloudMemoryStore(bootstrap, transport, cache_dir, provider)
     payload = backend.preflight(source_memory=snapshot["scopes"])
-    if payload["manifest"]["writer_node_id"] != bootstrap["node_id"]:
+    if payload["manifest"].get("writer_node_id") != bootstrap["node_id"]:
         raise ProvisioningWriterMismatch()
     if not _equal(payload["snapshot"], snapshot):
         raise ProvisioningReconciliation()

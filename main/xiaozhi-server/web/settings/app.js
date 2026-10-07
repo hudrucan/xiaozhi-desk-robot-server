@@ -3,7 +3,7 @@ import {
   renderConfiguration,
 } from "./configuration.js?v=35";
 import { renderDiagnostics } from "./diagnostics.js";
-import { initializeMemory, loadMemory, renderMemory } from "./memory.js";
+import { initializeMemory, loadMemory, renderMemory, setMemoryActive } from "./memory.js";
 import {
   initializeLogs,
   renderLogs,
@@ -37,7 +37,7 @@ const PAGE_IDS = [
   "cluster",
 ];
 const STATUS_SCOPES = { overview: "overview", diagnostics: "diagnostics" };
-const RUNTIME_PAGES = ["diagnostics", "soundbank", "memory"];
+const RUNTIME_PAGES = ["diagnostics", "soundbank"];
 
 function applyControlPlaneMode() {
   document.querySelectorAll("[data-control-plane]").forEach((element) => {
@@ -47,6 +47,11 @@ function applyControlPlaneMode() {
     element.classList.toggle("hidden", state.controlPlane);
   });
   if (!state.controlPlane) return;
+  document.querySelector('.navigation a[href="#memory"]')?.classList.toggle("hidden",
+    !state.memoryCapabilities);
+  $("#memoryScopeField").classList.remove("hidden");
+  $("#memory .eyebrow").textContent = "Shared durable context";
+  $("#memory .section-copy").textContent = "Edit a robot's shared Cloud Memory from any node. Changes sync to all nodes and affect the next recall without restarting.";
   RUNTIME_PAGES.forEach((page) => {
     document.querySelector(`.navigation a[href="#${page}"]`)?.classList.add("hidden");
   });
@@ -72,7 +77,7 @@ function renderAll() {
   renderOverview();
   renderSource();
   renderConfiguration();
-  if (state.controlPlane) renderCluster();
+  if (state.controlPlane) { renderCluster(); renderMemory(); }
   else {
     renderSoundbank();
     renderMemory();
@@ -257,6 +262,8 @@ async function loadSettings() {
     const response = await fetch("/api/settings", { cache: "no-store" });
     if (!response.ok) throw new Error(await response.text());
     const payload = await response.json();
+    state.memoryCapabilities = Boolean(payload.control_plane?.capabilities?.memory);
+    applyControlPlaneMode();
     state.secretCapabilities = Boolean(payload.control_plane?.capabilities?.secret_provisioning);
     setRuntimeApplyEnabled(payload.control_plane?.capabilities?.runtime_apply);
     state.config = payload.config;
@@ -320,6 +327,8 @@ async function saveSettings() {
       }
       throw new Error(payload.error || "Save failed");
     }
+    state.memoryCapabilities = Boolean(payload.control_plane?.capabilities?.memory);
+    applyControlPlaneMode();
     state.secretCapabilities = Boolean(payload.control_plane?.capabilities?.secret_provisioning);
     setRuntimeApplyEnabled(payload.control_plane?.capabilities?.runtime_apply);
     state.config = payload.config;
@@ -425,9 +434,10 @@ function setActivePage(page, options = {}) {
   restartStatusPolling();
   setClusterActive(state.controlPlane && nextPage === "cluster" && !document.hidden);
   setClusterLogsActive(state.controlPlane && nextPage === "logs" && !document.hidden);
+  setMemoryActive(nextPage === "memory" && !document.hidden);
+  if (nextPage === "memory") loadMemory();
   if (!state.controlPlane) {
     setLogsActive(nextPage === "logs" && !document.hidden);
-    if (nextPage === "memory") loadMemory();
   }
 }
 
@@ -446,11 +456,13 @@ function initializeNavigation() {
       stopStatusPolling();
       setClusterActive(false);
       setClusterLogsActive(false);
+      setMemoryActive(false);
       if (!state.controlPlane) setLogsActive(false);
     } else {
       restartStatusPolling();
       setClusterActive(state.controlPlane && state.activePage === "cluster");
       setClusterLogsActive(state.controlPlane && state.activePage === "logs");
+      setMemoryActive(state.activePage === "memory");
       if (!state.controlPlane) setLogsActive(state.activePage === "logs");
     }
   });
@@ -468,8 +480,8 @@ initializeSecrets(loadSettings);
 initializeRuntimeApply();
 applyControlPlaneMode();
 if (state.controlPlane) initializeClusterLogs();
+initializeMemory();
 if (!state.controlPlane) {
-  initializeMemory();
   initializeLogs();
   initializePushTts();
 }

@@ -4,76 +4,10 @@ from typing import TYPE_CHECKING
 from core.memory_storage import MemoryStorageError
 
 from plugins_func.register import Action, ActionResponse, ToolType, register_function
+from plugins_func.tool_schemas import MANAGE_MEMORY_FUNCTION_DESC
 
 if TYPE_CHECKING:
     from core.connection import ConnectionHandler
-
-
-MANAGE_MEMORY_FUNCTION_DESC = {
-    "type": "function",
-    "function": {
-        "name": "manage_memory",
-        "description": (
-            "Manage durable local memory only when the user explicitly asks to "
-            "remember or forget information, asks what is saved, or asks a "
-            "question that depends on a previously saved personal fact. Use "
-            "recall before answering questions about saved facts. Never save "
-            "ordinary conversation automatically."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["remember", "recall", "forget", "list"],
-                },
-                "content": {
-                    "type": "string",
-                    "description": (
-                        "A concise fact to save, or a short search phrase for "
-                        "recall or deletion. Omit only for list."
-                    ),
-                },
-                "type": {
-                    "type": "string",
-                    "enum": [
-                        "fact", "preference", "decision", "project_state",
-                        "hardware", "todo", "session",
-                    ],
-                    "description": "Memory category. Used only when remembering.",
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Optional project scope. Omit for global memory.",
-                },
-                "entities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Exact names, components, people, or devices.",
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-                "importance": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 5,
-                },
-                "pinned": {"type": "boolean"},
-                "active": {"type": "boolean"},
-                "supersedes": {
-                    "type": "string",
-                    "description": (
-                        "ID of an older memory replaced by this new memory. "
-                        "Use only when the replacement is explicit."
-                    ),
-                },
-            },
-            "required": ["action"],
-        },
-    },
-}
 
 
 def _response(conn: "ConnectionHandler", key: str, default: str):

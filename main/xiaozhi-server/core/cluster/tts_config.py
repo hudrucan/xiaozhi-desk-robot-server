@@ -44,7 +44,7 @@ def fingerprint(options, files):
 def validate_bundle(value, node_id):
     keys = {'protocol', 'worker_id', 'revision', 'workers', 'model_root', 'options', 'files', 'fingerprint'}
     if (not isinstance(value, dict) or not keys <= set(value)
-            or set(value) - keys - {'soundbank', 'system_error_response', 'session', 'vision_enabled'}
+            or set(value) - keys - {'soundbank', 'system_error_response', 'session', 'vision_enabled', 'memory'}
             or value['protocol'] != PROTOCOL or value['worker_id'] != node_id
             or type(value['revision']) is not int or value['revision'] < 1):
         raise ValueError('Invalid TTS bundle identity')
@@ -54,6 +54,9 @@ def validate_bundle(value, node_id):
     if 'session' in value:
         from .session_config import validate
         validate(value['session'])
+    if 'memory' in value:
+        from .memory_protocol import validate_bundle as validate_memory
+        validate_memory(value['memory'])
     if 'vision_enabled' in value and type(value['vision_enabled']) is not bool:
         raise ValueError('Invalid vision capability flag')
     validate_worker_id(node_id)

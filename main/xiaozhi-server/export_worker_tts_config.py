@@ -102,6 +102,10 @@ def build_bundle(store, source_root, expected_revision, workers):
     value['session'] = export_config(config)
     from core.cluster.vision_config import export_config as export_vision
     value['vision_enabled'] = export_vision(config, store.secrets) is not None
+    from core.cluster.memory_protocol import export_config as export_memory
+    memory = export_memory(config)
+    if memory is not None:
+        value['memory'] = memory
     if soundbank is not None:
         value['soundbank'] = soundbank
     return validate_bundle(value, node)

@@ -11,7 +11,7 @@ from .worker_rpc import WorkerRpcError
 
 
 class LLMStreamClient:
-    def __init__(self, client, core_id, revision, messages, seconds, on_chunk, *, tools=None, on_tools=None):
+    def __init__(self, client, core_id, revision, messages, seconds, on_chunk, *, tools=None, on_tools=None, memory_context=None):
         self.client, self.on_chunk = client, on_chunk
         self.wire = wire
         self.on_tools = on_tools
@@ -23,6 +23,10 @@ class LLMStreamClient:
             'deadline_ms': int(time.time() * 1000) + seconds * 1000, 'dialogue': messages}
         if tools is not None:
             self.value['tools'] = tools
+        if memory_context is not None:
+            if tools is None:
+                raise ValueError('Memory context requires the tool-aware stream')
+            self.value['memory_context'] = memory_context
         self.payload = rpc.encode(self.value, getattr(self.wire, 'MAX_REQUEST_BYTES', rpc.MAX_REQUEST_BYTES))
         self.wire.request(self.payload)
         self.seconds = seconds

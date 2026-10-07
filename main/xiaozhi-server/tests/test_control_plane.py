@@ -266,10 +266,12 @@ class ControlPlaneApiTests(unittest.IsolatedAsyncioTestCase):
         capabilities = await (await self.client.get("/api/settings/capabilities")).json()
         self.assertEqual(capabilities["mode"], "standalone")
         self.assertFalse(capabilities["capabilities"]["rolling_restart"])
+        self.assertFalse(capabilities["capabilities"]["memory"])
+        self.assertEqual((await self.client.get("/api/settings/memory")).status, 503)
         self.assertTrue(capabilities["capabilities"]["voice_diagnostics"])
         for method, path in (
             ("GET", "/api/settings/status"), ("GET", "/api/settings/logs"),
-            ("GET", "/api/settings/memory"), ("POST", "/api/settings/restart"),
+            ("POST", "/api/settings/restart"),
             ("POST", "/api/settings/push-tts"), ("POST", "/api/settings/source"),
             ("POST", "/api/settings/soundbank/generate"), ("GET", "/xiaozhi/ota/"),
             ("GET", "/mcp/vision/explain"),

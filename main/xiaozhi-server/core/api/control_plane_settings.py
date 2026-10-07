@@ -33,6 +33,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         capabilities["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
         capabilities["voice_diagnostics"] = True
         capabilities["runtime_apply"] = self.runtime is not None
+        capabilities["memory"] = self.reconciliation.memory is not None
         return {"protocol": CONTROL_PROTOCOL, "capability_version": 1,
                 "mode": "standalone", "capabilities": capabilities}
 
@@ -119,6 +120,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         payload["capabilities"]["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
         payload["capabilities"]["voice_diagnostics"] = True
         payload["capabilities"]["runtime_apply"] = self.runtime is not None
+        payload["capabilities"]["memory"] = self.reconciliation.memory is not None
         return self._disable_cache(web.json_response(payload))
 
     async def handle_soundbank_cluster(self, request):
@@ -158,6 +160,98 @@ class ControlPlaneSettingsHandler(SettingsAccess):
             "scope": "configured_peers" if peers is not None else "local_only",
             "desired_revision": revision, "ready_nodes": ready, "expected_nodes": len(nodes),
             "state": "ready" if ready == len(nodes) else "pending", "nodes": results}))
+
+    async def handle_memory_cluster(self, request):
+        self._require_access(request)
+        local = self.reconciliation.status()
+        authority = local.get("memory", {}).get("authority_fingerprint")
+        peers = self.reconciliation.config.secrets
+        nodes = peers.nodes if peers is not None else ((local["node_id"], None),)
+        async with ClientSession(trust_env=False, timeout=ClientTimeout(total=3)) as session:
+            async def one(node, endpoint):
+                try:
+                    if node == local["node_id"]:
+                        payload = local
+                    else:
+                        async with session.get(endpoint + "/api/cluster", allow_redirects=False) as response:
+                            if response.status != 200:
+                                raise ValueError
+                            data = bytearray()
+                            async for chunk in response.content.iter_chunked(4096):
+                                data.extend(chunk)
+                                if len(data) > 32768:
+                                    raise ValueError
+                            payload = json.loads(data)
+                    if payload.get("protocol") != CONTROL_PROTOCOL or payload.get("node_id") != node:
+                        raise ValueError
+                    memory = payload.get("memory", {})
+                    revision = memory.get("memory_revision")
+                    if type(revision) is not int or revision < 1:
+                        raise ValueError
+                    source_matches = (isinstance(authority, str) and len(authority) == 64
+                                      and memory.get("authority_fingerprint") == authority)
+                    ready = (source_matches and memory.get("state") == "ready" and memory.get("sync_state") == "synced"
+                             and memory.get("write_mode") == "shared_cas" and memory.get("writable") is True)
+                    return {"node_id": node, "memory_revision": revision, "ready": ready,
+                            "authority_matches": source_matches}
+                except Exception:
+                    return {"node_id": node, "memory_revision": None, "ready": False, "authority_matches": False}
+            results = await asyncio.gather(*(one(node, endpoint) for node, endpoint in nodes))
+        revision = max((item["memory_revision"] or 0 for item in results), default=0) or None
+        ready = sum(item["ready"] and item["memory_revision"] == revision for item in results)
+        return self._disable_cache(web.json_response({"protocol": "xiaozhi-memory-cluster-v1",
+            "memory_revision": revision, "ready_nodes": ready, "expected_nodes": len(nodes),
+            "state": "ready" if ready == len(nodes) else "pending", "nodes": results}))
+
+    async def handle_memory(self, request):
+        self._require_access(request)
+        service = self.reconciliation.memory
+        if service is None:
+            return self._disable_cache(web.json_response(
+                {"error": "Shared Memory is unavailable", "code": "memory_unavailable"}, status=503))
+        if service.backend is None:
+            return self._disable_cache(web.json_response({"error":
+                "Shared Memory is not ready. Select explicit Memory and provision the common Cloud Memory source on all nodes.",
+                "code": "memory_unavailable"}, status=503))
+        from core.memory_storage import MemoryConflict, MemoryReadOnly
+        try:
+            if set(request.query) - {"device_id"}:
+                raise ValueError
+            body = None
+            if request.method != "GET":
+                self._require_json(request)
+                if request.content_length is not None and request.content_length > 16384:
+                    raise web.HTTPRequestEntityTooLarge(max_size=16384, actual_size=request.content_length)
+                data = bytearray()
+                async for chunk in request.content.iter_chunked(4096):
+                    data.extend(chunk)
+                    if len(data) > 16384:
+                        raise ValueError
+                from core.cluster.memory_protocol import decode
+                body = decode(bytes(data), 16384)
+            entry_id = request.match_info.get("entry_id")
+            if entry_id is not None:
+                import re
+                if not re.fullmatch("[a-zA-Z0-9_-]{1,128}", entry_id):
+                    raise ValueError
+            if request.method != "GET" and not request.query.get("device_id"):
+                raise ValueError
+            payload = await service.settings_operation(request.query.get("device_id"),
+                request.method, body, entry_id)
+            return self._disable_cache(web.json_response(payload))
+        except web.HTTPException:
+            raise
+        except MemoryConflict:
+            code, status, message = "memory_conflict", 409, "Memory changed. Refresh and review before retrying."
+        except LookupError:
+            code, status, message = "memory_not_found", 404, "Memory entry was not found."
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            code, status, message = "memory_invalid", 400, "Invalid Memory operation."
+        except MemoryReadOnly:
+            code, status, message = "memory_read_only", 409, "Shared Memory writing is unavailable."
+        except Exception:
+            code, status, message = "memory_unavailable", 503, "Memory operation could not be confirmed. Refresh before retrying."
+        return self._disable_cache(web.json_response({"error": message, "code": code}, status=status))
 
     async def handle_voice_diagnostics(self, request):
         self._require_access(request)

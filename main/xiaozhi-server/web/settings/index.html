@@ -435,10 +435,15 @@
                   <div>
                     <p class="eyebrow">Stored facts</p>
                     <h3 id="memoryCount">0 memories</h3>
+                    <p class="field-help" id="memoryClusterState"></p>
                     <p class="field-help" id="memoryContext">Connect the robot once to initialize its memory scope.</p>
                   </div>
                   <button class="button secondary" id="memoryRefreshButton" type="button">Refresh</button>
                 </header>
+                <label id="memoryScopeField" class="hidden"><span>Device scope (MAC address)</span>
+                  <input id="memoryScope" list="memoryScopes" placeholder="02:00:00:00:00:01" maxlength="17" />
+                  <datalist id="memoryScopes"></datalist>
+                </label>
                 <form class="memory-compose" id="memoryCreateForm">
                   <label for="memoryContent">Add a durable fact</label>
                   <textarea id="memoryContent" placeholder="What should the assistant remember?"></textarea>

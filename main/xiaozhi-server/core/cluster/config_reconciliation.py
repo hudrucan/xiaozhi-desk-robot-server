@@ -54,6 +54,7 @@ class ConfigReconciliation:
         self.store, self.config = store, config
         self.client_factory = client_factory
         self.client = None
+        self.memory = None
         self.nats_state = "not_started"
         self.reconciliation = {
             "state": "not_started", "last_attempt_at": None,
@@ -98,6 +99,8 @@ class ConfigReconciliation:
                 self.bootstrap_context = (
                     self.vip, effective.get("server", {}).get("timezone_offset", 0)
                 ) if self.healthy else None
+                if self._loop is not None and self.memory is not None:
+                    self._loop.call_soon_threadsafe(self.memory.request_refresh)
                 if self._loop is not None:
                     if obj and shared_cluster(obj):
                         self._loop.call_soon_threadsafe(self.soundbank.request,
@@ -226,6 +229,8 @@ class ConfigReconciliation:
         # Heal missed events immediately as well as at the periodic deadline.
         self._pending_revision = max(self._pending_revision, (self.source.get("desired_revision") or 0) + 1)
         self._wake.set()
+        if self.memory is not None:
+            self.memory.request_refresh()
         LOGGER.info("Control-plane NATS reconnected")
 
     async def _closed_callback(self):
@@ -269,6 +274,8 @@ class ConfigReconciliation:
                 # Broadcast subscription: intentionally no queue group.
                 await client.subscribe(CONFIG_CHANGED_SUBJECT, cb=self._on_hint,
                     pending_msgs_limit=64, pending_bytes_limit=64 * MAX_EVENT_BYTES)
+                if self.memory is not None:
+                    await self.memory.register(client)
                 self.nats_state = "connected"
                 LOGGER.info("Control-plane NATS connected")
                 await self._closed.wait()
@@ -289,6 +296,8 @@ class ConfigReconciliation:
         self._loop = asyncio.get_running_loop()
         await self.reconcile()  # Live Cloud read before HTTP becomes operational.
         self.soundbank.start()
+        if self.memory is not None:
+            self.memory.start()
         self._previous_observer = self.store.publication_observer
         self.store.publication_observer = self._observer
         self._tasks = [asyncio.create_task(function(), name=name) for function, name in (
@@ -313,6 +322,8 @@ class ConfigReconciliation:
         async with self._operation_lock:
             pass
         await self.soundbank.stop()
+        if self.memory is not None:
+            await self.memory.stop()
         self.nats_state = "closed"
 
     def status(self):
@@ -325,5 +336,6 @@ class ConfigReconciliation:
             "reconciliation": copy.deepcopy(self.reconciliation),
             "hint_publication": copy.deepcopy(self.hint_publication),
             "soundbank": copy.deepcopy(self.soundbank.status),
+            "memory": self.memory.status() if self.memory is not None else {"state":"disabled"},
             "capabilities": copy.deepcopy(CAPABILITIES),
         }

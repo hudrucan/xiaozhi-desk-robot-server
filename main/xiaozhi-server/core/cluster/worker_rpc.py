@@ -197,7 +197,7 @@ class WorkerRPC:
             finally:
                 self.calls.discard(task)
 
-    async def generate_stream(self, revision, messages, on_chunk, seconds=30, *, tools=None, on_tools=None):
+    async def generate_stream(self, revision, messages, on_chunk, seconds=30, *, tools=None, on_tools=None, memory_context=None):
         from . import llm_protocol as protocol
         from .llm_stream_client import LLMStreamClient
         if tools is not None:
@@ -213,7 +213,7 @@ class WorkerRPC:
             raise WorkerRpcError('worker_rpc_unavailable')
         if len(self.calls) >= MAX_INFLIGHT:
             raise WorkerRpcError('worker_rpc_busy')
-        stream = LLMStreamClient(self.client, self.core_id, revision, messages, seconds, on_chunk, tools=tools, on_tools=on_tools)
+        stream = LLMStreamClient(self.client, self.core_id, revision, messages, seconds, on_chunk, tools=tools, on_tools=on_tools, memory_context=memory_context)
         task = asyncio.current_task()
         self.calls.add(task)
         self.streams.add(stream)

@@ -397,3 +397,5 @@ The standalone control plane also supports opt-in [Desk cluster MQTT bootstrap](
 Shared Settings can [apply the saved voice runtime revision](docs/runtime-apply.md)
 through a bounded node-local installer. It verifies all three workers/cores and
 reports actual runtime revisions, with an explicit conversation maintenance pause.
+
+Distributed conversation history and explicit Cloud Memory: [cluster-memory.md](docs/cluster-memory.md).

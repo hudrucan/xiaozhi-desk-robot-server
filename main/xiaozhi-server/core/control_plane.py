@@ -28,6 +28,9 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None, runt
         raise ValueError("Standalone control plane requires a provisioned Google Drive bootstrap")
     options = {"client_factory": client_factory} if client_factory is not None else {}
     reconciliation = ConfigReconciliation(store, config, **options)
+    if config.secrets is not None:
+        from core.cluster.memory_service import MemoryService
+        reconciliation.memory = MemoryService(reconciliation)
     secrets = None
     if config.secrets is not None:
         if config.secrets.address(store.bootstrap["node_id"]) != config.host:
@@ -56,8 +59,13 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None, runt
         web.post("/internal/settings/runtime", handler.handle_runtime_peer),
         web.post("/api/settings/sync", handler.handle_sync),
         web.post("/api/settings/migrate-cluster", handler.handle_migration),
+        web.get("/api/settings/memory", handler.handle_memory),
+        web.post("/api/settings/memory", handler.handle_memory),
+        web.put("/api/settings/memory/{entry_id}", handler.handle_memory),
+        web.delete("/api/settings/memory/{entry_id}", handler.handle_memory),
         web.get("/api/cluster", handler.handle_cluster), web.get("/healthz", handler.handle_health),
         web.get("/api/cluster/soundbank", handler.handle_soundbank_cluster),
+        web.get("/api/cluster/memory", handler.handle_memory_cluster),
         web.get("/api/cluster/diagnostics", handler.handle_voice_diagnostics),
     ])
     if config.bootstrap is not None:

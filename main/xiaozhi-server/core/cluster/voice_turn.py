@@ -18,7 +18,7 @@ RECOVERY_AUDIO_FRAMES = 10
 
 
 class VoiceTurn:
-    def __init__(self, rpc, revision, audio, session_id, send, tts_pool=None, send_audio=None, diagnostics=None, mcp=None):
+    def __init__(self, rpc, revision, audio, session_id, send, tts_pool=None, send_audio=None, diagnostics=None, mcp=None, *, device_id=None):
         self.rpc, self.revision, self.audio = rpc, revision, audio
         self.session_id, self.send = session_id, send
         self.task = self.queue = None
@@ -28,6 +28,11 @@ class VoiceTurn:
         self.current_tts = None
         self.state, self.diagnostics = 'idle', diagnostics
         self.mcp = mcp
+        from .memory_client import MemoryClient, SessionHistory
+        self.history = SessionHistory()
+        self.memory = None
+        if tts_pool is not None and tts_pool.bundle.get('memory') is not None and device_id is not None:
+            self.memory = MemoryClient(rpc, tts_pool.bundle['memory'], device_id, tts_pool.bundle['workers'])
         self.session_config = copy.deepcopy(tts_pool.bundle.get('session', SESSION_DEFAULTS)
                                             if tts_pool is not None else SESSION_DEFAULTS)
         self.close_after_chat = False
@@ -107,6 +112,8 @@ class VoiceTurn:
                 inventory = await self.mcp.tools()
             except (WorkerRpcError, asyncio.TimeoutError):
                 pass  # Server functions remain usable without a device inventory.
+        if self.memory is not None:
+            inventory.extend(self.memory.tools())
         inventory.append(copy.deepcopy(handle_exit_intent_function_desc))
         return inventory
 
@@ -124,6 +131,9 @@ class VoiceTurn:
                     self.close_after_chat = True
                     result = {'isError':False, 'action':'end_conversation',
                               'text':self.session_config['exit_farewell']}
+            elif call['name'] == 'manage_memory' and self.memory is not None:
+                results.append(await self.memory.execute(call, self.history))
+                continue
             elif self.mcp is not None:
                 results.extend(await self.mcp.execute([call]))
                 continue
@@ -281,7 +291,11 @@ class VoiceTurn:
                     if generation != self.generation:
                         raise asyncio.CancelledError
                     options = {'tools':tools, 'on_tools':self.execute_tools, 'seconds':120}
-                    call = self.rpc.generate_stream(self.revision, [{'role': 'user', 'content': text}], chunk, **options)
+                    if self.memory is not None:
+                        options['memory_context'] = await self.memory.recall(text, self.history)
+                        if generation != self.generation:
+                            raise asyncio.CancelledError
+                    call = self.rpc.generate_stream(self.revision, self.history.dialogue(text), chunk, **options)
                     result = await tts.wait_llm(call) if tts else await call
                 if result['status'] != 'ok':
                     raise WorkerRpcError(result['error'])
@@ -295,6 +309,8 @@ class VoiceTurn:
                 if tts:
                     await tts.finish()
                     self.record('tts_complete', elapsed_ms=round((time.monotonic() - started) * 1000))
+                if fixed_response is None and generation == self.generation:
+                    self.history.complete(text, result['text'])
         except asyncio.CancelledError:
             pass
         except WorkerRpcError as error:

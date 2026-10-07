@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import logging
+import re
 import time
 from collections import OrderedDict
 
@@ -184,8 +185,12 @@ class LLMWorker(Worker):
             async with asyncio.timeout(min(seconds, tooling.MAX_SECONDS if wire is tooling else protocol.MAX_SECONDS)):
                 await self._stream_event(reply_subject, value, 'started', seq)
                 seq += 1
-                messages = ([{'role': 'system', 'content': self.bundle['prompt']}]
-                    if self.bundle['prompt'] else []) + value['dialogue']
+                prompt = self.bundle['prompt']
+                if 'memory_context' in value:
+                    context = '<memory>\n' + value['memory_context'] + '\n</memory>'
+                    prompt = (re.sub(r'<memory>.*?</memory>', lambda _: context, prompt, flags=re.DOTALL)
+                              if re.search(r'<memory>.*?</memory>', prompt, flags=re.DOTALL) else prompt + '\n' + context)
+                messages = ([{'role': 'system', 'content': prompt}] if prompt else []) + value['dialogue']
                 total, digest = 0, hashlib.sha256()
                 inventory = value.get('tools', []) + (self.server_tools.tools() if wire is tooling else [])
                 if wire is tooling:

@@ -1,4 +1,4 @@
-"""Independent, single-writer Cloud Memory hot state with validated read LKG."""
+"""Cloud Memory hot state with legacy ownership or explicit shared-cluster CAS."""
 
 import copy
 import json
@@ -28,13 +28,18 @@ _ENTRY_FIELDS = {
 
 def parse_manifest(content):
     value = json.loads(content)
-    if (not isinstance(value, dict)
-            or set(value) != {"schema_version", "revision", "writer_node_id", "snapshot"}
-            or type(value["schema_version"]) is not int or value["schema_version"] != 1
-            or type(value["revision"]) is not int or value["revision"] < 1
-            or not isinstance(value["writer_node_id"], str)
-            or not value["writer_node_id"].strip()):
+    if (not isinstance(value, dict) or type(value.get("schema_version")) is not int
+            or value["schema_version"] not in {1, 2}
+            or type(value.get("revision")) is not int or value["revision"] < 1):
         raise ValueError("Invalid memory manifest")
+    if value["schema_version"] == 1:
+        if (set(value) != {"schema_version", "revision", "writer_node_id", "snapshot"}
+                or not isinstance(value["writer_node_id"], str)
+                or not value["writer_node_id"].strip()):
+            raise ValueError("Invalid legacy memory owner")
+    elif (set(value) != {"schema_version", "revision", "write_mode", "snapshot"}
+            or value["write_mode"] != "shared_cas"):
+        raise ValueError("Invalid shared memory manifest")
     pointer = value["snapshot"]
     if (not isinstance(pointer, dict) or set(pointer) != {"file_id", "sha256"}
             or not isinstance(pointer["file_id"], str)
@@ -93,7 +98,7 @@ class MemorySchema(EntryNormalization):
 
 
 class CloudMemoryStore:
-    def __init__(self, bootstrap, transport, cache_dir, provider_config):
+    def __init__(self, bootstrap, transport, cache_dir, provider_config, *, materialize=True, shared_writes=False):
         drive = bootstrap.get("google_drive", {})
         manifest_id = drive.get("memory_manifest_file_id")
         if not isinstance(manifest_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", manifest_id):
@@ -104,12 +109,15 @@ class CloudMemoryStore:
         self.transport = transport
         self.cache_dir = Path(cache_dir)
         self.path = memory_path(provider_config)
+        self.materialize = materialize
+        self.shared_writes = shared_writes
         # A materialized YAML must never alias the authority cache/lock.
         if self.path.resolve().is_relative_to(self.cache_dir.resolve()):
             raise MemoryUnavailable()
         self.schema = MemorySchema(provider_config)
         self.thread_lock = threading.RLock()
         self.current = None
+        self.commit_count = 0
         self.sync_state = "not_synced"
         self.last_error = None
 
@@ -152,6 +160,8 @@ class CloudMemoryStore:
         if previous is None:
             return
         old = previous["payload"]["manifest"]
+        if (old["schema_version"] == 2 and manifest["schema_version"] != 2):
+            raise MemoryConflict()
         if (manifest["revision"] < old["revision"]
                 or (manifest["revision"] == old["revision"] and manifest != old)):
             raise MemoryConflict()
@@ -196,11 +206,11 @@ class CloudMemoryStore:
 
     def _persist(self, envelope, committed=False):
         failed = False
-        for path, content in (
-            (self.cache_dir / "current.json", canonical_bytes(envelope)),
-            (self.path, yaml.safe_dump(envelope["payload"]["snapshot"]["scopes"],
-                                       allow_unicode=True, sort_keys=False).encode("utf-8")),
-        ):
+        writes = [(self.cache_dir / "current.json", canonical_bytes(envelope))]
+        if self.materialize:
+            writes.append((self.path, yaml.safe_dump(envelope["payload"]["snapshot"]["scopes"],
+                                       allow_unicode=True, sort_keys=False).encode("utf-8")))
+        for path, content in writes:
             try:
                 self._atomic(path, content)
             except OSError:
@@ -251,7 +261,9 @@ class CloudMemoryStore:
             manifest = self.current["payload"]["manifest"] if self.current else {}
             return {"storage_source": "google_drive", "memory_revision": manifest.get("revision"),
                     "writer_node_id": manifest.get("writer_node_id"),
-                    "writable": manifest.get("writer_node_id") == self.node_id,
+                    "writable": bool(manifest) and (self.shared_writes or (manifest.get("schema_version") == 1
+                        and manifest.get("writer_node_id") == self.node_id)),
+                    "write_mode": "shared_cas" if self.shared_writes else "single_writer",
                     "sync_state": self.sync_state, "storage_error": self.last_error}
 
     def mutate(self, scope, base_revision, transform):
@@ -259,7 +271,8 @@ class CloudMemoryStore:
             previous = self._known_current()
             envelope, etag = self._fetch(previous)
             manifest = envelope["payload"]["manifest"]
-            if manifest["writer_node_id"] != self.node_id:
+            if not self.shared_writes and (manifest["schema_version"] != 1
+                    or manifest["writer_node_id"] != self.node_id):
                 raise MemoryReadOnly()
             if (self.current is None or type(base_revision) is not int
                     or manifest["revision"] != base_revision
@@ -276,9 +289,16 @@ class CloudMemoryStore:
                 self.schema.validate(candidate)
                 content = canonical_bytes(candidate)
                 digest = checksum(content)
-                next_manifest = {"schema_version": 1, "revision": manifest["revision"] + 1,
-                                 "writer_node_id": manifest["writer_node_id"],
+                # Shared V2 control planes explicitly migrate ownership in the
+                # same CAS as their first successful mutation. Legacy callers
+                # cannot write the shared format or silently downgrade it.
+                next_manifest = {"schema_version": 2 if self.shared_writes else 1,
+                                 "revision": manifest["revision"] + 1,
                                  "snapshot": {"file_id": "pending", "sha256": digest}}
+                if self.shared_writes:
+                    next_manifest["write_mode"] = "shared_cas"
+                else:
+                    next_manifest["writer_node_id"] = manifest["writer_node_id"]
                 file_id = self.transport.upload_immutable(
                     self.folder_id, content, f"memory-{next_manifest['revision']}-{digest}.json"
                 )
@@ -292,6 +312,7 @@ class CloudMemoryStore:
             except Exception:
                 raise MemoryUnavailable() from None
             self.current = self._envelope(next_manifest, candidate)
+            self.commit_count += 1
             self.sync_state = "synced"
             # A successful CAS is authoritative even if either local write fails.
             self._persist(self.current, committed=True)
