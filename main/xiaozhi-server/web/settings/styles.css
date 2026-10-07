@@ -331,6 +331,12 @@ main { grid-column: 2; min-width: 0; }
 .detail-list div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; padding: 11px 0; border-top: 1px solid rgba(94, 75, 49, 0.32); }
 .detail-list dt { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
 .detail-list dd { margin: 0; overflow-wrap: anywhere; color: var(--muted); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.runtime-apply-panel .section-copy { max-width: none; }
+.runtime-apply-panel .detail-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: 12px; }
+.runtime-apply-panel .detail-list div { grid-template-columns: 1fr; gap: 3px; padding: 8px 0 0; }
+@media (max-width: 700px) {
+  .runtime-apply-panel .detail-list { grid-template-columns: 1fr; gap: 8px; }
+}
 .check-list { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 13px; }
 .check-list li { display: flex; gap: 10px; }
 .check-list li::before { content: "✓"; color: var(--accent); }

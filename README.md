@@ -391,3 +391,7 @@ own license before redistribution.
 Shared Settings supports opt-in [all-node API key provisioning](docs/settings-cluster-secrets.md) through the standalone control plane. Keys stay in private node-local storage; Cloud Config contains references only.
 
 The standalone control plane also supports opt-in [Desk cluster MQTT bootstrap](docs/cluster-mqtt-bootstrap.md), without starting conversation providers.
+
+Shared Settings can [apply the saved voice runtime revision](docs/runtime-apply.md)
+through a bounded node-local installer. It verifies all three workers/cores and
+reports actual runtime revisions, with an explicit conversation maintenance pause.

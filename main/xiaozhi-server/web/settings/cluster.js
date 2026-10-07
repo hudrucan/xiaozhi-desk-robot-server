@@ -14,7 +14,7 @@ export function renderCluster() {
     ["Desired revision", config.desired_revision],
     ["Last recorded active revision", config.active_revision],
     ["Runtime in this process", "Not started"],
-    ["Restart required", config.restart_required ? "Yes; rolling restart unavailable" : "No desired/active difference"],
+    ["Voice runtime", cluster.capabilities?.runtime_apply ? "See the worker/core revisions above; use Apply runtime for saved voice settings" : "Separate deployment required"],
     ["Sync state", config.sync_state],
     ["Cloud sync", config.sync_status],
     ["NATS", cluster.nats?.state],
@@ -36,7 +36,7 @@ export function renderCluster() {
   }
   $("#clusterSummary").innerHTML = rows.map(([label, value]) =>
     `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd></div>`).join("");
-  $("#clusterStatusNote").textContent = "Cloud is authoritative; NATS only hints at changes. A saved configuration does not mean every node has its audio yet. Soundbank caches sync in the background and retry automatically. Runtime playback and cluster rolling restart are separate from cache readiness.";
+  $("#clusterStatusNote").textContent = "Cloud is authoritative; NATS only hints at changes. A saved configuration does not mean every node has its audio yet. Soundbank caches sync in the background. Apply runtime verifies the installed voice bundles separately from cache readiness.";
 }
 
 export function setClusterActive(active) {

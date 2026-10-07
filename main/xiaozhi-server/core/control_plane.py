@@ -23,7 +23,7 @@ async def safe_errors(request, handler):
         return web.json_response({"error": "Control-plane operation unavailable", "code": "unavailable"}, status=503)
 
 
-def create_app(store, config, *, client_factory=None, secret_exchange=None):
+def create_app(store, config, *, client_factory=None, secret_exchange=None, runtime_local=None, runtime_exchange=None):
     if store.bootstrap["config_provider"] != "google_drive":
         raise ValueError("Standalone control plane requires a provisioned Google Drive bootstrap")
     options = {"client_factory": client_factory} if client_factory is not None else {}
@@ -34,7 +34,13 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None):
             raise ValueError("Secret peer identity must match the local control-plane listener")
         from core.cluster.secret_provisioning import SecretProvisioning
         secrets = SecretProvisioning(reconciliation, config.secrets, exchange=secret_exchange)
-    handler = ControlPlaneSettingsHandler(reconciliation, secrets)
+    runtime = None
+    if config.runtime_apply:
+        if config.secrets is None:
+            raise ValueError('Runtime apply requires authenticated peers')
+        from core.cluster.runtime_apply import RuntimeApply
+        runtime = RuntimeApply(reconciliation, local=runtime_local, exchange=runtime_exchange)
+    handler = ControlPlaneSettingsHandler(reconciliation, secrets, runtime)
     app = web.Application(client_max_size=256 * 1024, middlewares=[safe_errors])
     app[RECONCILIATION_KEY] = reconciliation
     app.add_routes([
@@ -45,6 +51,9 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None):
         web.get("/api/settings/secrets", handler.handle_secret_status),
         web.post("/api/settings/secrets", handler.handle_secret_put),
         web.post("/internal/settings/secret", handler.handle_secret_peer),
+        web.get("/api/settings/runtime", handler.handle_runtime_status),
+        web.post("/api/settings/runtime", handler.handle_runtime_apply),
+        web.post("/internal/settings/runtime", handler.handle_runtime_peer),
         web.post("/api/settings/sync", handler.handle_sync),
         web.post("/api/settings/migrate-cluster", handler.handle_migration),
         web.get("/api/cluster", handler.handle_cluster), web.get("/healthz", handler.handle_health),
@@ -65,6 +74,8 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None):
         reconciliation.http_operational = False
 
     async def cleanup(app):
+        if runtime is not None:
+            await runtime.stop()
         if secrets is not None:
             await secrets.stop()
         await reconciliation.stop()

@@ -20,6 +20,7 @@ class ControlPlaneConfig:
     secrets: SecretProvisionConfig | None = None
     bootstrap: MqttBootstrapConfig | None = None
     diagnostic_core_port: int = 8000
+    runtime_apply: bool = False
 
     @classmethod
     def from_env(cls):
@@ -31,11 +32,15 @@ class ControlPlaneConfig:
             interval = float(os.environ.get("XIAOZHI_CONFIG_RECONCILE_SECONDS", "45"))
             remote = os.environ.get("XIAOZHI_CONTROL_PLANE_ALLOW_REMOTE", "false").lower()
             core_port = int(os.environ.get('XIAOZHI_DIAGNOSTIC_CORE_PORT', '8000'))
+            apply = os.environ.get('XIAOZHI_RUNTIME_APPLY_ENABLED', 'false')
             if (not 1 <= port <= 65535 or not math.isfinite(interval)
                     or not 1 <= interval <= 3600 or remote not in {"true", "false"}
-                    or not 1024 <= core_port <= 65535):
+                    or not 1024 <= core_port <= 65535 or apply not in {'true', 'false'}):
                 raise ValueError
         except ValueError:
             raise ValueError("Invalid control-plane host, port, access policy or reconciliation interval") from None
-        return cls(nats, host, port, remote == "true", interval, SecretProvisionConfig.from_env(port),
-                   MqttBootstrapConfig.from_env(), core_port)
+        secrets = SecretProvisionConfig.from_env(port)
+        if apply == 'true' and secrets is None:
+            raise ValueError('Runtime apply requires authenticated three-node peer configuration')
+        return cls(nats, host, port, remote == "true", interval, secrets,
+                   MqttBootstrapConfig.from_env(), core_port, apply == 'true')

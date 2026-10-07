@@ -19,9 +19,10 @@ from core.cluster.soundbank_reconciliation import safe_status
 class ControlPlaneSettingsHandler(SettingsAccess):
     access_error = "Control-plane Settings requires loopback or explicit XIAOZHI_CONTROL_PLANE_ALLOW_REMOTE=true"
 
-    def __init__(self, reconciliation, secrets=None):
+    def __init__(self, reconciliation, secrets=None, runtime=None):
         self.reconciliation = reconciliation
         self.secrets = secrets
+        self.runtime = runtime
         self.editor = ConfigEditor(reconciliation.store)
         self.allow_remote = reconciliation.config.allow_remote
         self.web_dir = str(Path(get_project_dir()) / "web/settings")
@@ -31,6 +32,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         capabilities["secret_provisioning"] = self.secrets is not None
         capabilities["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
         capabilities["voice_diagnostics"] = True
+        capabilities["runtime_apply"] = self.runtime is not None
         return {"protocol": CONTROL_PROTOCOL, "capability_version": 1,
                 "mode": "standalone", "capabilities": capabilities}
 
@@ -116,6 +118,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         payload["capabilities"]["secret_provisioning"] = self.secrets is not None
         payload["capabilities"]["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
         payload["capabilities"]["voice_diagnostics"] = True
+        payload["capabilities"]["runtime_apply"] = self.runtime is not None
         return self._disable_cache(web.json_response(payload))
 
     async def handle_soundbank_cluster(self, request):
@@ -271,3 +274,49 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         self._require_access(request)
         healthy = self.reconciliation.http_operational and self.reconciliation.healthy
         return self._disable_cache(web.json_response({"healthy": healthy}, status=200 if healthy else 503))
+
+    async def handle_runtime_status(self, request):
+        self._require_access(request)
+        if self.runtime is None:
+            raise web.HTTPNotFound()
+        if request.query_string:
+            raise web.HTTPBadRequest()
+        return self._disable_cache(web.json_response(await self.runtime.status()))
+
+    async def handle_runtime_apply(self, request):
+        self._require_secret_access(request)
+        self._require_json(request)
+        if self.runtime is None:
+            raise web.HTTPNotFound()
+        if request.headers.get('X-Xiaozhi-Settings') != '1' or request.query_string:
+            raise web.HTTPForbidden()
+        from core.cluster.runtime_protocol import decode
+        try:
+            body = decode(await asyncio.wait_for(request.read(), 2))
+            if not isinstance(body, dict) or set(body) != {'revision', 'recover'}:
+                raise ValueError
+            job = await self.runtime.start(body['revision'], body['recover'])
+        except ConfigConflict:
+            return self._disable_cache(web.json_response({'code': 'runtime_config_changed',
+                'error': 'Cloud changed. Sync Settings before applying runtime.'}, status=409))
+        except ConfigUnavailable:
+            return self._disable_cache(web.json_response({'code': 'runtime_unavailable',
+                'error': 'All three runtime agents must be available. Check runtime status for an interrupted operation.'}, status=503))
+        except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, asyncio.TimeoutError):
+            raise web.HTTPBadRequest(text='Expected the saved revision and recovery flag') from None
+        return self._disable_cache(web.json_response({'protocol': 'xiaozhi-runtime-apply-v1', 'job': job}, status=202))
+
+    async def handle_runtime_peer(self, request):
+        if self.runtime is None or request.query_string or request.content_type != 'application/json':
+            raise web.HTTPNotFound()
+        from core.cluster.secret_transport import decode
+        try:
+            data = await asyncio.wait_for(request.read(), 2)
+            decode(data)
+            source, operation, payload = self.runtime.cipher.open(data, 'runtime-request',
+                self.runtime.node, remote=request.remote)
+            result = await self.runtime.receive(source, operation, payload)
+            envelope = self.runtime.cipher.seal('runtime-response', self.runtime.node, source, operation, result)
+        except Exception:
+            raise web.HTTPForbidden(text='Runtime peer operation not confirmed') from None
+        return self._disable_cache(web.json_response(envelope))

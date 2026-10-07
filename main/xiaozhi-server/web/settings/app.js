@@ -18,8 +18,9 @@ import {
 } from "./resources.js";
 import { $, clone, labelFor, state, toast, escapeHtml } from "./shared.js";
 import { initializeSecrets } from "./secrets.js";
-import { renderCluster, setClusterActive } from "./cluster.js?v=46";
+import { renderCluster, setClusterActive } from "./cluster.js?v=48";
 import { initializeClusterLogs, setClusterLogsActive } from "./cluster_logs.js?v=47";
+import { initializeRuntimeApply, setRuntimeApplyEnabled } from "./runtime_apply.js?v=48";
 
 const PAGE_IDS = [
   "overview",
@@ -124,7 +125,7 @@ function renderSource() {
   $("#sourceProvider").value = source.pending_provider || source.config_provider || "local";
   if (state.controlPlane) {
     $("#sourceSemantics").textContent =
-      "Standalone control plane manages desired configuration only. Node exceptions retain precedence; legacy sources keep their original scope until explicit migration. Conversation runtime is not started here, and cluster rolling restart is unavailable.";
+      "Save manages shared desired configuration; node exceptions retain precedence and legacy sources keep their scope until explicit migration. Apply runtime updates installed voice workers and cores when enabled. It pauses conversations while models restart; model/dependency changes still require deployment.";
   }
   $("#switchSourceButton").disabled = state.controlPlane || Boolean(source.pending_provider);
   $("#syncSourceButton").disabled = Boolean(source.pending_provider);
@@ -257,6 +258,7 @@ async function loadSettings() {
     if (!response.ok) throw new Error(await response.text());
     const payload = await response.json();
     state.secretCapabilities = Boolean(payload.control_plane?.capabilities?.secret_provisioning);
+    setRuntimeApplyEnabled(payload.control_plane?.capabilities?.runtime_apply);
     state.config = payload.config;
     state.original = clone(payload.config);
     state.patch = {};
@@ -319,6 +321,7 @@ async function saveSettings() {
       throw new Error(payload.error || "Save failed");
     }
     state.secretCapabilities = Boolean(payload.control_plane?.capabilities?.secret_provisioning);
+    setRuntimeApplyEnabled(payload.control_plane?.capabilities?.runtime_apply);
     state.config = payload.config;
     state.configPath = payload.config_path;
     state.configurationSource = payload.configuration_source || {};
@@ -462,6 +465,7 @@ $("#syncSourceButton").addEventListener("click", syncSource);
 $("#switchSourceButton").addEventListener("click", switchSource);
 initializeConfiguration(updateDirtyState);
 initializeSecrets(loadSettings);
+initializeRuntimeApply();
 applyControlPlaneMode();
 if (state.controlPlane) initializeClusterLogs();
 if (!state.controlPlane) {
