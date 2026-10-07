@@ -48,7 +48,7 @@ class SettingsAccess:
         self._require_access(request)
         filename = request.match_info["filename"]
         if filename not in {
-            "app.js", "configuration.js", "cluster.js", "diagnostics.js", "favicon.svg",
+            "app.js", "configuration.js", "cluster.js", "cluster_logs.js", "diagnostics.js", "favicon.svg",
             "memory.js", "push_tts.js", "resources.js", "shared.js", "soundbank.js",
             "logs.js", "secrets.js", "styles.css",
         }:

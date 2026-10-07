@@ -6,6 +6,7 @@ import hmac
 import time
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -13,6 +14,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from core.cluster.transport_core import CoreConfig, TransportCore
 from test_worker_asr import AUDIO, Bus, Pipeline
 from core.cluster.asr_worker import ASRService
+from core.cluster.voice_turn import VoiceTurn
 
 
 class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
@@ -31,6 +33,7 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         self.core = TransportCore(self.config,self.rpc,8)
         self.app = web.Application()
         self.app.router.add_get('/xiaozhi/v1/',self.core.websocket)
+        self.app.router.add_get('/diagnostics',self.core.voice_diagnostics)
         self.client = TestClient(TestServer(self.app))
         await self.client.start_server()
 
@@ -72,6 +75,14 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(messages.index(partials[-1]), next(index for index, message in enumerate(messages)
             if message.get('type') == 'llm' and message.get('state') == 'final'))
         self.assertFalse(any(message['type']=='tts' for message in messages))
+        diagnostics = await (await self.client.get('/diagnostics')).json()
+        events = diagnostics['events']
+        self.assertIn('asr_admitted', [entry['event'] for entry in events])
+        self.assertEqual(next(entry['worker_id'] for entry in events if entry['event'] == 'asr_admitted'), 'deskb2x')
+        self.assertNotIn('transcript', str(diagnostics))
+        self.assertNotIn('fixture-key', str(diagnostics))
+        self.assertEqual(diagnostics['sessions']['done'], 1)
+        self.assertEqual((await self.client.get('/diagnostics?secret=value')).status, 403)
         await ws.close()
         await asyncio.sleep(0)
         self.assertFalse(self.worker.turns)
@@ -95,6 +106,35 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.generated)
         self.assertFalse(self.worker.turns)
         await ws.close()
+
+    async def test_closed_session_is_not_active_while_voice_cleanup_is_pending(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = VoiceTurn.abort
+        async def blocked_abort(voice):
+            entered.set()
+            # Model owned native cleanup that still has to finish after the
+            # HTTP transport cancels its handler on peer disconnect.
+            while not release.is_set():
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    pass
+            await original(voice)
+        ws, _ = await self.connect()
+        self.assertEqual(len(self.core.sessions), 1)
+        with patch.object(VoiceTurn, 'abort', blocked_abort):
+            try:
+                await ws.close()
+                await asyncio.wait_for(entered.wait(), timeout=1)
+                self.assertFalse(self.core.sessions)
+                self.assertFalse(self.core.voices)
+                self.assertEqual(len(self.core.sockets), 1)
+            finally:
+                release.set()
+                async def closed():
+                    while self.core.sockets:
+                        await asyncio.sleep(0.001)
+                await asyncio.wait_for(closed(), timeout=1)
 
 
 if __name__=='__main__': unittest.main()

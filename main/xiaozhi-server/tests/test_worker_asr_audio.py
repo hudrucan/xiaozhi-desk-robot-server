@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.cluster.asr_config import load_bundle
-from core.cluster.asr_pipeline import ASRPipeline, AudioProcessor
+from core.cluster.asr_pipeline import ASRPipeline, AudioProcessor, AudioLimitExceeded
 from export_worker_asr_config import build_bundle
 from export_worker_llm_config import write_private
 
@@ -63,7 +63,7 @@ class AudioTests(unittest.IsolatedAsyncioTestCase):
             processor.decode(encoder.encode(bytes(640), 320))
         processor = AudioProcessor(None)
         processor.samples = 480000
-        with self.assertRaises(ValueError):
+        with self.assertRaises(AudioLimitExceeded):
             processor.decode(encoder.encode(bytes(1920), 960))
 
     async def test_vad_silence_is_measured_in_samples_not_elapsed_network_time(self):

@@ -156,13 +156,31 @@ secret reference names. There is no presence database or `/api/cluster/nodes` ye
 
 ## Standalone Settings limitations
 
+The Logs tab in standalone mode polls `GET /api/cluster/diagnostics` every two
+seconds while visible. It shows bounded voice lifecycle events from each core,
+with a node selector, pause control, worker admission, fixed failure codes and
+elapsed milliseconds since turn start. Each core retains its last 64 events in
+memory; restarting that core clears its history. Stage counts refer to sessions
+coordinated by that core, not provider utilization on that physical node.
+An unavailable peer is explicitly unconfirmed; it is never presented as idle.
+MCP is reported unavailable until distributed tool execution is implemented.
+
+The control plane reads deployment-owned hosts from the existing private peer
+membership, using `XIAOZHI_DIAGNOSTIC_CORE_PORT` (default 8000). Without configured
+membership it reports only the local core. Core `/diagnostics` accepts only the
+configured private gateway/node addresses. No arbitrary query URLs, redirects,
+provider loading, Cloud reads, audio, transcripts or credentials are involved.
+The safe `voice_diagnostics` capability is distinct from raw process `logs`.
+Full systemd/provider diagnostics remain available with `journalctl` on the node;
+this view is not a journal collector. The normal `app.py` Logs view is unchanged.
+
 The Cluster page shows shared/legacy scope, current node, revisions, sync/NATS
 state, reconciliation timestamps and the configured VIP (`192.168.1.186` by
 default). Polling status does not replace unsaved edits or their CAS base revision;
 use Sync to load a newer desired configuration.
 
 `GET /api/settings/capabilities` and Config responses explicitly identify
-standalone mode. Runtime-only routes are not mounted: resource monitoring, logs,
+standalone mode. Runtime-only routes are not mounted: resource monitoring, raw process logs,
 restart, Push TTS, active Memory editing, soundbank generation/optimization/preview
 and source switching. Their controls are hidden/disabled with a visible explanation.
 Desired provider configuration remains editable without instantiating providers.

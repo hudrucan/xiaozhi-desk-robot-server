@@ -261,10 +261,12 @@ class ControlPlaneApiTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.get("/settings/")
         self.assertIn('data-settings-mode="control-plane"', await response.text())
         self.assertEqual((await self.client.get("/settings/cluster.js")).status, 200)
+        self.assertEqual((await self.client.get("/settings/cluster_logs.js")).status, 200)
         self.assertEqual((await self.client.get("/settings/data.yaml")).status, 404)
         capabilities = await (await self.client.get("/api/settings/capabilities")).json()
         self.assertEqual(capabilities["mode"], "standalone")
         self.assertFalse(capabilities["capabilities"]["rolling_restart"])
+        self.assertTrue(capabilities["capabilities"]["voice_diagnostics"])
         for method, path in (
             ("GET", "/api/settings/status"), ("GET", "/api/settings/logs"),
             ("GET", "/api/settings/memory"), ("POST", "/api/settings/restart"),

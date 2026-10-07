@@ -109,6 +109,13 @@ are never moved on ownership changes. A core/node failure requires a fresh sessi
 
 ## Panel
 
+An established session stops counting as active as soon as its WebSocket handler
+enters teardown. Provider cleanup remains owned and awaited, and the socket quota
+is retained until cleanup finishes; slow cleanup cannot leave a disconnected
+client advertised as an active `Co` session. After abrupt firmware power loss,
+the gateway must first detect the lost MQTT connection (up to 1.5 times the
+negotiated keepalive). This detection delay is separate from provider cleanup.
+
 The cluster panel polls its local core status. `Co NN` means the local core owns
 an established session, `nt NN` marks an authenticated MQTT connection (including
 idle), and `iP NN` marks actual VIP ownership. Multiple roles rotate in that order

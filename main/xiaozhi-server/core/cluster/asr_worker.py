@@ -45,6 +45,8 @@ class ASRService:
         if turn.finishing:
             return
         turn.finishing = True
+        LOGGER.warning('ASR turn failed; worker_id=%s turn_id=%s code=%s frames=%d',
+                       self.worker_id, turn.request['turn_id'], code, turn.seq)
         try:
             await self.send(turn.request['result_subject'], turn, 'error', error=code)
         finally:
@@ -66,6 +68,8 @@ class ASRService:
             await self.send(message.reply, turn, 'error', error=error)
             return
         self.turns[request['turn_id']] = turn
+        LOGGER.info('ASR turn admitted; worker_id=%s core_id=%s turn_id=%s',
+                    self.worker_id, request['core_id'], request['turn_id'])
         turn.task = asyncio.create_task(self.execute(turn))
         def finished(task):
             if self.turns.get(request['turn_id']) is turn:
@@ -149,6 +153,8 @@ class ASRService:
                         turn.ending = True
                         text = await asyncio.wait_for(pipeline.finish(), timeout=5)
                         turn.finishing = True
+                        LOGGER.info('ASR final ready; worker_id=%s turn_id=%s frames=%d',
+                                    self.worker_id, turn.request['turn_id'], turn.seq)
                         await self.send(turn.request['result_subject'], turn, 'final', text=text)
                         return
         except asyncio.CancelledError:

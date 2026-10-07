@@ -19,6 +19,7 @@ import {
 import { $, clone, labelFor, state, toast, escapeHtml } from "./shared.js";
 import { initializeSecrets } from "./secrets.js";
 import { renderCluster, setClusterActive } from "./cluster.js?v=46";
+import { initializeClusterLogs, setClusterLogsActive } from "./cluster_logs.js?v=47";
 
 const PAGE_IDS = [
   "overview",
@@ -35,11 +36,14 @@ const PAGE_IDS = [
   "cluster",
 ];
 const STATUS_SCOPES = { overview: "overview", diagnostics: "diagnostics" };
-const RUNTIME_PAGES = ["diagnostics", "logs", "soundbank", "memory"];
+const RUNTIME_PAGES = ["diagnostics", "soundbank", "memory"];
 
 function applyControlPlaneMode() {
   document.querySelectorAll("[data-control-plane]").forEach((element) => {
     element.classList.toggle("hidden", !state.controlPlane);
+  });
+  document.querySelectorAll("[data-runtime-logs]").forEach((element) => {
+    element.classList.toggle("hidden", state.controlPlane);
   });
   if (!state.controlPlane) return;
   RUNTIME_PAGES.forEach((page) => {
@@ -417,6 +421,7 @@ function setActivePage(page, options = {}) {
   if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "auto" });
   restartStatusPolling();
   setClusterActive(state.controlPlane && nextPage === "cluster" && !document.hidden);
+  setClusterLogsActive(state.controlPlane && nextPage === "logs" && !document.hidden);
   if (!state.controlPlane) {
     setLogsActive(nextPage === "logs" && !document.hidden);
     if (nextPage === "memory") loadMemory();
@@ -437,10 +442,12 @@ function initializeNavigation() {
     if (document.hidden) {
       stopStatusPolling();
       setClusterActive(false);
+      setClusterLogsActive(false);
       if (!state.controlPlane) setLogsActive(false);
     } else {
       restartStatusPolling();
       setClusterActive(state.controlPlane && state.activePage === "cluster");
+      setClusterLogsActive(state.controlPlane && state.activePage === "logs");
       if (!state.controlPlane) setLogsActive(state.activePage === "logs");
     }
   });
@@ -456,6 +463,7 @@ $("#switchSourceButton").addEventListener("click", switchSource);
 initializeConfiguration(updateDirtyState);
 initializeSecrets(loadSettings);
 applyControlPlaneMode();
+if (state.controlPlane) initializeClusterLogs();
 if (!state.controlPlane) {
   initializeMemory();
   initializeLogs();

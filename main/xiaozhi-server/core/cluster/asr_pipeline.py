@@ -6,6 +6,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 
+class AudioLimitExceeded(TimeoutError):
+    """A bounded admission expired, rather than receiving malformed audio."""
+
+
 class SileroEngine:
     def __init__(self, config):
         import numpy as np
@@ -39,7 +43,7 @@ class AudioProcessor:
             raise ValueError('Audio frame differs from negotiated 60ms')
         self.samples += len(pcm) // 2
         if self.samples > 16000 * 30:
-            raise ValueError('Audio turn exceeds 30 seconds')
+            raise AudioLimitExceeded('Audio admission exceeds 30 seconds')
         voiced, ended = False, False
         if self.engine:
             np, config = self.engine.np, self.engine.config

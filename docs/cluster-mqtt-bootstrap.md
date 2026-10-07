@@ -48,7 +48,10 @@ It is not a public enrollment/authentication service. Do not expose it externall
 
 Bootstrap requires operational HTTP, a usable validated local desired snapshot,
 a root-managed applied ingress snapshot, and agreement between Cloud desired VIP
-and the applied VIP. It reads cached metadata rather than live Drive per request.
+and the applied VIP. It uses an immutable VIP/timezone view captured from the last
+validated desired snapshot after startup, refresh or a Settings operation. Requests
+do not wait behind Cloud reconciliation, resolve configuration layers, or schedule
+Soundbank reconciliation. Only the bounded applied ingress file is read per request.
 If a future desired VIP differs from the currently applied VIP, credentials are
 not issued for an unreachable new address: the endpoint returns unavailable until
 a separately reviewed ingress rollout reconciles them. No VIP migration is done.

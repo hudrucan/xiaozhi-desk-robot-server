@@ -30,6 +30,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         capabilities = copy.deepcopy(CAPABILITIES)
         capabilities["secret_provisioning"] = self.secrets is not None
         capabilities["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
+        capabilities["voice_diagnostics"] = True
         return {"protocol": CONTROL_PROTOCOL, "capability_version": 1,
                 "mode": "standalone", "capabilities": capabilities}
 
@@ -114,6 +115,7 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         payload = self.reconciliation.status()
         payload["capabilities"]["secret_provisioning"] = self.secrets is not None
         payload["capabilities"]["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
+        payload["capabilities"]["voice_diagnostics"] = True
         return self._disable_cache(web.json_response(payload))
 
     async def handle_soundbank_cluster(self, request):
@@ -153,6 +155,39 @@ class ControlPlaneSettingsHandler(SettingsAccess):
             "scope": "configured_peers" if peers is not None else "local_only",
             "desired_revision": revision, "ready_nodes": ready, "expected_nodes": len(nodes),
             "state": "ready" if ready == len(nodes) else "pending", "nodes": results}))
+
+    async def handle_voice_diagnostics(self, request):
+        self._require_access(request)
+        if request.query_string:
+            raise web.HTTPBadRequest()
+        from core.cluster.voice_diagnostics import PROTOCOL, safe_snapshot
+        config = self.reconciliation.config
+        peers = config.secrets
+        nodes = peers.nodes if peers is not None else ((self.reconciliation.source['node_id'], None),)
+        # Deployment-owned hosts only; no user URL, redirects, credentials or proxy.
+        async with ClientSession(trust_env=False, timeout=ClientTimeout(total=2)) as session:
+            async def one(node, endpoint):
+                try:
+                    host = urlsplit(endpoint).hostname if endpoint is not None else config.host
+                    if host in {'0.0.0.0', '::'}:
+                        host = '127.0.0.1' if host == '0.0.0.0' else '::1'
+                    if ':' in host:
+                        host = f'[{host}]'
+                    url = f'http://{host}:{config.diagnostic_core_port}/diagnostics'
+                    async with session.get(url, allow_redirects=False) as response:
+                        if response.status != 200:
+                            raise ValueError
+                        data = bytearray()
+                        async for chunk in response.content.iter_chunked(4096):
+                            data.extend(chunk)
+                            if len(data) > 32768:
+                                raise ValueError
+                    return {'state': 'ready', **safe_snapshot(json.loads(data), node)}
+                except Exception:
+                    return {'node_id': node, 'state': 'unavailable'}
+            results = await asyncio.gather(*(one(node, endpoint) for node, endpoint in nodes))
+        return self._disable_cache(web.json_response({'protocol': PROTOCOL,
+            'scope': 'configured_peers' if peers is not None else 'local_only', 'nodes': results}))
 
     def _require_secret_access(self, request):
         self._require_access(request)

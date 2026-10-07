@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0b0906" />
     <title>Xiaozhi Server Settings</title>
     <link rel="icon" href="/settings/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/settings/styles.css?v=43" />
+    <link rel="stylesheet" href="/settings/styles.css?v=44" />
   </head>
   <body>
     <div class="ambient ambient-one"></div>
@@ -299,7 +299,29 @@
           </section>
 
           <section id="logs" class="page-section">
-            <div class="section-heading">
+            <div class="section-heading hidden" data-control-plane>
+              <div>
+                <p class="eyebrow">All configured nodes</p>
+                <h2>Logs</h2>
+                <p class="section-copy">Voice session events and errors from each core. Times show milliseconds since that turn started.</p>
+              </div>
+              <span class="badge" id="clusterLogStatus">Connecting</span>
+            </div>
+            <article class="panel log-panel hidden" data-control-plane>
+              <header class="log-toolbar">
+                <div class="log-filters">
+                  <label><span>Node</span><select id="clusterLogNode"><option value="all">All nodes</option></select></label>
+                  <label><span>Follow</span><select id="clusterLogFollow"><option value="yes">Live</option><option value="no">Paused</option></select></label>
+                </div>
+              </header>
+              <div class="cluster-voice-summary" id="clusterVoiceSummary"></div>
+              <div class="log-console" id="clusterLogViewport" role="log" aria-live="off">
+                <div class="log-feed" id="clusterLogFeed"><div class="log-empty">Waiting for node diagnostics.</div></div>
+              </div>
+              <footer class="log-footer"><span id="clusterLogCount">0 events</span><span>Last 64 events per core · cleared on restart</span></footer>
+            </article>
+            <p class="section-copy hidden" data-control-plane>Lifecycle metadata only; no transcript, audio or credentials. Raw systemd logs remain in journalctl. MCP/tool execution is not integrated into the distributed core yet.</p>
+            <div class="section-heading" data-runtime-logs>
               <div>
                 <p class="eyebrow">Current process only</p>
                 <h2>Logs</h2>
@@ -308,7 +330,7 @@
               <span class="badge" id="logStatus"><i></i>Current run</span>
             </div>
 
-            <article class="panel log-panel">
+            <article class="panel log-panel" data-runtime-logs>
               <header class="log-toolbar">
                 <div class="log-filters">
                   <label>
@@ -477,6 +499,6 @@
       </div>
     </div>
 
-    <script type="module" src="/settings/app.js?v=46"></script>
+    <script type="module" src="/settings/app.js?v=47"></script>
   </body>
 </html>

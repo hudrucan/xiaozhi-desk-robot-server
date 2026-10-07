@@ -58,8 +58,8 @@ Audio packets have a two-byte header length, bounded JSON metadata and raw Opus.
 They are not base64 PCM. Audio sequence must match exactly; an invalid gap fails
 the turn. Admission is bounded to three seconds; each input acknowledgment to
 two seconds. A lease is refreshed every second and expires after four seconds;
-its independent watchdog also cancels a blocked provider operation. Whole-turn
-expiry is at most forty seconds, with thirty seconds captured audio and five
+its independent watchdog also cancels a blocked provider operation. Each ASR admission
+expires after at most forty seconds, with thirty seconds captured audio and five
 seconds finalization. Two turns per worker, 64 input frames per turn, 4 KiB per
 Opus frame and 16 KiB UTF-8 per transcript bound memory and work admission.
 
@@ -69,9 +69,22 @@ thresholds/silence duration and ten frames of pre-roll. Realtime listening is
 explicitly unsupported. Native inference is owned and joined before release;
 native code cannot be forcibly interrupted like an async network call.
 
-Core NATS is at-most-once. No replay, JetStream, automatic retry, speech storage
-or mid-turn migration exists. Worker loss or reconnect fails the turn; a later
-turn can select another subscriber. NATS sequence checks detect gaps after core
+Core NATS is at-most-once. No replay, JetStream or speech storage exists. While
+the client is still Listening, an expired/unavailable/busy/failed provider admission
+is released and the core opens a fresh queue-balanced ASR admission with capped
+0.25–2 second backoff. MQTT, the gateway/core session and listening generation
+remain unchanged. An empty auto-mode transcript also reopens ASR without completing
+the listening turn. The 30-second decoded-audio bound is an expiry, not malformed
+audio; idle audio therefore does not permanently disable recognition.
+
+This resets recognition, not the conversation. Old partial text is cleared and
+never passed to LLM. Only ten recent Opus frames are retained during recovery;
+audio already accepted by a lost worker is not replayed and the user may need to
+repeat an interrupted utterance. Explicit listen/stop, abort, new listen/start or
+transport disconnect ends/cancels recovery. Revision mismatch and malformed input
+remain terminal errors; LLM/TTS jobs are not automatically retried. Successful ASR
+final delivery does not wait for the worker's independently owned provider cleanup.
+NATS sequence checks detect gaps after core
 forwarding. The current gateway filters duplicate/out-of-order UDP sequence but
 does not forward the UDP sequence to core; this phase does not promise detection
 of every packet lost before the gateway or lossless UDP audio.

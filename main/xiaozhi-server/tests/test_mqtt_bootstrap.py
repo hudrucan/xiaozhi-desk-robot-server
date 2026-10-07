@@ -1,5 +1,6 @@
 """Firmware-compatible MQTT bootstrap, fake Cloud/NATS and loopback HTTP only."""
 import base64
+import asyncio
 import hashlib
 import hmac
 import json
@@ -66,6 +67,34 @@ class BootstrapTests(unittest.IsolatedAsyncioTestCase):
         value=await (await self.client.get('/xiaozhi/ota/',headers=HEADERS)).json()
         self.assertEqual(value['mqtt']['endpoint'],'192.168.1.186:1883')
         self.assertEqual(value['firmware']['url'],'')
+
+    async def test_bootstrap_does_not_wait_for_cloud_operation_or_resolve_store(self):
+        from core.control_plane import RECONCILIATION_KEY
+        service = self.client.server.app[RECONCILIATION_KEY]
+        async with service._operation_lock:
+            with patch.object(self.store, 'defaults_unlocked', side_effect=AssertionError('Unexpected layer resolution')), \
+                 patch.object(self.store, 'read_unlocked', side_effect=AssertionError('Unexpected layer resolution')):
+                response = await asyncio.wait_for(self.client.post(
+                    '/xiaozhi/ota/', json={}, headers=HEADERS), timeout=1)
+                self.assertEqual(response.status, 200)
+                self.assertEqual((await response.json())['mqtt']['endpoint'], '192.168.1.186:1883')
+
+    async def test_refreshed_cloud_snapshot_updates_bootstrap_and_retains_vip_drift_guard(self):
+        from core.control_plane import RECONCILIATION_KEY
+        service = self.client.server.app[RECONCILIATION_KEY]
+        obj = json.loads(self.fixture.drive.files[self.fixture.drive.manifest['config']['file_id']])
+        obj['layers']['cluster']['cluster'] = {'ingress': {'vip': '192.168.1.187'}}
+        obj['layers']['cluster']['server'] = {'timezone_offset': 8}
+        self.fixture.drive.publish_object(obj, 2)
+        self.assertTrue(await service.reconcile())
+        self.assertEqual(service.bootstrap_context, ('192.168.1.187', 8))
+        self.assertEqual((await self.client.get('/xiaozhi/ota/')).status, 503)
+        self.state.write_text(json.dumps({'vip': '192.168.1.187'}))
+        response = await self.client.post('/xiaozhi/ota/', json={}, headers=HEADERS)
+        self.assertEqual(response.status, 200)
+        value = await response.json()
+        self.assertEqual(value['mqtt']['endpoint'], '192.168.1.187:1883')
+        self.assertEqual(value['server_time']['timezone_offset'], 480)
 
     async def test_invalid_identity_query_json_and_oversize_body_fail_safely(self):
         for headers in ({},{'Device-Id':'bad','Client-Id':'fixture'},{**HEADERS,'Client-Id':'inject@@@topic'}):

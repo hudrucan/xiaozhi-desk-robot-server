@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiohttp import web
-from config.config_loader import merge_configs
 
 PROTOCOL = 'xiaozhi-mqtt-bootstrap-v1'
 MAX_REQUEST_BYTES = 16384
@@ -69,6 +68,10 @@ class MqttBootstrap:
         service = self.reconciliation
         if not service.http_operational or not service.healthy:
             raise OSError('Validated bootstrap state unavailable')
+        context = service.bootstrap_context
+        if context is None:
+            raise OSError('Validated bootstrap metadata unavailable')
+        desired, hours = context
         path = Path(self.config.state_file)
         if path.is_symlink():
             raise ValueError('Invalid applied ingress state')
@@ -82,14 +85,10 @@ class MqttBootstrap:
         vip = ipaddress.IPv4Address(snapshot['vip'])
         if vip.is_unspecified or vip.is_multicast or vip.is_loopback or vip.is_reserved:
             raise ValueError('Invalid applied ingress VIP')
-        with service.store.locked():
-            effective = merge_configs(service.store.defaults_unlocked(), service.store.read_unlocked())
-            desired = effective.get('cluster', {}).get('ingress', {}).get('vip')
-            if desired != str(vip):
-                raise ValueError('Desired and applied ingress VIP differ')
-            hours = effective.get('server', {}).get('timezone_offset', 0)
-            if type(hours) not in (int, float) or not math.isfinite(hours) or not -12 <= hours <= 14:
-                raise ValueError('Invalid bootstrap time zone')
+        if desired != str(vip):
+            raise ValueError('Desired and applied ingress VIP differ')
+        if type(hours) not in (int, float) or not math.isfinite(hours) or not -12 <= hours <= 14:
+            raise ValueError('Invalid bootstrap time zone')
         return str(vip), int(round(hours * 60))
 
     @staticmethod
@@ -126,7 +125,9 @@ class MqttBootstrap:
             except (ValueError, TypeError, UnicodeError, RecursionError, asyncio.TimeoutError):
                 return self._response({'error': 'invalid_bootstrap_payload'}, 400)
         try:
-            vip, timezone = await self.reconciliation.operation(self._context)
+            # Only a bounded applied-state file read remains. This read-only task
+            # cannot mutate configuration after request cancellation.
+            vip, timezone = await asyncio.to_thread(self._context)
         except (OSError, ValueError, TypeError, KeyError):
             return self._response({'protocol': PROTOCOL, 'ready': False, 'error': 'bootstrap_unavailable'}, 503)
         if operator_get:

@@ -18,6 +18,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from config.node_identity import hostname_node_id
+from .voice_diagnostics import VoiceDiagnostics, PROTOCOL as DIAGNOSTIC_PROTOCOL, STATES
 
 LOGGER = logging.getLogger("xiaozhi.core")
 PROTOCOL = "xiaozhi-core-transport-v1"
@@ -122,6 +123,8 @@ class TransportCore:
             self.tts_pool = TTSPool(worker_rpc, tts_bundle)
         self.sockets = set()
         self.sessions = set()
+        self.voices = {}
+        self.diagnostics = VoiceDiagnostics()
         self.received_audio_frames = 0
         self.vip_owner = None
         self.stopping = False
@@ -174,6 +177,16 @@ class TransportCore:
             "capabilities": (['voice_text', 'voice_tts'] if self.tts_pool else ['voice_text']) if self.voice_revision is not None else [], "conversation_runtime": False,
             "tts": self.tts_pool.status() if self.tts_pool else {'enabled': False},
             "worker_rpc": self.worker_rpc.status() if self.worker_rpc else {"state": "disabled"}})
+
+    async def voice_diagnostics(self, request):
+        if request.remote not in self.config.gateway_ips or request.query_string:
+            raise web.HTTPForbidden()
+        counts = {state: 0 for state in STATES}
+        for voice in self.voices.values():
+            counts[voice.state] += 1
+        return web.json_response({'protocol': DIAGNOSTIC_PROTOCOL, 'node_id': self.config.node_id,
+            'sessions': counts, 'events': self.diagnostics.snapshot(), 'mcp': False},
+            headers={'Cache-Control': 'no-store'})
 
     async def worker_probe(self, request):
         # A private deployment diagnostic; never mounted in Settings or exposed
@@ -253,11 +266,13 @@ class TransportCore:
             if self.voice_revision is not None:
                 from .voice_turn import VoiceTurn
                 voice = VoiceTurn(self.worker_rpc, self.voice_revision, audio, session, ws.send_json,
-                    self.tts_pool, ws.send_bytes if self.tts_pool else None)
+                    self.tts_pool, ws.send_bytes if self.tts_pool else None, self.diagnostics)
+                self.voices[session] = voice
             await ws.send_json({"type": "hello", "version": 2, "transport": "websocket",
                 "session_id": session, "audio_params": audio, "core_id": self.config.node_id,
                 "capabilities": (['voice_text', 'voice_tts'] if self.tts_pool else ['voice_text']) if voice else [], "conversation_runtime": False})
             self.sessions.add(session)
+            self.diagnostics.record('session_opened', session)
             LOGGER.info("core_id=%s session opened active=%d", self.config.node_id, len(self.sessions))
             async for frame in ws:
                 if frame.type == WSMsgType.BINARY:
@@ -302,20 +317,28 @@ class TransportCore:
             if ws.prepared:
                 await ws.close(code=1008, message=b"Invalid transport message")
         finally:
-            if voice:
-                await voice.abort()
-            self.sockets.discard(ws)
+            # This transport session is over even if owned provider cleanup
+            # takes longer. Never advertise a disconnected session as active.
             if session is not None:
+                self.voices.pop(session, None)
                 self.sessions.discard(session)
+                self.diagnostics.record('session_closed', session)
                 LOGGER.info("core_id=%s session closed active=%d", self.config.node_id, len(self.sessions))
-            if ws.prepared:
-                await ws.close()
+            try:
+                if voice:
+                    await voice.abort()
+            finally:
+                # Retain the socket quota while its handler is cleaning up.
+                self.sockets.discard(ws)
+                if ws.prepared:
+                    await ws.close()
         return ws
 
     async def start(self):
         app = web.Application(client_max_size=MAX_JSON)
         app.router.add_get("/xiaozhi/v1/", self.websocket)
         app.router.add_get("/status", self.status)
+        app.router.add_get("/diagnostics", self.voice_diagnostics)
         app.router.add_get("/readyz", self.ready)
         app.router.add_post("/api/workers/probe", self.worker_probe)
         app.router.add_post("/api/workers/llm", self.worker_llm_probe)

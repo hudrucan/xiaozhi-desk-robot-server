@@ -67,6 +67,7 @@ class ConfigReconciliation:
                        "runtime_revision": None, "restart_required": True,
                        "sync_state": "unavailable", "sync_status": "not_synced"}
         self.vip = None
+        self.bootstrap_context = None
         self._operation_lock = asyncio.Lock()
         self._wake, self._stop, self._closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
         self._pending_revision = 0
@@ -90,12 +91,15 @@ class ConfigReconciliation:
                 obj = snapshot["payload"]["object"] if snapshot else None
                 self.healthy = bool(obj and centralized(obj)
                                     and self.store.bootstrap["node_id"] in obj["layers"]["nodes"])
-                self.vip = self.store.defaults_unlocked().get("cluster", {}).get("ingress", {}).get("vip")
-                overrides = self.store.read_unlocked().get("cluster", {}).get("ingress", {})
-                self.vip = overrides.get("vip", self.vip)
+                effective = merge_configs(self.store.defaults_unlocked(), self.store.read_unlocked())
+                self.vip = effective.get("cluster", {}).get("ingress", {}).get("vip")
+                # Publish one immutable, non-secret view for bootstrap requests.
+                # They must not queue behind Drive refreshes or resolve layers again.
+                self.bootstrap_context = (
+                    self.vip, effective.get("server", {}).get("timezone_offset", 0)
+                ) if self.healthy else None
                 if self._loop is not None:
                     if obj and shared_cluster(obj):
-                        effective = merge_configs(*self.store._resolve(obj))
                         self._loop.call_soon_threadsafe(self.soundbank.request,
                             snapshot["payload"]["manifest"]["revision"], effective)
                     else:
@@ -103,6 +107,7 @@ class ConfigReconciliation:
         except (OSError, ValueError, TypeError, KeyError):
             self.healthy = False
             self.vip = None
+            self.bootstrap_context = None
 
     async def operation(self, function, *args, **kwargs):
         """Serialize control-plane edits/reads/refreshes and keep worker threads owned."""

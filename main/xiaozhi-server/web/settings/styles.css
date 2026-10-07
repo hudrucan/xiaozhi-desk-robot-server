@@ -299,6 +299,11 @@ main { grid-column: 2; min-width: 0; }
 .log-line:hover { background: rgba(213, 168, 94, 0.05); }
 .log-line time { color: #655d52; font-variant-numeric: tabular-nums; }
 .log-line code { min-width: 0; color: inherit; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cluster-log-line { grid-template-columns: 92px 78px 140px minmax(0, 1fr); }
+.cluster-voice-summary { display: flex; flex-wrap: wrap; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.cluster-voice-summary div { display: grid; gap: 5px; min-width: 170px; }
+.cluster-voice-summary strong { font-size: 12px; }
+.cluster-voice-summary span { color: var(--muted); font-size: 11px; }
 .log-source { align-self: start; width: max-content; min-width: 42px; padding: 2px 5px; border: 1px solid rgba(94, 75, 49, 0.48); border-radius: 5px; color: var(--faint); font: 8px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.06em; text-align: center; }
 .log-source.source-local_llm { border-color: rgba(105, 155, 184, 0.4); color: #8fbad0; background: rgba(75, 131, 164, 0.06); }
 .log-source.source-local_vllm { border-color: rgba(145, 121, 183, 0.42); color: #b7a1d7; background: rgba(116, 83, 163, 0.06); }
