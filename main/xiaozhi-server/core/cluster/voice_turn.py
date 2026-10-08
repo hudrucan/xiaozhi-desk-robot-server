@@ -5,6 +5,7 @@ import time
 import copy
 
 from core.utils.wakeup_match import matches_wakeup_word, remove_punctuation_and_length
+from core.utils.text_utils import extract_emotion
 from plugins_func.tool_schemas import handle_exit_intent_function_desc
 from .session_config import DEFAULTS as SESSION_DEFAULTS
 
@@ -18,9 +19,10 @@ RECOVERY_AUDIO_FRAMES = 10
 
 
 class VoiceTurn:
-    def __init__(self, rpc, revision, audio, session_id, send, tts_pool=None, send_audio=None, diagnostics=None, mcp=None, *, device_id=None):
+    def __init__(self, rpc, revision, audio, session_id, send, tts_pool=None, send_audio=None, diagnostics=None, mcp=None, *, device_id=None, emoji_enabled=True):
         self.rpc, self.revision, self.audio = rpc, revision, audio
         self.session_id, self.send = session_id, send
+        self.emoji_enabled = emoji_enabled is True
         self.task = self.queue = None
         self.generation = 0
         self.ending = False
@@ -251,6 +253,7 @@ class VoiceTurn:
                 if llm_running:
                     self.record('llm_started')
                 first_chunk = True
+                emotion_sent = False
                 if self.tts_pool is not None:
                     from .tts_turn import TTSTurn
                     async def emit_tts(value):
@@ -271,12 +274,22 @@ class VoiceTurn:
                     tts = TTSTurn(self.tts_pool, emit_tts, send_tts)
                     self.current_tts = tts
                 async def chunk(value, seq):
-                    nonlocal first_chunk
+                    nonlocal first_chunk, emotion_sent
                     if generation != self.generation:
                         raise asyncio.CancelledError
                     if first_chunk:
                         first_chunk = False
                         self.record('llm_first_chunk', elapsed_ms=round((time.monotonic() - started) * 1000))
+                    # Match app.py: select once from the first nonempty LLM
+                    # text, before feeding TTS. Wake acknowledgements remain
+                    # fixed speech rather than a second emotion source.
+                    if not emotion_sent and fixed_response is None and value.strip():
+                        emotion_sent = True
+                        if self.emoji_enabled:
+                            emoji, emotion = extract_emotion(value)
+                            await self.emit({'type':'llm', 'text':emoji, 'emotion':emotion})
+                            if generation != self.generation:
+                                raise asyncio.CancelledError
                     if tts:
                         tts.feed(value)
                     # Additive progress event; existing firmware still handles
@@ -290,7 +303,8 @@ class VoiceTurn:
                     tools = await self.tools()
                     if generation != self.generation:
                         raise asyncio.CancelledError
-                    options = {'tools':tools, 'on_tools':self.execute_tools, 'seconds':120}
+                    options = {'tools':tools, 'on_tools':self.execute_tools, 'seconds':120,
+                               'emoji_enabled':self.emoji_enabled}
                     if self.memory is not None:
                         options['memory_context'] = await self.memory.recall(text, self.history)
                         if generation != self.generation:

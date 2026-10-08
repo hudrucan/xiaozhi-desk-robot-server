@@ -11,7 +11,7 @@ from .worker_rpc import WorkerRpcError
 
 
 class LLMStreamClient:
-    def __init__(self, client, core_id, revision, messages, seconds, on_chunk, *, tools=None, on_tools=None, memory_context=None):
+    def __init__(self, client, core_id, revision, messages, seconds, on_chunk, *, tools=None, on_tools=None, memory_context=None, emoji_enabled=None):
         self.client, self.on_chunk = client, on_chunk
         self.wire = wire
         self.on_tools = on_tools
@@ -23,6 +23,10 @@ class LLMStreamClient:
             'deadline_ms': int(time.time() * 1000) + seconds * 1000, 'dialogue': messages}
         if tools is not None:
             self.value['tools'] = tools
+        if emoji_enabled is not None:
+            if tools is None or type(emoji_enabled) is not bool:
+                raise ValueError('Emotion capability requires the tool-aware stream and a boolean')
+            self.value['emoji_enabled'] = emoji_enabled
         if memory_context is not None:
             if tools is None:
                 raise ValueError('Memory context requires the tool-aware stream')

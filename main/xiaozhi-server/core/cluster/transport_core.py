@@ -300,7 +300,8 @@ class TransportCore:
                     self.mcps[session] = mcp
                 voice = VoiceTurn(self.worker_rpc, self.voice_revision, audio, session, ws.send_json,
                     self.tts_pool, ws.send_bytes if self.tts_pool else None, self.diagnostics, mcp,
-                    device_id=request.headers.get('device-id', '').lower())
+                    device_id=request.headers.get('device-id', '').lower(),
+                    emoji_enabled=greeting.get('features', {}).get('emoji', True) is True)
                 self.voices[session] = voice
             await ws.send_json({"type": "hello", "version": 2, "transport": "websocket",
                 "session_id": session, "audio_params": audio, "core_id": self.config.node_id,

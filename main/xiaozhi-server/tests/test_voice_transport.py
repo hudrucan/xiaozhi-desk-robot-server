@@ -69,6 +69,9 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.generated),1)
         self.assertTrue(any(message.get('text')=='transcript' for message in messages))
         self.assertTrue(any(message.get('text')=='answer' for message in messages))
+        emotions = [message for message in messages if 'emotion' in message]
+        self.assertEqual([(message['text'],message['emotion']) for message in emotions], [('🙂','happy')])
+        self.assertEqual(emotions[0]['session_id'],hello['session_id'])
         partials = [message for message in messages if message.get('type') == 'llm' and message.get('state') == 'partial']
         self.assertEqual([(message['seq'], message['text']) for message in partials], [(0, 'ans'), (1, 'wer')])
         self.assertLess(messages.index(partials[-1]), next(index for index, message in enumerate(messages)
@@ -89,7 +92,8 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_device_mcp_is_discovered_and_called_without_blocking_audio_reader(self):
         from test_cluster_mcp import RAW, CALL
         calls = []
-        async def generate(revision, dialogue, on_chunk, *, tools, on_tools, seconds):
+        async def generate(revision, dialogue, on_chunk, *, tools, on_tools, seconds, emoji_enabled):
+            self.assertTrue(emoji_enabled)
             self.assertEqual(tools[0]['function']['name'],CALL['name'])
             self.assertEqual(seconds,120)
             calls.extend(await on_tools([CALL]))
@@ -129,7 +133,8 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_legacy_web_chat_trigger_uses_existing_consumption_tool(self):
         from test_cluster_mcp import RAW
         raw={**RAW,'name':'self.web_chat.consume_pending','description':'Consume original message'}
-        async def generate(revision, dialogue, on_chunk, *, tools, on_tools, seconds):
+        async def generate(revision, dialogue, on_chunk, *, tools, on_tools, seconds, emoji_enabled):
+            self.assertTrue(emoji_enabled)
             self.assertEqual(dialogue,[{'role':'user','content':'web_chat'}])
             result=await on_tools([{'id':'consume','name':'self_web_chat_consume_pending','arguments':{}}])
             self.assertEqual(result[0]['result']['content'][0]['text'],'Full original typed message')
@@ -157,6 +162,18 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
         await ws.send_json({'type':'listen','state':'start','mode':'manual'})
         self.assertEqual((await ws.receive_json(timeout=1))['code'],'conversation_runtime_unavailable')
         self.assertFalse(self.generated)
+        await ws.close()
+
+    async def test_hello_emoji_false_disables_response_emotion(self):
+        ws,_=await self.connect(features={'emoji':False})
+        await ws.send_json({'type':'listen','state':'detect','input_mode':'text','text':'Fixture request'})
+        messages=[]
+        while True:
+            message=await ws.receive_json(timeout=2)
+            messages.append(message)
+            if message.get('state')=='complete':break
+        self.assertFalse(any('emotion' in message for message in messages))
+        self.assertFalse(next(iter(self.core.voices.values())).emoji_enabled)
         await ws.close()
 
     async def test_abort_does_not_generate_llm_or_leave_asr_turn(self):

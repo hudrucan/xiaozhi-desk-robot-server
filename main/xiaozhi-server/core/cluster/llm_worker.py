@@ -5,6 +5,7 @@ import logging
 import re
 import time
 from collections import OrderedDict
+from core.utils.text_utils import SUPPORTED_EMOTION_EMOJIS
 
 from . import llm_protocol as protocol
 from . import llm_stream_protocol as streaming
@@ -186,6 +187,13 @@ class LLMWorker(Worker):
                 await self._stream_event(reply_subject, value, 'started', seq)
                 seq += 1
                 prompt = self.bundle['prompt']
+                if 'emoji_enabled' in value:
+                    # Reuse app.py's response policy without loading its prompt
+                    # manager, provider runtime or deployment-specific template.
+                    policy = ('Use at most one emoji, only at the beginning, chosen from: '
+                              + ', '.join(SUPPORTED_EMOTION_EMOJIS) + '.' if value['emoji_enabled']
+                              else 'Do not use emoji.')
+                    prompt += '\n<response_policy>\n' + policy + '\n</response_policy>'
                 if 'memory_context' in value:
                     context = '<memory>\n' + value['memory_context'] + '\n</memory>'
                     prompt = (re.sub(r'<memory>.*?</memory>', lambda _: context, prompt, flags=re.DOTALL)

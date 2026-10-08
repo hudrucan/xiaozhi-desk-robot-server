@@ -399,3 +399,5 @@ through a bounded node-local installer. It verifies all three workers/cores and
 reports actual runtime revisions, with an explicit conversation maintenance pause.
 
 Distributed conversation history and explicit Cloud Memory: [cluster-memory.md](docs/cluster-memory.md).
+
+Distributed reply emotion and firmware display compatibility: [cluster-emotion.md](docs/cluster-emotion.md).

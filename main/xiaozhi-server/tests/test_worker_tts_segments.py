@@ -391,7 +391,7 @@ class VoiceIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 patch('core.cluster.tts_turn.TTSTurn', side_effect=turn):
             await voice.run(0, asyncio.Queue(), 'manual')
         self.assertEqual([m['state'] for m in messages if m['type'] == 'tts'], ['start', 'stop'])
-        self.assertEqual([m['text'] for m in messages if m['type'] == 'llm' and m['state'] == 'final'], ['Hello, world.'])
+        self.assertEqual([m['text'] for m in messages if m['type'] == 'llm' and m.get('state') == 'final'], ['Hello, world.'])
         self.assertFalse(messages[-1]['text_only'])
         self.assertTrue(audio)
         self.assertIsNone(voice.current_tts)
