@@ -71,6 +71,23 @@ class VoiceFailureTests(unittest.IsolatedAsyncioTestCase):
         await self.voice.start_text('Fixture request')
         await self.voice.task
 
+    async def test_idle_closing_uses_valid_plain_stream_and_terminal_playback(self):
+        from core.cluster.llm_stream_client import LLMStreamClient
+        async def closing(revision, dialogue, on_chunk, **options):
+            stream = LLMStreamClient(None, 'deskb1x', revision, dialogue,
+                                    on_chunk=on_chunk, **options)
+            self.assertNotIn('tools', stream.value)
+            self.assertNotIn('emoji_enabled', stream.value)
+            await on_chunk('Goodbye for now.', 0)
+            return {'status':'ok', 'text':'Goodbye for now.', 'worker_id':'deskb2x'}
+        self.rpc.generate_stream = closing
+        await self.voice.expire_idle()
+        self.assertIn('Goodbye for now.', ' '.join(self.spoken))
+        self.assertTrue(self.audio)
+        self.assertFalse(any(v['type'] == 'stt' and v.get('state') == 'final' for v in self.messages))
+        self.assertTrue(any(v['type'] == 'tts' and v.get('end_conversation') for v in self.messages))
+        self.assertEqual(self.messages[-1]['reason'], 'no_voice_timeout')
+
     async def test_llm_failure_before_audio_speaks_error_and_allows_next_listen(self):
         await self.run_failure()
         states = [v['state'] for v in self.messages if v['type'] == 'tts']

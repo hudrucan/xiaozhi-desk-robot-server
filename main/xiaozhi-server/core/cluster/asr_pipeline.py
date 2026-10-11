@@ -73,6 +73,7 @@ class ASRPipeline:
         self.engine, self.stream_factory = engine, stream_factory
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='asr-audio')
         self.processor = self.stream = None
+        self.voiced = False
         self.pre_roll = deque(maxlen=10)
 
     async def start(self):
@@ -81,6 +82,7 @@ class ASRPipeline:
 
     async def feed(self, packet):
         pcm, voice, ended = await asyncio.get_running_loop().run_in_executor(self.executor, self.processor.decode, packet)
+        self.voiced = voice
         if self.stream is None:
             self.pre_roll.append(pcm)
             if self.mode == 'auto' and not voice:

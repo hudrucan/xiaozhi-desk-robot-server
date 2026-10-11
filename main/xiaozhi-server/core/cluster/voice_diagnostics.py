@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 PROTOCOL = 'xiaozhi-voice-diagnostics-v1'
 MAX_EVENTS = 64
-EVENTS = {'vision_admitted', 'vision_complete', 'vision_failed', 'session_opened', 'session_closed', 'asr_started', 'asr_admitted', 'asr_restarting', 'asr_final',
+EVENTS = {'conversation_timeout', 'vision_admitted', 'vision_complete', 'vision_failed', 'session_opened', 'session_closed', 'asr_started', 'asr_admitted', 'asr_restarting', 'asr_final',
           'mcp_ready', 'mcp_unavailable', 'mcp_call_started', 'mcp_call_complete', 'mcp_call_failed', 'llm_started', 'llm_first_chunk', 'llm_complete', 'tts_started',
           'tts_complete', 'turn_failed', 'turn_complete', 'turn_aborted'}
 STATES = {'idle', 'asr', 'asr_restarting', 'llm', 'tts', 'done', 'error', 'aborted'}

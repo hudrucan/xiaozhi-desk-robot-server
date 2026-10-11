@@ -35,9 +35,16 @@ class VoiceTurn:
         self.memory = None
         if tts_pool is not None and tts_pool.bundle.get('memory') is not None and device_id is not None:
             self.memory = MemoryClient(rpc, tts_pool.bundle['memory'], device_id, tts_pool.bundle['workers'])
-        self.session_config = copy.deepcopy(tts_pool.bundle.get('session', SESSION_DEFAULTS)
-                                            if tts_pool is not None else SESSION_DEFAULTS)
+        self.session_config = copy.deepcopy(SESSION_DEFAULTS)
+        if tts_pool is not None:
+            self.session_config.update(copy.deepcopy(tts_pool.bundle.get('session', {})))
+        self.session_config['end_prompt'] = {**SESSION_DEFAULTS['end_prompt'], **self.session_config['end_prompt']}
+        if not self.session_config['end_prompt']['prompt'].strip():
+            self.session_config['end_prompt']['prompt'] = SESSION_DEFAULTS['end_prompt']['prompt']
         self.close_after_chat = False
+        self.end_reason = 'exit_intent'
+        self.idle_closing = False
+        self.last_activity = time.monotonic()
         self.waking = False
         from .tts_config import DEFAULT_ERROR_RESPONSE
         self.error_response = (tts_pool.bundle.get('system_error_response', DEFAULT_ERROR_RESPONSE)
@@ -51,6 +58,34 @@ class VoiceTurn:
 
     async def emit(self, value):
         await asyncio.wait_for(self.send({'session_id': self.session_id, **value}), timeout=2)
+
+    def touch_activity(self):
+        self.last_activity = time.monotonic()
+
+    def idle_due(self, now):
+        if self.idle_closing:
+            return False
+        if self.state in {'llm', 'tts'} or self.waking or self.current_tts is not None:
+            self.touch_activity()
+            return False
+        return now - self.last_activity >= self.session_config['close_connection_no_voice_time']
+
+    async def expire_idle(self):
+        # Claim expiry before cancelling ASR so stale callbacks cannot reopen it.
+        self.idle_closing = True
+        await self.abort()
+        self.record('conversation_timeout', code='voice_no_speech_timeout')
+        self.close_after_chat, self.end_reason = True, 'no_voice_timeout'
+        ending = self.session_config['end_prompt']
+        if ending['enable'] and self.tts_pool is not None:
+            self.state = 'llm'
+            self.task = asyncio.create_task(self.run(self.generation, None, None,
+                text=ending['prompt'], closing=True))
+            await self.task
+        else:
+            await self.emit({'type':'stt', 'state':'clear'})
+            await self.emit({'type':'tts', 'state':'stop', 'end_conversation':True})
+            await self.emit({'type':'goodbye', 'reason':self.end_reason})
 
     async def abort(self):
         previous_generation = self.generation
@@ -83,7 +118,9 @@ class VoiceTurn:
             # subsequent listen/start to admit ASR normally.
             return
         await self.abort()
+        self.touch_activity()
         self.close_after_chat = False
+        self.end_reason = 'exit_intent'
         await self.emit({'type': 'stt', 'state': 'clear'})
         self.queue, self.ending = asyncio.Queue(64), False
         self.state = 'asr'
@@ -95,7 +132,9 @@ class VoiceTurn:
         if not isinstance(text, str) or not text.strip() or len(text) > 512:
             raise ValueError('Invalid typed text')
         await self.abort()
+        self.touch_activity()
         self.close_after_chat = False
+        self.end_reason = 'exit_intent'
         self.waking = wake
         if (wake and not self.session_config['enable_greeting']
                 and matches_wakeup_word(text, self.session_config['wakeup_words'])):
@@ -177,13 +216,18 @@ class VoiceTurn:
                 return '', None
             async def partial(text):
                 if generation == self.generation:
+                    if text.strip():
+                        self.touch_activity()
                     await self.emit({'type': 'stt', 'state': 'partial', 'text': text})
+            def speech():
+                if generation == self.generation and not self.idle_closing:
+                    self.touch_activity()
             def admitted(worker_id):
                 if generation == self.generation:
                     self.state = 'asr'
                     self.record('asr_admitted', worker_id=worker_id,
                                 elapsed_ms=round((time.monotonic() - started) * 1000))
-            stream = ASRClient(self.rpc.client, self.rpc.core_id, self.revision, self.audio, mode, partial, admitted)
+            stream = ASRClient(self.rpc.client, self.rpc.core_id, self.revision, self.audio, mode, partial, admitted, speech)
             try:
                 text = await stream.transcribe(queue)
                 if text.strip() or mode != 'auto' or self.ending:
@@ -208,7 +252,7 @@ class VoiceTurn:
             attempts += 1
         raise asyncio.CancelledError
 
-    async def run(self, generation, queue, mode, text=None, wake=False):
+    async def run(self, generation, queue, mode, text=None, wake=False, closing=False):
         tts = None
         failed = False
         llm_running = False
@@ -232,7 +276,10 @@ class VoiceTurn:
                 self.record('asr_final', worker_id=stream.worker_id,
                             elapsed_ms=round((time.monotonic() - started) * 1000), frames=stream.seq)
             self.ending = True
-            await self.emit({'type': 'stt', 'state': 'final', 'text': text})
+            if not closing:
+                if text.strip():
+                    self.touch_activity()
+                await self.emit({'type': 'stt', 'state': 'final', 'text': text})
             if text:
                 fixed_response = None
                 normalized = remove_punctuation_and_length(text)[1].casefold()
@@ -300,12 +347,13 @@ class VoiceTurn:
                     await chunk(fixed_response, 0)
                     result = {'status':'ok', 'text':fixed_response}
                 else:
-                    tools = await self.tools()
+                    tools = None if closing else await self.tools()
                     if generation != self.generation:
                         raise asyncio.CancelledError
-                    options = {'tools':tools, 'on_tools':self.execute_tools, 'seconds':120,
-                               'emoji_enabled':self.emoji_enabled}
-                    if self.memory is not None:
+                    options = {'seconds':30 if closing else 120}
+                    if not closing:
+                        options.update(tools=tools, on_tools=self.execute_tools, emoji_enabled=self.emoji_enabled)
+                    if self.memory is not None and not closing:
                         options['memory_context'] = await self.memory.recall(text, self.history)
                         if generation != self.generation:
                             raise asyncio.CancelledError
@@ -323,7 +371,7 @@ class VoiceTurn:
                 if tts:
                     await tts.finish()
                     self.record('tts_complete', elapsed_ms=round((time.monotonic() - started) * 1000))
-                if fixed_response is None and generation == self.generation:
+                if fixed_response is None and generation == self.generation and not closing:
                     self.history.complete(text, result['text'])
         except asyncio.CancelledError:
             pass
@@ -371,9 +419,10 @@ class VoiceTurn:
                         self.state = 'done'
                         self.record('turn_complete', elapsed_ms=round((time.monotonic() - started) * 1000))
                     if self.close_after_chat:
-                        await self.emit({'type':'goodbye', 'reason':'exit_intent'})
+                        await self.emit({'type':'goodbye', 'reason':self.end_reason})
                 except Exception:
                     pass
+                self.touch_activity()
 
     async def report_failure(self, generation, code, tts, llm_running, started):
         """Speak a fixed configured failure without retrying the LLM or device calls.

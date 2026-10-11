@@ -279,6 +279,7 @@ class TransportCore:
         session = None
         unavailable_sent = False
         voice = mcp = None
+        idle_task = None
         try:
             await ws.prepare(request)
             first = await asyncio.wait_for(ws.receive(), timeout=3)
@@ -311,7 +312,24 @@ class TransportCore:
             self.sessions.add(session)
             self.diagnostics.record('session_opened', session)
             LOGGER.info("core_id=%s session opened active=%d", self.config.node_id, len(self.sessions))
+            if voice is not None:
+                async def watch_idle():
+                    while not ws.closed:
+                        await asyncio.sleep(1)
+                        if voice.idle_due(time.monotonic()):
+                            try:
+                                await voice.expire_idle()
+                            finally:
+                                await ws.close()
+                            return
+                idle_task = asyncio.create_task(watch_idle())
             async for frame in ws:
+                if voice is not None and voice.idle_closing:
+                    # The expiry owns final playback/cleanup. A late silent
+                    # frame or listen/start must not supersede its generation.
+                    if frame.type == WSMsgType.TEXT and decode_message(frame.data)['type'] == 'goodbye':
+                        break
+                    continue
                 if frame.type == WSMsgType.BINARY:
                     data = frame.data
                     if (len(data) < 17 or data[:8] != bytes(8)
@@ -330,6 +348,7 @@ class TransportCore:
                         await ws.send_json({"type": "pong", "session_id": session})
                     elif message["type"] == "abort":
                         if voice:
+                            voice.touch_activity()
                             await voice.abort()
                             await voice.emit({'type': 'stt', 'state': 'clear'})
                         unavailable_sent = False
@@ -358,6 +377,8 @@ class TransportCore:
             if ws.prepared:
                 await ws.close(code=1008, message=b"Invalid transport message")
         finally:
+            if idle_task is not None:
+                idle_task.cancel()
             # This transport session is over even if owned provider cleanup
             # takes longer. Never advertise a disconnected session as active.
             if session is not None:
@@ -368,8 +389,12 @@ class TransportCore:
                 LOGGER.info("core_id=%s session closed active=%d", self.config.node_id, len(self.sessions))
             try:
                 try:
-                    if voice:
-                        await voice.abort()
+                    try:
+                        if idle_task is not None:
+                            await asyncio.gather(idle_task, return_exceptions=True)
+                    finally:
+                        if voice:
+                            await voice.abort()
                 finally:
                     if mcp:
                         await mcp.close()

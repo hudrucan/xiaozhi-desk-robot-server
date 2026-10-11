@@ -75,7 +75,7 @@ def result(data, turn_id, revision, worker_id=None, token=None):
     if (not isinstance(value, dict) or not {'protocol', 'turn_id', 'worker_id', 'revision', 'token', 'kind'} <= set(value)
             or value['protocol'] != PROTOCOL or value['turn_id'] != turn_id
             or type(value['revision']) is not int or value['revision'] != revision
-            or value['kind'] not in ('admitted', 'ack', 'partial', 'final', 'error')):
+            or value['kind'] not in ('admitted', 'ack', 'partial', 'final', 'error', 'speech')):
         raise ValueError('Invalid ASR reply')
     validate_worker_id(value['worker_id']); identity(value['token'])
     if worker_id is not None and value['worker_id'] != worker_id:

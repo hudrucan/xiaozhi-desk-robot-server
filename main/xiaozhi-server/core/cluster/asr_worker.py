@@ -122,6 +122,7 @@ class ASRService:
 
     async def execute(self, turn):
         pipeline = None
+        last_speech_event = 0.0
         async def watch_lease():
             while True:
                 await asyncio.sleep(0.5)
@@ -149,6 +150,10 @@ class ASRService:
                     except asyncio.TimeoutError:
                         continue
                     ended = kind == 'end' or await pipeline.feed(data)
+                    now = time.monotonic()
+                    if kind == 'audio' and getattr(pipeline, 'voiced', False) and now - last_speech_event >= 1:
+                        await self.send(turn.request['result_subject'], turn, 'speech')
+                        last_speech_event = now
                     if ended:
                         turn.ending = True
                         text = await asyncio.wait_for(pipeline.finish(), timeout=5)

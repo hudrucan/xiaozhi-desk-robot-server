@@ -308,4 +308,28 @@ class VoiceTransportTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(closed(), timeout=1)
 
 
+    async def test_idle_closes_session_despite_ping_and_releases_asr(self):
+        ws,hello=await self.connect()
+        await ws.send_json({'type':'listen','state':'start','mode':'auto'})
+        await ws.receive_json(timeout=1)  # clear transcript
+        voice=self.core.voices[hello['session_id']]
+        voice.session_config['end_prompt']={'enable':False,'prompt':'unused'}
+        voice.last_activity=time.monotonic()-121
+        await ws.send_json({'type':'ping'})
+        messages=[]
+        while True:
+            message=await ws.receive_json(timeout=2)
+            messages.append(message)
+            if message.get('type')=='goodbye':
+                break
+        self.assertEqual(messages[-1]['reason'],'no_voice_timeout')
+        self.assertTrue(any(m.get('type')=='tts' and m.get('end_conversation') is True for m in messages))
+        await ws.close()
+        async def closed():
+            while self.core.sessions or self.worker.turns:
+                await asyncio.sleep(.001)
+        await asyncio.wait_for(closed(),timeout=1)
+        self.assertIn('conversation_timeout',[e['event'] for e in self.core.diagnostics.snapshot()])
+
+
 if __name__=='__main__': unittest.main()

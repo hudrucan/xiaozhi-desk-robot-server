@@ -12,10 +12,11 @@ LOGGER = logging.getLogger('xiaozhi.core.asr')
 
 
 class ASRClient:
-    def __init__(self, client, core_id, revision, audio, mode, partial, on_admitted=None):
+    def __init__(self, client, core_id, revision, audio, mode, partial, on_admitted=None, on_speech=None):
         self.client, self.core_id, self.revision = client, core_id, revision
         self.audio, self.mode, self.partial = audio, mode, partial
         self.on_admitted = on_admitted
+        self.on_speech = on_speech
         self.turn_id, self.inbox = uuid.uuid4().hex, '_INBOX.' + uuid.uuid4().hex
         self.worker_id = self.token = self.subscription = None
         self.final = asyncio.get_running_loop().create_future()
@@ -28,9 +29,12 @@ class ASRClient:
         try:
             value = wire.result(message.data, self.turn_id, self.revision, self.worker_id, self.token)
             # Nothing from a result inbox is authoritative before admission.
-            if self.worker_id is None or value['kind'] not in ('partial', 'final', 'error'):
+            if self.worker_id is None or value['kind'] not in ('partial', 'final', 'error', 'speech'):
                 return
-            if value['kind'] == 'partial' and not self.final.done():
+            if value['kind'] == 'speech' and not self.final.done():
+                if self.on_speech is not None:
+                    self.on_speech()
+            elif value['kind'] == 'partial' and not self.final.done():
                 await asyncio.wait_for(self.partial(value['text']), timeout=1)
             elif value['kind'] == 'final' and not self.final.done():
                 self.remote_terminal = True
