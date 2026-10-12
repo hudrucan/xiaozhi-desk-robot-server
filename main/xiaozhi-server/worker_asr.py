@@ -35,6 +35,12 @@ async def run(config, asr, llm, tts=None):
         tts_engine = await asyncio.to_thread(SherpaSegmentEngine, tts)
         activity.counts['tts'] = 0
 
+    vision_provider = None
+    if 'vision' in llm:
+        from core.cluster.vision_config import GeminiVision
+        # Prepare SDK/client before accepting turns; do not block ASR callbacks.
+        vision_provider = await asyncio.to_thread(GeminiVision, llm['vision'])
+
     class Combined(LLMWorker):
         async def _start(self):
             await super()._start()
@@ -47,8 +53,7 @@ async def run(config, asr, llm, tts=None):
                 await self.tts.start()
             if 'vision' in llm:
                 from core.cluster.vision_worker import VisionService
-                from core.cluster.vision_config import GeminiVision
-                self.vision = VisionService(self.client, config.worker_id, llm['revision'], GeminiVision(llm['vision']), activity)
+                self.vision = VisionService(self.client, config.worker_id, llm['revision'], vision_provider, activity)
                 await self.vision.start()
 
         async def _disconnected(self):

@@ -67,7 +67,7 @@ async def relay(request, config):
                 return
     watcher = asyncio.create_task(disconnected())
     try:
-        async with ClientSession(trust_env=False, timeout=ClientTimeout(total=19)) as session:
+        async with ClientSession(trust_env=False, timeout=ClientTimeout(total=wire.HTTP_SECONDS)) as session:
             async with session.post(url, data=body(), headers=headers, allow_redirects=False) as response:
                 data = bytearray()
                 async for chunk in response.content.iter_chunked(4096):
@@ -80,9 +80,14 @@ async def relay(request, config):
                     if (value['success'] is True and value['action'] == 'RESPONSE'
                             and isinstance(value['response'], str) and len(value['response'].encode()) <= wire.MAX_TEXT):
                         return web.json_response(value, headers={'Cache-Control':'no-store'})
+                if (isinstance(value, dict) and value.get('success') is False
+                        and value.get('code') in wire.ERRORS):
+                    return failure(value['code'], response.status if response.status in {400, 401, 413, 415, 503} else 503)
                 return failure('vision_unavailable', response.status if response.status in {400, 401, 413, 415, 503} else 503)
     except asyncio.CancelledError:
         raise
+    except TimeoutError:
+        return failure('vision_expired', 503)
     except Exception:
         return failure('vision_unavailable', 503)
     finally:
@@ -147,6 +152,12 @@ async def upload(request, core):
         return web.Response(body=body, content_type='application/json', headers={'Cache-Control':'no-store'})
     except asyncio.CancelledError:
         raise
+    except wire.VisionError as error:
+        voice.record('vision_failed', code=error.code)
+        return failure(error.code, 503)
+    except TimeoutError:
+        voice.record('vision_failed', code='vision_expired')
+        return failure('vision_expired', 503)
     except Exception:
         voice.record('vision_failed', code='vision_unavailable')
         return failure('vision_unavailable', 503)

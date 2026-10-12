@@ -18,7 +18,7 @@ JPEG = b'\xff\xd8\xff' + b'image-fixture' + b'\xff\xd9'
 
 def admission(**changes):
     return {'protocol':wire.PROTOCOL, 'op':'admit', 'job_id':KEY, 'token':TOKEN,
-            'revision':9, 'deadline_ms':int(time.time() * 1000) + 14000,
+            'revision':9, 'deadline_ms':int(time.time() * 1000) + 34000,
             'size':len(JPEG), 'sha256':hashlib.sha256(JPEG).hexdigest(),
             'question':'Describe the fixture', **changes}
 
@@ -103,6 +103,32 @@ class TransferTests(unittest.IsolatedAsyncioTestCase):
         await self.receive(admission()); await self.chunks()
         self.assertEqual((await self.finish())['error'], 'vision_provider_failed')
         self.assertNotIn(b'private credential', self.bus.sent[-1][1])
+    async def test_provider_timeout_has_distinct_safe_code_and_releases_capacity(self):
+        self.provider.response.side_effect = TimeoutError('private provider URL fixture')
+        await self.receive(admission()); await self.chunks()
+        self.assertEqual((await self.finish())['error'], 'vision_expired')
+        self.assertFalse(self.service.jobs)
+        self.assertNotIn(b'private provider', self.bus.sent[-1][1])
+    async def test_inference_uses_remaining_job_budget_instead_of_twelve_second_cap(self):
+        seconds = []
+        timeout = asyncio.timeout
+        def capture(value):
+            seconds.append(value)
+            return timeout(value)
+        await self.receive(admission()); await self.chunks()
+        with patch('core.cluster.vision_worker.asyncio.timeout', side_effect=capture):
+            self.assertEqual((await self.finish())['text'], 'Fixture result')
+        self.assertEqual(seconds[0], wire.PROVIDER_SECONDS)
+    async def test_short_remaining_deadline_is_respected_and_releases_capacity(self):
+        self.provider.response.side_effect = lambda *args: 'Unused'
+        await self.receive(admission()); await self.chunks()
+        self.service.jobs[KEY]['value']['deadline_ms'] = int(time.time()*1000) + 1000
+        async def delayed(*args):
+            await asyncio.Event().wait()
+        self.provider.response.side_effect = delayed
+        self.assertEqual((await self.finish())['error'], 'vision_expired')
+        self.assertFalse(self.service.jobs)
+
     async def test_expired_upload_is_reaped(self):
         await self.service.start()
         await self.receive(admission())
@@ -189,6 +215,17 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
             explain.assert_awaited_once()
             self.assertEqual((await upload(request, core)).status, 503)
         self.assertFalse(mcp.vision_tasks)
+    async def test_worker_error_code_survives_upload_and_cleans_owned_tasks(self):
+        request, core, mcp = self.fixture()
+        records = []
+        core.voices[KEY].record = lambda event, **fields: records.append((event, fields))
+        with patch('core.cluster.vision_client.explain', new=AsyncMock(side_effect=wire.VisionError('vision_expired'))):
+            response = await upload(request, core)
+        self.assertEqual(response.status, 503)
+        self.assertEqual(wire.decode(response.body, 4096)['code'], 'vision_expired')
+        self.assertEqual(records[-1], ('vision_failed', {'code':'vision_expired'}))
+        self.assertFalse(mcp.vision_tasks)
+        self.assertFalse(core.worker_rpc.streams)
     async def test_wrong_device_session_or_inactive_camera_is_rejected_before_read(self):
         for kind in ('device', 'session', 'inactive'):
             request, core, mcp = self.fixture()
@@ -239,3 +276,21 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_is_prepared_once_with_explicit_budget_and_no_retry(self):
+        from core.cluster.vision_config import GeminiVision
+        client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(
+            generate_content=AsyncMock(return_value=SimpleNamespace(text='Fixture'))), aclose=AsyncMock()),
+            close=lambda:None)
+        with patch('google.genai.Client', return_value=client) as factory:
+            provider = GeminiVision({'type':'gemini', 'api_key':'fixture-only', 'model_name':'fixture-vision'})
+            options = factory.call_args.kwargs['http_options']
+            self.assertEqual(options.timeout, 30000)
+            self.assertEqual(options.retry_options.attempts, 1)
+            self.assertEqual(await provider.response('Describe fixture', JPEG),'Fixture')
+            self.assertEqual(await provider.response('Describe fixture', JPEG),'Fixture')
+            factory.assert_called_once()
+            await provider.close()
+            client.aio.aclose.assert_awaited_once()

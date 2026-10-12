@@ -50,6 +50,21 @@ class DiscoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(m['payload'].get('id',0) != 10000 for m in self.sent))
         self.assertEqual(self.mcp.pending,{})
         self.assertIn('mcp_ready',self.events)
+    async def test_camera_uses_separate_budget_and_releases_camera_on_tool_failure(self):
+        await self.mcp.tools()
+        self.mcp.names['self_camera_take_photo'] = 'self.camera.take_photo'
+        self.mcp.vision = {'token':'fixture-only'}
+        budgets = []
+        async def failed(method, params, seconds):
+            budgets.append(seconds)
+            raise asyncio.TimeoutError
+        self.mcp.request = failed
+        result = await self.mcp.call({'id':'camera','name':'self_camera_take_photo','arguments':{'question':'Fixture'}})
+        self.assertEqual(budgets,[wire.CAMERA_SECONDS])
+        self.assertTrue(result['result']['isError'])
+        self.assertFalse(self.mcp.camera_active)
+        self.assertFalse(self.mcp.vision_tasks)
+
     async def test_unknown_tool_never_sent_and_close_cancels_waiters(self):
         await self.mcp.tools()
         count = len(self.sent)
@@ -140,6 +155,26 @@ class ToolStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.rpc.status()['inflight'],0)
         kinds=[json.loads(data).get('kind') for _,data in self.bus.published]
         self.assertLess(kinds.index('tools'),kinds.index('chunk'))
+    async def test_camera_error_resumes_llm_and_camera_ack_has_its_own_budget(self):
+        camera = {**CALL,'name':'self_camera_take_photo'}
+        self.provider.calls = [camera]
+        tools = copy.deepcopy([TOOL]); tools[0]['function']['name'] = camera['name']
+        budgets = []
+        original = self.bus.request
+        async def request(subject,data,timeout):
+            if json.loads(data).get('kind')=='tools': budgets.append(timeout)
+            return await original(subject,data,timeout)
+        self.bus.request = request
+        async def failed(calls):
+            self.called.extend(calls)
+            return [{'id':c['id'],'result':{'isError':True,'content':[{'type':'text','text':'Camera analysis timed out'}]}} for c in calls]
+        result = await self.rpc.generate_stream(9,[{'role':'user','content':'Describe image'}],self.chunk,
+            tools=tools,on_tools=failed,seconds=120)
+        self.assertEqual(result['text'],'Status confirmed')
+        self.assertEqual(self.called,[camera])
+        self.assertTrue(self.provider.results[0]['result']['isError'])
+        self.assertEqual(budgets,[wire.CAMERA_SECONDS+2])
+
     async def test_multiple_calls_keep_ids_order_and_second_llm_step(self):
         self.provider.calls=[CALL,{**CALL,'id':'second-call'}]
         await self.call()

@@ -2,7 +2,9 @@
 
 The combined `worker_asr.py` runtime can run the selected Gemini VLLM adapter.
 The normal `app.py` Vision endpoint and provider behavior remain unchanged.
-No camera firmware change is required.
+The multipart/result contract is unchanged. The coordinated timeout update also
+requires the Desk firmware camera HTTP budget of 45 seconds; older firmware
+still aborts its HTTP request after 20 seconds. Build/flash remains operator-owned.
 
 The firmware camera tool remains `self.camera.take_photo`. MCP initialization
 advertises `/mcp/vision/explain` on the applied management VIP and an opaque,
@@ -30,8 +32,13 @@ No image is written to disk or included in logs. NATS carries image/question
 content for inference, never API keys or provider configuration.
 
 HTTP upload parsing has a three-second budget; the NATS operation has a
-15-second total budget and provider inference at most 12 seconds. The VIP relay
-is bounded to 19 seconds, below the firmware camera HTTP timeout of 20 seconds.
+35-second total budget and provider inference at most 30 seconds, with one
+second reserved for its reply and the remaining absolute deadline respected.
+The VIP relay is bounded to 40 seconds, below the firmware camera HTTP timeout
+of 45 seconds. Device MCP camera calls use 50 seconds, and LLM tool ACKs allow
+52 seconds for one camera call; ordinary tools retain their 20-second budget.
+Multiple tool calls sum their individual budgets, bounded by the existing
+120-second absolute LLM turn deadline. No whole-turn deadline is extended.
 Each worker reserves at most one vision job and shares the existing two-job
 language/vision compute budget. The existing blinking play indicator represents
 this compute activity; no panel schema or role symbols change.
@@ -78,3 +85,25 @@ python -m unittest discover -s tests -p 'test_cluster_vision.py'
 Real firmware camera capture and live provider analysis still require an
 operator smoke check after deployment; unit checks do not establish hardware
 compatibility or end-to-end latency.
+
+
+## Provider setup and failure recovery
+
+The Gemini Vision SDK/client is prepared off the event loop during worker startup,
+before Vision subscriptions accept calls, and reused across images. HTTP timeout
+is explicitly 30000 ms with one attempt. No paid warm-up request is made and no
+model/thinking/media setting or credential is changed by this patch. A raised
+provider transport timeout or expired job uses `vision_expired`, distinct from
+`vision_provider_failed`; HTTP ingress preserves these allowlisted categories.
+Only fixed error type/status and elapsed milliseconds enter logs. The device tool
+returns an error result to the LLM continuation; it does not replay the camera
+capture or terminate the conversation simply because a tool failed.
+
+Deploy the new worker source first, then the control-plane relay source and core
+source, preserving immutable runtime bundle revisions. Reconnect and use firmware
+with the 45-second HTTP budget for final camera validation. Unit checks cover
+bounded cancellation, expired jobs, one prepared client, camera-specific MCP ACK
+budget, and LLM continuation after tool errors. They do not establish a Gemini
+latency improvement: a response longer than the 30-second provider budget still
+fails cleanly. Test a real photo, abort during analysis and a subsequent camera
+turn, followed by normal voice listening.

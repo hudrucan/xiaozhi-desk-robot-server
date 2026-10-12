@@ -18,6 +18,13 @@ MAX_CALLS = 8
 MAX_ROUNDS = 4
 ACK_SECONDS = text.ACK_SECONDS
 TOOL_SECONDS = 20
+CAMERA_SECONDS = 50
+
+
+def tool_seconds(name):
+    """Only the advertised camera alias needs the HTTP/inference budget."""
+    return CAMERA_SECONDS if name == "self_camera_take_photo" else TOOL_SECONDS
+
 ERRORS = text.ERRORS | {'llm_tool_limit', 'llm_tools_unavailable'}
 chunks = text.chunks
 dialogue = rpc.dialogue

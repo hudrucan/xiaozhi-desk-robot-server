@@ -12,9 +12,18 @@ CHUNK = 128 * 1024
 # Leave room for the HTTP JSON serialized again inside a firmware MCP text
 # block, within the existing core's 8 KiB WebSocket message limit.
 MAX_TEXT = 3500
-SECONDS = 15
+SECONDS = 35
+PROVIDER_SECONDS = 30
+HTTP_SECONDS = 40
 ERRORS = {'vision_busy', 'vision_expired', 'vision_revision_mismatch',
           'vision_invalid_request', 'vision_unavailable', 'vision_provider_failed'}
+
+
+class VisionError(ValueError):
+    """A fixed, safe wire category; no provider error messages or credentials."""
+    def __init__(self, code):
+        self.code = code if code in ERRORS else 'vision_unavailable'
+        super().__init__(self.code)
 
 
 def target(worker):

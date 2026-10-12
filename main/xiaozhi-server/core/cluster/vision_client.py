@@ -17,7 +17,7 @@ async def explain(client, revision, question, image, admitted=None):
         if worker is not None and value['worker_id'] != worker:
             raise ValueError('Vision worker identity differs')
         if value['status'] == 'error':
-            raise ValueError(value['error'])
+            raise wire.VisionError(value['error'])
         return value
     try:
         async with asyncio.timeout(wire.SECONDS):
@@ -43,6 +43,8 @@ async def explain(client, revision, question, image, admitted=None):
             if result['status'] != 'ok':
                 raise ValueError('Vision inference unavailable')
             return result['text']
+    except TimeoutError:
+        raise wire.VisionError('vision_expired') from None
     finally:
         if worker is not None:
             # No retries/replay after uncertain delivery. Release upload/inference

@@ -124,7 +124,9 @@ class VisionService:
         # panel's activity schema. At most one VLM job runs on this worker.
         started = time.monotonic()
         try:
-            seconds = min(12, max(0, (job['value']['deadline_ms'] - time.time() * 1000) / 1000))
+            # The absolute job deadline includes transfer; reserve time for reply.
+            seconds = min(wire.PROVIDER_SECONDS, max(0,
+                (job['value']['deadline_ms'] - time.time() * 1000) / 1000 - 1))
             async with asyncio.timeout(seconds):
                 text = await self.provider.response(job['value']['question'], bytes(job['image']))
             if not isinstance(text, str) or not text.strip() or len(text.encode()) > wire.MAX_TEXT:
@@ -134,10 +136,15 @@ class VisionService:
                         round((time.monotonic() - started) * 1000))
         except asyncio.CancelledError:
             raise
-        except Exception:
-            LOGGER.warning('Vision failed; worker_id=%s code=vision_provider_failed', self.worker_id)
+        except Exception as error:
+            from .llm_worker import safe_error_metadata
+            category, status = safe_error_metadata(error)
+            code = 'vision_expired' if category in {'TimeoutError', 'ReadTimeout', 'ConnectTimeout',
+                'WriteTimeout', 'PoolTimeout'} else 'vision_provider_failed'
+            LOGGER.warning('Vision failed; worker_id=%s code=%s error_type=%s provider_status=%d elapsed_ms=%d',
+                           self.worker_id, code, category, status, round((time.monotonic() - started) * 1000))
             try:
-                await self.send(reply, key, 'error', error='vision_provider_failed')
+                await self.send(reply, key, 'error', error=code)
             except Exception:
                 pass
         finally:

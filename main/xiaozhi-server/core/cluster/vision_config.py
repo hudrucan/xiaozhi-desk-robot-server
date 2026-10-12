@@ -62,13 +62,15 @@ class GeminiVision:
     """Cancellable async adapter using the existing Gemini VLLM configuration."""
     def __init__(self, config):
         self.config = validate(config)
-        self.client = None
-
-    async def response(self, question, image):
         from google import genai
         from google.genai import types
-        if self.client is None:
-            self.client = genai.Client(api_key=self.config['api_key'])
+        from .vision_protocol import PROVIDER_SECONDS
+        self.types = types
+        self.client = genai.Client(api_key=self.config['api_key'], http_options=types.HttpOptions(
+            timeout=PROVIDER_SECONDS * 1000, retry_options=types.HttpRetryOptions(attempts=1)))
+
+    async def response(self, question, image):
+        types = self.types
         options = {key:value for key, value in self.config.items()
                    if key in {'temperature', 'top_p', 'top_k', 'max_output_tokens'} and value is not None}
         options.setdefault('max_output_tokens', 256)

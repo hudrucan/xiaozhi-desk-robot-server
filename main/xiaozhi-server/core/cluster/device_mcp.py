@@ -147,7 +147,8 @@ class DeviceMCP:
                     raise ValueError('Camera capability is unavailable')
                 self.camera_active, self.camera_question = True, question
                 self.camera_consumed = False
-            result = await self.request('tools/call', {'name':self.names[call['name']], 'arguments':call['arguments']})
+            result = await self.request('tools/call', {'name':self.names[call['name']],
+                'arguments':call['arguments']}, seconds=wire.CAMERA_SECONDS if camera else wire.TOOL_SECONDS)
             if not isinstance(result, dict) or not isinstance(result.get('content'), list):
                 raise ValueError('Invalid tool result')
             # Keep all textual MCP blocks and the error flag. Images/resources

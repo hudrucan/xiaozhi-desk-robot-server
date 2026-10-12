@@ -165,7 +165,7 @@ class LLMWorker(Worker):
         data = wire.event(value, self.config.worker_id, kind, seq, **fields)
         try:
             seconds = min(max(.01, (value['deadline_ms'] - time.time()*1000)/1000),
-                wire.TOOL_SECONDS * len(fields['calls']) + 2) if kind == 'tools' else wire.ACK_SECONDS
+                sum(wire.tool_seconds(call['name']) for call in fields['calls']) + 2) if kind == 'tools' else wire.ACK_SECONDS
             reply = await asyncio.wait_for(self.client.request(subject, data,
                 timeout=seconds), timeout=seconds + .25)
             event = wire.parse_event(data, value['request_id'], value['revision'])
