@@ -10,7 +10,7 @@ import {
   setLogsActive,
 } from "./logs.js";
 import { initializePushTts } from "./push_tts.js";
-import { renderSoundbank, soundbankAuthoringBusy } from "./soundbank.js?v=42";
+import { renderSoundbank, soundbankAuthoringBusy } from "./soundbank.js?v=49";
 import {
   renderOverview,
   renderResources,
@@ -18,7 +18,7 @@ import {
 } from "./resources.js";
 import { $, clone, labelFor, state, toast, escapeHtml } from "./shared.js";
 import { initializeSecrets } from "./secrets.js";
-import { renderCluster, setClusterActive } from "./cluster.js?v=48";
+import { renderCluster, setClusterActive } from "./cluster.js?v=49";
 import { initializeClusterLogs, setClusterLogsActive } from "./cluster_logs.js?v=47";
 import { initializeRuntimeApply, setRuntimeApplyEnabled } from "./runtime_apply.js?v=48";
 
@@ -37,7 +37,7 @@ const PAGE_IDS = [
   "cluster",
 ];
 const STATUS_SCOPES = { overview: "overview", diagnostics: "diagnostics" };
-const RUNTIME_PAGES = ["diagnostics", "soundbank"];
+const RUNTIME_PAGES = ["diagnostics"];
 
 function applyControlPlaneMode() {
   document.querySelectorAll("[data-control-plane]").forEach((element) => {
@@ -49,6 +49,9 @@ function applyControlPlaneMode() {
   if (!state.controlPlane) return;
   document.querySelector('.navigation a[href="#memory"]')?.classList.toggle("hidden",
     !state.memoryCapabilities);
+  document.querySelector('.navigation a[href="#soundbank"]')?.classList.toggle("hidden", !state.soundbankCapabilities);
+  $("#soundbank .eyebrow").textContent = "Shared speech assets";
+  $("#soundbank .section-copy").textContent = "Manage exact-match phrases, generate audio with cluster TTS workers, and preview shared Cloud responses.";
   $("#memoryScopeField").classList.remove("hidden");
   $("#memory .eyebrow").textContent = "Shared durable context";
   $("#memory .section-copy").textContent = "Edit a robot's shared Cloud Memory from any node. Changes sync to all nodes and affect the next recall without restarting.";
@@ -77,7 +80,7 @@ function renderAll() {
   renderOverview();
   renderSource();
   renderConfiguration();
-  if (state.controlPlane) { renderCluster(); renderMemory(); }
+  if (state.controlPlane) { renderCluster(); renderMemory(); if (state.soundbankCapabilities) renderSoundbank(); }
   else {
     renderSoundbank();
     renderMemory();
@@ -262,6 +265,7 @@ async function loadSettings() {
     const response = await fetch("/api/settings", { cache: "no-store" });
     if (!response.ok) throw new Error(await response.text());
     const payload = await response.json();
+    state.soundbankCapabilities = Boolean(payload.control_plane?.capabilities?.soundbank_authoring);
     state.memoryCapabilities = Boolean(payload.control_plane?.capabilities?.memory);
     applyControlPlaneMode();
     state.secretCapabilities = Boolean(payload.control_plane?.capabilities?.secret_provisioning);
@@ -300,7 +304,7 @@ async function saveSettings() {
     return;
   }
   state.soundbankSaving = true;
-  if (!state.controlPlane) renderSoundbank();
+  if (!state.controlPlane || state.soundbankCapabilities) renderSoundbank();
   $("#saveButton").disabled = true;
   $("#saveState").textContent = "Saving…";
   try {
@@ -327,6 +331,7 @@ async function saveSettings() {
       }
       throw new Error(payload.error || "Save failed");
     }
+    state.soundbankCapabilities = Boolean(payload.control_plane?.capabilities?.soundbank_authoring);
     state.memoryCapabilities = Boolean(payload.control_plane?.capabilities?.memory);
     applyControlPlaneMode();
     state.secretCapabilities = Boolean(payload.control_plane?.capabilities?.secret_provisioning);
@@ -335,6 +340,10 @@ async function saveSettings() {
     state.configPath = payload.config_path;
     state.configurationSource = payload.configuration_source || {};
     state.baseRevision = state.configurationSource.desired_revision;
+    if (state.controlPlane) {
+      state.startupSoundbankDirectory = payload.soundbank_runtime_directory || payload.config?.static_soundbank?.directory || "data/soundbank";
+      state.startupSoundbankAudio = payload.soundbank_runtime_audio || state.startupSoundbankAudio;
+    }
     state.original = clone(payload.config);
     state.patch = {};
     state.soundbankRetiredDrafts.clear();
@@ -353,7 +362,7 @@ async function saveSettings() {
     toast(error.message, true);
   } finally {
     state.soundbankSaving = false;
-    if (!state.controlPlane) renderSoundbank();
+    if (!state.controlPlane || state.soundbankCapabilities) renderSoundbank();
   }
 }
 
@@ -432,7 +441,7 @@ function setActivePage(page, options = {}) {
   document.title = `${labelFor(nextPage)} · Xiaozhi Server`;
   if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "auto" });
   restartStatusPolling();
-  setClusterActive(state.controlPlane && nextPage === "cluster" && !document.hidden);
+  setClusterActive(state.controlPlane && ["cluster", "soundbank"].includes(nextPage) && !document.hidden);
   setClusterLogsActive(state.controlPlane && nextPage === "logs" && !document.hidden);
   setMemoryActive(nextPage === "memory" && !document.hidden);
   if (nextPage === "memory") loadMemory();
@@ -460,7 +469,7 @@ function initializeNavigation() {
       if (!state.controlPlane) setLogsActive(false);
     } else {
       restartStatusPolling();
-      setClusterActive(state.controlPlane && state.activePage === "cluster");
+      setClusterActive(state.controlPlane && ["cluster", "soundbank"].includes(state.activePage));
       setClusterLogsActive(state.controlPlane && state.activePage === "logs");
       setMemoryActive(state.activePage === "memory");
       if (!state.controlPlane) setLogsActive(state.activePage === "logs");

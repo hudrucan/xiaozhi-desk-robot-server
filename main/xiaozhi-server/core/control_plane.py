@@ -23,7 +23,7 @@ async def safe_errors(request, handler):
         return web.json_response({"error": "Control-plane operation unavailable", "code": "unavailable"}, status=503)
 
 
-def create_app(store, config, *, client_factory=None, secret_exchange=None, runtime_local=None, runtime_exchange=None):
+def create_app(store, config, *, client_factory=None, secret_exchange=None, runtime_local=None, runtime_exchange=None, soundbank_generate=None):
     if store.bootstrap["config_provider"] != "google_drive":
         raise ValueError("Standalone control plane requires a provisioned Google Drive bootstrap")
     options = {"client_factory": client_factory} if client_factory is not None else {}
@@ -43,6 +43,9 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None, runt
             raise ValueError('Runtime apply requires authenticated peers')
         from core.cluster.runtime_apply import RuntimeApply
         runtime = RuntimeApply(reconciliation, local=runtime_local, exchange=runtime_exchange)
+    if config.secrets is not None:
+        from core.cluster.soundbank_authoring import SoundbankAuthoring
+        reconciliation.authoring = SoundbankAuthoring(reconciliation, generate_pcm=soundbank_generate)
     handler = ControlPlaneSettingsHandler(reconciliation, secrets, runtime)
     app = web.Application(client_max_size=256 * 1024, middlewares=[safe_errors])
     app[RECONCILIATION_KEY] = reconciliation
@@ -65,6 +68,11 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None, runt
         web.delete("/api/settings/memory/{entry_id}", handler.handle_memory),
         web.get("/api/cluster", handler.handle_cluster), web.get("/healthz", handler.handle_health),
         web.get("/api/cluster/soundbank", handler.handle_soundbank_cluster),
+        web.post("/api/settings/soundbank/generate", handler.handle_soundbank_generate),
+        web.get("/api/settings/soundbank/jobs/{job_id}", handler.handle_soundbank_job),
+        web.post("/internal/settings/soundbank/job", handler.handle_soundbank_job_peer),
+        web.post("/api/settings/soundbank/optimize", handler.handle_soundbank_optimize),
+        web.get("/api/settings/soundbank/audio/{filename:.*}", handler.handle_soundbank_audio),
         web.get("/api/cluster/memory", handler.handle_memory_cluster),
         web.get("/api/cluster/diagnostics", handler.handle_voice_diagnostics),
     ])
@@ -87,6 +95,8 @@ def create_app(store, config, *, client_factory=None, secret_exchange=None, runt
         reconciliation.http_operational = False
 
     async def cleanup(app):
+        if reconciliation.authoring is not None:
+            await reconciliation.authoring.stop()
         if runtime is not None:
             await runtime.stop()
         if secrets is not None:

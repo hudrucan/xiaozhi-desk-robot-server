@@ -187,6 +187,7 @@ function normalizedDirectory(directory) {
 }
 
 function generationDirectoryLocked() {
+  if (state.controlPlane && Object.keys(state.patch).some((key) => key !== "static_soundbank")) return true;
   const currentDirectory = getPath(
     state.config,
     "static_soundbank.directory",
@@ -197,6 +198,11 @@ function generationDirectoryLocked() {
 }
 
 function generationStatus() {
+  if (state.controlPlane) {
+    return Object.keys(state.patch).length
+      ? { label: "Save, then Apply runtime", className: "attention" }
+      : { label: "Shared Cloud Soundbank", className: "" };
+  }
   if (generationDirectoryLocked()) {
     return { label: "Save + restart before generating", className: "attention" };
   }
@@ -327,7 +333,8 @@ function previewUrl(filename) {
     .filter(Boolean)
     .map((part) => encodeURIComponent(part))
     .join("/");
-  return `/api/settings/soundbank/audio/${encoded}`;
+  const token = state.controlPlane ? state.soundbankPreviews.get(filename) : null;
+  return `/api/settings/soundbank/audio/${encoded}${token ? `?preview_token=${encodeURIComponent(token)}` : ""}`;
 }
 
 function renderWorkspace() {
@@ -383,16 +390,17 @@ function renderWorkspace() {
         </div>
         <footer class="soundbank-settings-footer">
           <span class="badge ${restart.className}" id="soundbankApplyStatus"><i></i>${escapeHtml(restart.label)}</span>
-          <p>Generation uses the TTS configuration loaded at server startup.</p>
+          <p>${state.controlPlane ? "Generate uses an available TTS worker. Save publishes entries to all nodes; Apply runtime activates playback." : "Generation uses the TTS configuration loaded at server startup."}</p>
         </footer>
+        ${state.controlPlane ? '<p class="field-help" id="soundbankClusterSync">Checking Soundbank sync across the cluster…</p>' : ""}
       </section>
 
       <section class="panel soundbank-compose-panel">
         <div class="panel-heading">
           <div>
             <p class="eyebrow">New entry</p>
-            <h3>Generate a local response</h3>
-            <p class="field-help${generationLocked ? " soundbank-warning-text" : ""}">${generationLocked ? "Soundbank directory differs from the running server. Save and restart before generating." : "Save and restart provider changes before generating with the newly configured TTS."}</p>
+            <h3>${state.controlPlane ? "Generate a shared response" : "Generate a local response"}</h3>
+            <p class="field-help${generationLocked ? " soundbank-warning-text" : ""}">${state.controlPlane ? (generationLocked ? "Save configuration edits and Apply runtime before generating." : "Generation requires workers at the saved configuration revision. Apply runtime after provider changes.") : (generationLocked ? "Soundbank directory differs from the running server. Save and restart before generating." : "Save and restart provider changes before generating with the newly configured TTS.")}</p>
           </div>
         </div>
         <form id="soundbankNewForm" class="soundbank-new-form">
@@ -413,7 +421,7 @@ function renderWorkspace() {
             <strong>${previewAsset ? escapeHtml(previewAsset) : "Select an entry to preview"}</strong>
           </div>
           <audio id="soundbankAudio" controls preload="none" ${previewAsset ? `src="${escapeHtml(previewUrl(previewAsset))}"` : ""}></audio>
-          <p id="soundbankPreviewStatus" class="field-help" aria-live="polite">${previewAsset ? "Ready to play." : "Preview uses the saved/generated file in the running server's soundbank directory."}</p>
+          <p id="soundbankPreviewStatus" class="field-help" aria-live="polite">${previewAsset ? "Ready to play." : (state.controlPlane ? "Preview plays verified Cloud audio from any node." : "Preview uses the saved/generated file in the running server's soundbank directory.")}</p>
         </div>
       </section>
 
@@ -433,7 +441,7 @@ function renderWorkspace() {
         </div>
       </section>
 
-      <section class="settings-group panel soundbank-cleanup-panel">
+      ${state.controlPlane ? "" : `<section class="settings-group panel soundbank-cleanup-panel">
         <header>
           <div>
             <h3>Unused sounds</h3>
@@ -450,7 +458,7 @@ function renderWorkspace() {
               <button id="soundbankCleanupDelete" class="button secondary" type="button" ${cleanupBusy ? "disabled" : ""}>Delete ${cleanupPreview.count} unused files</button>` : ""}
           ` : ""}
         </div>
-      </section>
+      </section>`}
     </div>`;
 }
 
@@ -607,6 +615,33 @@ function removeEntry(phrase) {
   renderSoundbank();
 }
 
+async function authoringResponse(response) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "Soundbank authoring failed");
+  if (response.status !== 202) return payload;
+  if (!/^\/api\/settings\/soundbank\/jobs\/[0-9a-f]{32}$/.test(payload.poll_url || "")) {
+    throw new Error("Soundbank authoring returned an invalid job");
+  }
+  const deadline = Date.now() + 300000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    let status;
+    try {
+      const reply = await fetch(payload.poll_url, { cache: "no-store" });
+      status = await reply.json();
+      if ([502, 503, 504].includes(reply.status)) continue;
+      if (!reply.ok) throw new Error(status.error || "Soundbank job is unavailable");
+    } catch (error) {
+      if (error instanceof TypeError) continue;
+      throw error;
+    }
+    if (status.state === "complete") return status.result;
+    if (status.state === "failed") throw new Error(status.error || "Soundbank authoring failed");
+    if (status.state !== "pending") throw new Error("Soundbank job returned an invalid state");
+  }
+  throw new Error("Soundbank authoring timed out. Sync Settings before retrying.");
+}
+
 async function generateEntry(key, title, text) {
   if (generationDirectoryLocked()) {
     generationErrors.set(
@@ -629,10 +664,11 @@ async function generateEntry(key, title, text) {
         title,
         text,
         soundbank_draft_id: state.soundbankDraftId,
+        ...(state.controlPlane ? { base_revision: state.baseRevision } : {}),
       }),
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "Soundbank generation failed");
+    const payload = await authoringResponse(response);
+    Object.entries(payload.previews || {}).forEach(([file, token]) => state.soundbankPreviews.set(file, token));
     if (!payload.entry || typeof payload.entry !== "object" || Array.isArray(payload.entry)) {
       throw new Error("Soundbank generation returned an invalid entry");
     }
@@ -682,10 +718,12 @@ async function optimizeEntry(key, entry) {
     const response = await fetch("/api/settings/soundbank/optimize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ file: entryFile(entry), soundbank_draft_id: state.soundbankDraftId }),
+      body: JSON.stringify({ file: entryFile(entry), soundbank_draft_id: state.soundbankDraftId,
+        ...(state.controlPlane ? { base_revision: state.baseRevision, preview_token: state.soundbankPreviews.get(entryFile(entry)) } : {}),
+      }),
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || "Soundbank optimization failed");
+    const payload = await authoringResponse(response);
+    Object.entries(payload.previews || {}).forEach(([file, token]) => state.soundbankPreviews.set(file, token));
     if (!payload.optimized || typeof payload.optimized !== "object" || Array.isArray(payload.optimized)) {
       throw new Error("Soundbank optimization returned invalid metadata");
     }

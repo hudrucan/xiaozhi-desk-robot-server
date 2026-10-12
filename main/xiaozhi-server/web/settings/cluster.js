@@ -30,6 +30,12 @@ export function renderCluster() {
     ["Memory write mode", cluster.memory?.write_mode],
   ];
   const soundbank = state.clusterSoundbank;
+  const soundbankSync = $("#soundbankClusterSync");
+  if (soundbankSync) {
+    soundbankSync.textContent = soundbank && soundbank.desired_revision === state.baseRevision
+      ? `${soundbank.ready_nodes}/${soundbank.expected_nodes} nodes have verified audio for revision ${soundbank.desired_revision}. Apply runtime activates saved entries.`
+      : "Checking Soundbank sync across the cluster…";
+  }
   if (soundbank && soundbank.desired_revision === config.desired_revision) {
     rows.push(["Soundbank audio sync", `${soundbank.ready_nodes}/${soundbank.expected_nodes} nodes ready for revision ${soundbank.desired_revision ?? "—"}`]);
     if (soundbank.scope === "local_only") rows.push(["Soundbank membership", "Only this node is configured; cluster-wide sync is unconfirmed"]);

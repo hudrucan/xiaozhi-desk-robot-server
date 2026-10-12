@@ -55,6 +55,7 @@ class ConfigReconciliation:
         self.client_factory = client_factory
         self.client = None
         self.memory = None
+        self.authoring = None
         self.nats_state = "not_started"
         self.reconciliation = {
             "state": "not_started", "last_attempt_at": None,
@@ -221,6 +222,8 @@ class ConfigReconciliation:
                 self._hints.task_done()
 
     async def _disconnected(self):
+        if self.authoring is not None:
+            self.authoring.disconnected()
         self.nats_state = "disconnected"
         LOGGER.warning("Control-plane NATS disconnected")
 
@@ -234,6 +237,8 @@ class ConfigReconciliation:
         LOGGER.info("Control-plane NATS reconnected")
 
     async def _closed_callback(self):
+        if self.authoring is not None:
+            self.authoring.disconnected()
         self.nats_state = "closed"
         self._closed.set()
 

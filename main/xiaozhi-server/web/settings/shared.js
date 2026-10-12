@@ -1,4 +1,6 @@
 export const state = {
+  soundbankCapabilities: false,
+  soundbankPreviews: new Map(),
   secretCapabilities: false,
   secretProvisioning: false,
   controlPlane: document.body.dataset.settingsMode === "control-plane",

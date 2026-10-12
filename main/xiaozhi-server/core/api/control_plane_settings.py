@@ -13,6 +13,7 @@ from config.config_store import ConfigConflict, ConfigUnavailable
 from core.api.settings_access import SettingsAccess
 from core.cluster.config_reconciliation import CAPABILITIES, CONTROL_PROTOCOL, safe_source
 from core.utils.config_editor import ConfigEditor
+from core.soundbank import SoundbankAuthoringService, SoundbankError
 from core.cluster.soundbank_reconciliation import safe_status
 
 
@@ -34,6 +35,8 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         capabilities["voice_diagnostics"] = True
         capabilities["runtime_apply"] = self.runtime is not None
         capabilities["memory"] = self.reconciliation.memory is not None
+        capabilities["soundbank_authoring"] = bool(self.reconciliation.authoring and self.reconciliation.authoring.enabled)
+        capabilities["soundbank_preview"] = capabilities["soundbank_authoring"]
         return {"protocol": CONTROL_PROTOCOL, "capability_version": 1,
                 "mode": "standalone", "capabilities": capabilities}
 
@@ -43,6 +46,11 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         payload["configuration_source"] = safe_source(payload["configuration_source"])
         payload["config_path"] = "Shared Cloud desired configuration"
         payload["control_plane"] = self.capabilities()
+        if self.reconciliation.authoring is not None:
+            audio = SoundbankAuthoringService(payload["config"])
+            payload["soundbank_runtime_directory"] = audio.runtime_directory()
+            if payload["config"].get("xiaozhi", {}).get("audio_params", {}).get("sample_rate"):
+                payload["soundbank_runtime_audio"] = audio.runtime_audio_contract()
         return payload
 
     def _error(self, error):
@@ -120,8 +128,95 @@ class ControlPlaneSettingsHandler(SettingsAccess):
         payload["capabilities"]["mqtt_bootstrap"] = self.reconciliation.config.bootstrap is not None
         payload["capabilities"]["voice_diagnostics"] = True
         payload["capabilities"]["runtime_apply"] = self.runtime is not None
-        payload["capabilities"]["memory"] = self.reconciliation.memory is not None
+        payload["capabilities"] = self.capabilities()["capabilities"]
         return self._disable_cache(web.json_response(payload))
+
+    def _authoring(self):
+        service = self.reconciliation.authoring
+        if service is None or not service.enabled:
+            raise web.HTTPNotFound()
+        return service
+
+    async def handle_soundbank_generate(self, request):
+        self._require_access(request)
+        service = self._authoring()
+        self._require_json(request)
+        try:
+            body = await request.json()
+            if (request.query_string or not isinstance(body, dict)
+                    or set(body) - {"text", "title", "mode", "base_revision", "soundbank_draft_id"}
+                    or body.get("mode", "current") != "current"
+                    or type(body.get("base_revision")) is not int):
+                raise SoundbankError("Expected text and the saved configuration revision")
+            result = await service.start_job('generate', text=body.get("text"), title=body.get("title"), revision=body["base_revision"])
+        except ConfigConflict as error:
+            return self._error(error)
+        except SoundbankError as error:
+            return self._disable_cache(web.json_response({"error": str(error)}, status=error.status))
+        except (OSError, ValueError, TypeError, KeyError):
+            return self._disable_cache(web.json_response({"error": "Soundbank generation could not be confirmed; sync Settings and retry"}, status=503))
+        return self._disable_cache(web.json_response(result, status=202))
+
+    async def handle_soundbank_optimize(self, request):
+        self._require_access(request)
+        service = self._authoring()
+        self._require_json(request)
+        try:
+            body = await request.json()
+            if (request.query_string or not isinstance(body, dict)
+                    or set(body) - {"file", "preview_token", "base_revision", "soundbank_draft_id"}
+                    or type(body.get("base_revision")) is not int or not isinstance(body.get("file"), str)):
+                raise SoundbankError("Expected an audio file and the saved configuration revision")
+            result = await service.start_job('optimize', filename=body["file"], token=body.get("preview_token"), revision=body["base_revision"])
+        except ConfigConflict as error:
+            return self._error(error)
+        except SoundbankError as error:
+            return self._disable_cache(web.json_response({"error": str(error)}, status=error.status))
+        except (OSError, ValueError, TypeError, KeyError):
+            return self._disable_cache(web.json_response({"error": "Soundbank optimization could not be confirmed; sync Settings and retry"}, status=503))
+        return self._disable_cache(web.json_response(result, status=202))
+
+    async def handle_soundbank_audio(self, request):
+        self._require_access(request)
+        service = self._authoring()
+        if set(request.query) - {"preview_token"}:
+            raise web.HTTPBadRequest()
+        try:
+            content, mime = await self.reconciliation.operation(service.preview,
+                request.match_info["filename"], request.query.get("preview_token"))
+        except SoundbankError as error:
+            return self._disable_cache(web.json_response({"error": str(error)}, status=error.status))
+        except (OSError, ValueError, TypeError, KeyError):
+            return self._disable_cache(web.json_response({"error": "Verified Soundbank audio is unavailable"}, status=503))
+        return self._disable_cache(web.Response(body=content, content_type=mime))
+
+    async def handle_soundbank_job(self, request):
+        self._require_access(request)
+        service = self._authoring()
+        if request.query_string:
+            raise web.HTTPBadRequest()
+        try:
+            result = await service.job(request.match_info['job_id'])
+        except SoundbankError as error:
+            return self._disable_cache(web.json_response({'error': str(error)}, status=error.status))
+        return self._disable_cache(web.json_response(result))
+
+    async def handle_soundbank_job_peer(self, request):
+        # Private peer authentication; never use the browser/LAN access policy.
+        service = self._authoring()
+        if request.query_string or request.content_type != 'application/json':
+            raise web.HTTPNotFound()
+        try:
+            data = await asyncio.wait_for(request.read(), 2)
+            source, operation, payload = service.cipher.open(data, 'soundbank-job',
+                service.store.bootstrap['node_id'], remote=request.remote)
+            if set(payload) != {'job_id'}:
+                raise ValueError
+            response = service.cipher.seal('soundbank-job-result', service.store.bootstrap['node_id'],
+                source, operation, {'job': service.local_job(payload['job_id'])})
+        except Exception:
+            raise web.HTTPForbidden(text='Soundbank peer authentication failed') from None
+        return self._disable_cache(web.json_response(response))
 
     async def handle_soundbank_cluster(self, request):
         """Read only configured private peers; no Drive I/O or user-supplied URLs."""
