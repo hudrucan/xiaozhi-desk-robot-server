@@ -38,7 +38,7 @@ class TTSService:
             pending_msgs_limit=32, pending_bytes_limit=32 * wire.MAX_REQUEST)
 
     def available(self):
-        return not self.stopping and self.job is None and not (self.activity and self.activity.counts.get('asr', 0))
+        return not self.stopping and self.job is None and not (self.activity and (getattr(self.activity, 'draining', False) or self.activity.counts.get('asr', 0)))
 
     async def send(self, subject, header, pcm=b''):
         if self.client.is_connected:

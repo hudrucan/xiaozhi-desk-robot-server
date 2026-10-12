@@ -15,6 +15,9 @@ class Activity:
         self.worker_id, self.instance = worker_id, uuid.uuid4().hex
         self.boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip() if self.path else ''
         self.counts = {'asr': 0, 'llm': 0}
+        self.draining = False
+        self.admission_paused = False
+        self.admission = None
 
     def change(self, kind, delta):
         self.counts[kind] += delta
@@ -22,7 +25,8 @@ class Activity:
     def write(self):
         if self.path:
             content = json.dumps({'protocol': 'xiaozhi-worker-activity-v1', 'worker_id': self.worker_id,
-                'instance': self.instance, 'boot_id': self.boot, 'monotonic': time.monotonic(), **self.counts})
+                'instance': self.instance, 'boot_id': self.boot, 'monotonic': time.monotonic(),
+                'maintenance_supported': True, 'admission_paused': self.admission_paused, **self.counts})
             temporary = self.path.with_suffix('.tmp')
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, 'w') as stream:

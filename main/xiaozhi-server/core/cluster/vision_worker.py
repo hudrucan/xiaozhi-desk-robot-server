@@ -27,7 +27,9 @@ class VisionService:
                 self.activity.change('llm', -1)
 
     async def start(self):
-        await self.client.subscribe(wire.SUBJECT, queue=wire.QUEUE, cb=self.receive,
+        admission = getattr(self.activity, 'admission', None)
+        subscribe = admission.subscribe if admission else self.client.subscribe
+        await subscribe(wire.SUBJECT, queue=wire.QUEUE, cb=self.receive,
                                     pending_msgs_limit=4, pending_bytes_limit=16384)
         await self.client.subscribe(wire.target(self.worker_id), cb=self.receive,
                                     pending_msgs_limit=8, pending_bytes_limit=8 * (wire.CHUNK + 80))
@@ -60,7 +62,7 @@ class VisionService:
                     error = ('vision_unavailable' if self.stopping or not self.client.is_connected else
                              'vision_revision_mismatch' if value['revision'] != self.revision else
                              'vision_expired' if not now < value['deadline_ms'] <= now + wire.SECONDS * 1000 else
-                             'vision_busy' if self.jobs or (self.activity and self.activity.counts['llm'] >= 2) else None)
+                             'vision_busy' if self.jobs or (self.activity and (getattr(self.activity, 'draining', False) or self.activity.counts['llm'] >= 2)) else None)
                     if error:
                         await self.send(msg.reply, key, 'error', error=error)
                         return

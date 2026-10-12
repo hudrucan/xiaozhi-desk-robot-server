@@ -194,7 +194,11 @@ class TransportCore:
             await asyncio.sleep(1)
 
     async def status(self, request):
+        from .maintenance import requested
+        paused = await asyncio.to_thread(requested, self.config.node_id)
         return web.json_response({"protocol": PROTOCOL, "core_id": self.config.node_id,
+            'maintenance_supported': True, 'admission_paused': paused,
+            'active_connections': len(self.sockets),
             "status": "stopping" if self.stopping else "ready",
             "active_sessions": len(self.sessions), "local_vip_owner": self.vip_owner,
             "received_audio_frames": self.received_audio_frames,
@@ -265,13 +269,16 @@ class TransportCore:
             return web.json_response({"error": "worker_probe_timeout"}, status=408)
 
     async def ready(self, request):
-        return web.json_response({"status": "not_ready" if self.stopping else "ready",
-            "protocol": PROTOCOL, "conversation_runtime": False}, status=503 if self.stopping else 200)
+        from .maintenance import requested
+        unavailable = self.stopping or await asyncio.to_thread(requested, self.config.node_id)
+        return web.json_response({"status": "not_ready" if unavailable else "ready",
+            "protocol": PROTOCOL, "conversation_runtime": False}, status=503 if unavailable else 200)
 
     async def websocket(self, request):
         if request.query_string != "from=mqtt_gateway" or not authenticated(request, self.config):
             raise web.HTTPUnauthorized()
-        if self.stopping or len(self.sockets) >= MAX_SESSIONS:
+        from .maintenance import requested
+        if self.stopping or await asyncio.to_thread(requested, self.config.node_id) or len(self.sockets) >= MAX_SESSIONS:
             raise web.HTTPServiceUnavailable()
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=MAX_FRAME, compress=False)
         # Reserve admission before the upgrade await, including incomplete hellos.

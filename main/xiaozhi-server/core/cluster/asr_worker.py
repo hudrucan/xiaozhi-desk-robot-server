@@ -31,7 +31,9 @@ class ASRService:
         self.turns, self.stopping = {}, False
 
     async def start(self):
-        await self.client.subscribe(wire.OPEN_SUBJECT, queue=wire.QUEUE_GROUP, cb=self.open,
+        admission = getattr(self.activity, 'admission', None)
+        subscribe = admission.subscribe if admission else self.client.subscribe
+        await subscribe(wire.OPEN_SUBJECT, queue=wire.QUEUE_GROUP, cb=self.open,
             pending_msgs_limit=16, pending_bytes_limit=32768)
         await self.client.subscribe(wire.input_subject(self.worker_id), cb=self.input,
             pending_msgs_limit=128, pending_bytes_limit=128 * (wire.MAX_AUDIO + 514))
@@ -63,7 +65,7 @@ class ASRService:
         turn = Turn(request)
         error = ('asr_revision_mismatch' if request['revision'] != self.bundle['revision'] else
                  'asr_expired' if request['deadline_ms'] <= time.time() * 1000 else
-                 'asr_busy' if len(self.turns) >= 2 or request['turn_id'] in self.turns else None)
+                 'asr_busy' if len(self.turns) >= 2 or request['turn_id'] in self.turns or getattr(self.activity, 'draining', False) else None)
         if error:
             await self.send(message.reply, turn, 'error', error=error)
             return

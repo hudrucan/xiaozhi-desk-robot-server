@@ -43,6 +43,8 @@ async def run(config, asr, llm, tts=None):
 
     class Combined(LLMWorker):
         async def _start(self):
+            from core.cluster.maintenance import Admission
+            self.activity.admission = Admission(self.client, self.activity, config.worker_id)
             await super()._start()
             self.asr = ASRService(self.client, config.worker_id, asr,
                 partial(ASRPipeline, engine=engine, stream_factory=stream_factory), activity)
@@ -55,6 +57,7 @@ async def run(config, asr, llm, tts=None):
                 from core.cluster.vision_worker import VisionService
                 self.vision = VisionService(self.client, config.worker_id, llm['revision'], vision_provider, activity)
                 await self.vision.start()
+            self.maintenance_task = asyncio.create_task(self.activity.admission.run())
 
         async def _disconnected(self):
             # Invalidate LLM streams before waiting for uninterruptible native
@@ -73,6 +76,10 @@ async def run(config, asr, llm, tts=None):
             await super()._reconnected()
 
         async def _shutdown(self):
+            if hasattr(self, 'maintenance_task'):
+                self.maintenance_task.cancel()
+                await asyncio.gather(self.maintenance_task, return_exceptions=True)
+                await self.activity.admission.close()
             self.stopping = True
             for _, task in tuple(self.jobs.values()):
                 task.cancel()

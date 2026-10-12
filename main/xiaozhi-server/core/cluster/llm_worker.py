@@ -46,11 +46,13 @@ class LLMWorker(Worker):
 
     async def _start(self):
         await super()._start()
-        await self.client.subscribe(protocol.SUBJECT, queue=protocol.QUEUE_GROUP, cb=self._receive,
+        admission = getattr(self.activity, 'admission', None)
+        subscribe = admission.subscribe if admission else self.client.subscribe
+        await subscribe(protocol.SUBJECT, queue=protocol.QUEUE_GROUP, cb=self._receive,
                                     pending_msgs_limit=16, pending_bytes_limit=16 * protocol.MAX_REQUEST_BYTES)
-        await self.client.subscribe(streaming.SUBJECT, queue=streaming.QUEUE_GROUP, cb=self._receive_stream,
+        await subscribe(streaming.SUBJECT, queue=streaming.QUEUE_GROUP, cb=self._receive_stream,
                                     pending_msgs_limit=16, pending_bytes_limit=16 * protocol.MAX_REQUEST_BYTES)
-        await self.client.subscribe(tooling.SUBJECT, queue=tooling.QUEUE_GROUP, cb=self._receive_tools,
+        await subscribe(tooling.SUBJECT, queue=tooling.QUEUE_GROUP, cb=self._receive_tools,
                                     pending_msgs_limit=4, pending_bytes_limit=4 * tooling.MAX_REQUEST_BYTES)
         # All workers see cancellation, including if it races queue delivery.
         await self.client.subscribe(protocol.CANCEL_SUBJECT, cb=self._cancel,
@@ -115,7 +117,7 @@ class LLMWorker(Worker):
             error = 'llm_expired'
         elif value['revision'] != self.bundle['revision']:
             error = 'llm_revision_mismatch'
-        elif len(self.jobs) >= MAX_JOBS or (self.activity and self.activity.counts['llm'] >= MAX_JOBS):
+        elif len(self.jobs) >= MAX_JOBS or (self.activity and (getattr(self.activity, 'draining', False) or self.activity.counts['llm'] >= MAX_JOBS)):
             error = 'llm_busy'
         if error:
             if streamed:
