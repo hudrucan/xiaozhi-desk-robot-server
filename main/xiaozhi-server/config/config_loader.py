@@ -2,6 +2,10 @@ import os
 import yaml
 from collections.abc import Mapping
 
+# Use LibYAML's safe constructors when bundled by PyYAML. Keep the safe Python
+# implementation for installations without LibYAML; never use the unsafe Loader.
+_SAFE_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 
 def get_project_dir():
     """Return the server project directory."""
@@ -10,7 +14,7 @@ def get_project_dir():
 
 def read_config(config_path):
     with open(config_path, "r", encoding="utf-8") as file:
-        return yaml.safe_load(file) or {}
+        return yaml.load(file, Loader=_SAFE_LOADER) or {}
 
 
 def load_default_config(config_path=None):

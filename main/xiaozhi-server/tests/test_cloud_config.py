@@ -93,6 +93,36 @@ class MemoryDrive:
 
 
 class CloudConfigTests(unittest.TestCase):
+    def test_yaml_defaults_keep_safe_constructors(self):
+        from config.config_loader import load_default_config
+        self.default_path.write_text("value: !!python/object/apply:os.system ['never-run']\n")
+        with self.assertRaises(yaml.constructor.ConstructorError):
+            load_default_config(self.default_path)
+
+    def test_refresh_reuses_defaults_without_skipping_live_cloud_reads(self):
+        from config.config_loader import load_default_config
+        with patch("config.google_drive_config.load_default_config", wraps=load_default_config) as loader, \
+                patch.object(self.drive, "read_manifest", wraps=self.drive.read_manifest) as manifest:
+            with self.store.locked():
+                self.store.refresh_unlocked(strict=True)
+            self.assertEqual(loader.call_count, 1)
+            with self.store.locked():
+                self.store.refresh_unlocked(strict=True)
+            self.assertEqual(loader.call_count, 2)
+            self.assertEqual(manifest.call_count, 2)
+
+    def test_defaults_are_isolated_and_expire_after_a_failed_operation(self):
+        with self.assertRaises(RuntimeError):
+            with self.store.locked():
+                first = self.store._repo_defaults()
+                first["server"]["port"] = 9999
+                self.assertEqual(self.store._repo_defaults()["server"]["port"], 8000)
+                raise RuntimeError("Abort the test transaction")
+        self.defaults["server"]["port"] = 8009
+        self.default_path.write_text(yaml.safe_dump(self.defaults))
+        with self.store.locked():
+            self.assertEqual(self.store._repo_defaults()["server"]["port"], 8009)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

@@ -83,6 +83,7 @@ class GoogleDriveConfigStore(ConfigStore):
             self.transport, self.folder_id, self.cache_dir.parent / "cloud-soundbank/objects"
         )
         self.thread_lock = threading.RLock()
+        self._defaults_scope = threading.local()
         self.desired_snapshot = None
         self.active_snapshot = None
         self.runtime_source = None
@@ -98,7 +99,13 @@ class GoogleDriveConfigStore(ConfigStore):
         self.publication_observer = None
 
     def _repo_defaults(self):
-        return load_default_config(self.default_path)
+        scope = self._defaults_scope
+        if not getattr(scope, "active", False):
+            return load_default_config(self.default_path)
+        if not hasattr(scope, "value"):
+            scope.value = load_default_config(self.default_path)
+        # Callers/validators must not mutate the operation's reference baseline.
+        return copy.deepcopy(scope.value)
 
     def _resolve(self, obj, repo_defaults=None):
         repo_defaults = self._repo_defaults() if repo_defaults is None else repo_defaults
@@ -112,7 +119,16 @@ class GoogleDriveConfigStore(ConfigStore):
     def locked(self):
         self.cache_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         with self.thread_lock, portalocker.Lock(str(self.cache_dir / ".cloud.lock"), mode="a", timeout=5):
-            yield self
+            scope = self._defaults_scope
+            nested = getattr(scope, "active", False)
+            scope.active = True
+            try:
+                yield self
+            finally:
+                if not nested:
+                    scope.active = False
+                    if hasattr(scope, "value"):
+                        del scope.value
 
     def _envelope(self, manifest, obj, repo_defaults_sha256=None):
         payload = {"manifest_file_id": self.manifest_id, "folder_id": self.folder_id,
