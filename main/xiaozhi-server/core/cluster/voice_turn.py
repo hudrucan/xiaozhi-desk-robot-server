@@ -367,10 +367,13 @@ class VoiceTurn:
                 if fixed_response is None:
                     self.record('llm_complete', worker_id=result.get('worker_id'),
                                 elapsed_ms=round((time.monotonic() - started) * 1000))
-                await self.emit({'type': 'llm', 'state': 'final', 'text': result['text']})
                 if tts:
                     await tts.finish()
                     self.record('tts_complete', elapsed_ms=round((time.monotonic() - started) * 1000))
+                # Spoken turns are displayed from tts sentence_start, as in app.py;
+                # the full text would be appended to those sentences by firmware.
+                if tts is None or tts.playback.packet_count == 0:
+                    await self.emit({'type': 'llm', 'state': 'final', 'text': result['text']})
                 if fixed_response is None and generation == self.generation and not closing:
                     self.history.complete(text, result['text'])
         except asyncio.CancelledError:
@@ -438,8 +441,9 @@ class VoiceTurn:
                 # Reuse the response's ordered stream, including any partial
                 # speech already queued, as the normal app.py failure path does.
                 tts.feed('\n' + self.error_response)
-                await self.emit({'type': 'llm', 'state': 'final', 'text': self.error_response})
                 await tts.finish()
+                if tts.playback.packet_count == 0:
+                    await self.emit({'type': 'llm', 'state': 'final', 'text': self.error_response})
                 if generation != self.generation:
                     raise asyncio.CancelledError
                 self.state = 'error'
